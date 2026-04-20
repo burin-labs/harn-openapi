@@ -1,0 +1,64 @@
+// webhook_smoke — OAS 3.1 acceptance: parse() surfaces `webhooks` and
+// `components.pathItems`; `webhook_operations(doc)` flattens webhook
+// path items; a handler's request-body schema resolves via schema().
+//
+// Tracks burin-labs/harn-openapi#2.
+import { component_path_items, parse, schema, webhook_operations } from "../src/lib"
+
+pipeline default() {
+  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let doc = parse(raw)
+  // parse() must surface the webhooks map.
+  assert(type_of(doc.webhooks) == "dict", "doc.webhooks must be a dict")
+  let webhook_count = len(doc.webhooks)
+  println("webhooks (raw): ${webhook_count}")
+  assert(webhook_count >= 10, "expected >=10 webhooks in the Notion fixture, got ${webhook_count}")
+  // parse() must surface components.pathItems as a dict, even if empty.
+  assert(type_of(doc.components.pathItems) == "dict", "doc.components.pathItems must be a dict")
+  // component_path_items(doc) is the passthrough accessor.
+  let comp_path_items = component_path_items(doc)
+  assert(type_of(comp_path_items) == "dict", "component_path_items(doc) must return a dict")
+  println("components.pathItems: ${len(comp_path_items)}")
+  // webhook_operations(doc) flattens webhook path items into a list.
+  let webhook_ops = webhook_operations(doc)
+  println("webhook operations: ${len(webhook_ops)}")
+  assert(len(webhook_ops) >= 10, "expected >=10 webhook operations, got ${len(webhook_ops)}")
+  // Every entry must have the shape { name, method, path_item, operation, ... }.
+  for wop in webhook_ops {
+    assert(wop.name != nil && wop.name != "", "webhook operation missing name")
+    assert(wop.method != nil && wop.method != "", "webhook operation missing method")
+    assert(type_of(wop.path_item) == "dict", "webhook operation path_item must be a dict")
+    assert(type_of(wop.operation) == "dict", "webhook operation operation must be a dict")
+  }
+  // Locate the commentCreated webhook and verify its payload schema resolves.
+  var comment_created = nil
+  for wop in webhook_ops {
+    if wop.name == "commentCreated" {
+      comment_created = wop
+    }
+  }
+  assert(comment_created != nil, "could not find commentCreated webhook")
+  println("commentCreated: ${comment_created.method} -> ${comment_created.operation_id}")
+  let req_body = comment_created.operation.get("requestBody")
+  assert(req_body != nil, "commentCreated webhook must declare a requestBody")
+  let payload_schema_raw = req_body.content["application/json"].schema
+  let resolved = schema(doc, payload_schema_raw)
+  assert(type_of(resolved) == "dict", "resolved webhook schema must be a dict")
+  // The Notion webhook envelope shape should expose common event fields
+  // once the $ref is resolved. Accept either `properties` or `allOf`
+  // composed schemas — just assert we got something non-empty back.
+  let has_props = resolved.get("properties") != nil
+  let has_oneof = resolved.get("oneOf") != nil
+  let has_allof = resolved.get("allOf") != nil
+  let has_anyof = resolved.get("anyOf") != nil
+  let has_type = resolved.get("type") != nil
+  assert(
+    has_props || has_oneof || has_allof || has_anyof || has_type,
+    "resolved commentCreated payload schema must expose properties/oneOf/allOf/anyOf/type",
+  )
+  if has_props {
+    let field_names = resolved.properties.keys()
+    println("commentCreated payload fields: ${len(field_names)}")
+  }
+  println("webhook_smoke: ok")
+}
