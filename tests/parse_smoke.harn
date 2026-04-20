@@ -1,0 +1,23 @@
+// parse_smoke — M1 acceptance: parse the pinned Notion OpenAPI
+// fixture and assert the doc looks plausible.
+//
+// The fixture was produced with:
+//   curl -fsSL https://developers.notion.com/openapi.json \
+//     > tests/fixtures/notion.openapi.json
+// Keep it pinned — do not auto-refresh.
+
+import { parse, operations } from "../src/lib"
+
+pipeline default() {
+  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let doc = parse(raw)
+  assert(starts_with(doc.openapi, "3.1"), "openapi version must be 3.1.x")
+  assert(contains(doc.info.title, "Notion"), "info.title must contain 'Notion'")
+  let ops = operations(doc)
+  let op_count = len(ops)
+  println("operations: ${op_count}")
+  assert(op_count > 40, "expected >40 operations in the Notion fixture, got ${op_count}")
+  println("schemas: ${len(doc.components.schemas)}")
+  assert(len(doc.components.schemas) > 100, "expected >100 component schemas")
+  println("parse_smoke: ok")
+}

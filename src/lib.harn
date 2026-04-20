@@ -1,0 +1,762 @@
+// harn-openapi — Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers.
+//
+// Exported surface:
+//
+//   parse(json_string)           -> dict
+//       Parse an OpenAPI 3.1 JSON document into a normalized dict with
+//       shape { openapi, info, servers, paths, components,
+//       security_schemes, tags }. Throws on non-3.1.x docs.
+//
+//   operations(doc)              -> list<operation>
+//       Flatten path-itemed operations into a list of
+//       { method, path, operation_id, summary, parameters,
+//       request_body, responses, security } dicts.
+//
+//   schema(doc, ref_or_inline)   -> dict
+//       Resolve a `$ref` like "#/components/schemas/Foo" against the
+//       parsed doc, or return an inline schema unchanged. Merges one
+//       level of `allOf`; leaves `oneOf`/`anyOf` un-merged.
+//
+//   enum_values(schema)          -> list<string> | nil
+//       Return the enum variant list on a schema, or nil if absent.
+//
+//   codegen_module(doc, options) -> string
+//       Emit a complete typed Harn SDK module source string. Options:
+//       { module_name, client_name, default_base_url?, header_overrides? }.
+//
+// See README.md for end-to-end usage; scripts/regen_demo.harn runs a
+// full parse -> codegen -> write loop against the bundled Notion
+// fixture.
+
+// -----------------------------------------------------------------------------
+// Parsing
+// -----------------------------------------------------------------------------
+
+/** Parse an OpenAPI 3.1 JSON document into a normalized doc dict. */
+pub fn parse(json_string: string) -> dict {
+  let raw = json_parse(json_string)
+  let version = raw.get("openapi")
+  if version == nil {
+    throw "harn-openapi.parse: missing top-level 'openapi' field"
+  }
+  if !starts_with(version, "3.1") {
+    throw "harn-openapi.parse: expected openapi 3.1.x, got " + to_string(version)
+  }
+  let components = raw.get("components") ?? {}
+  return {
+    openapi: version,
+    info: raw.get("info") ?? {},
+    servers: raw.get("servers") ?? [],
+    paths: raw.get("paths") ?? {},
+    components: components,
+    security_schemes: components.get("securitySchemes") ?? {},
+    tags: raw.get("tags") ?? [],
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Walking helpers
+// -----------------------------------------------------------------------------
+
+let _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]
+
+/** Flatten every operation in the doc's `paths` dict. */
+pub fn operations(doc: dict) -> list {
+  var out = []
+  for entry in doc.paths {
+    let path = entry.key
+    let item = entry.value
+    for method in _HTTP_METHODS {
+      let op = item.get(method)
+      if op != nil {
+        let raw_params = _merge_parameters(item.get("parameters") ?? [], op.get("parameters") ?? [], doc)
+        out = out
+          + [
+          {
+          method: method,
+          path: path,
+          operation_id: op.get("operationId") ?? _synth_operation_id(method, path),
+          summary: op.get("summary") ?? "",
+          description: op.get("description") ?? "",
+          parameters: raw_params,
+          request_body: op.get("requestBody"),
+          responses: op.get("responses") ?? {},
+          security: op.get("security") ?? doc.get("security") ?? [],
+          tags: op.get("tags") ?? [],
+        },
+        ]
+      }
+    }
+  }
+  return out
+}
+
+fn _merge_parameters(path_params, op_params, doc) {
+  let resolved_path = _resolve_param_list(path_params, doc)
+  let resolved_op = _resolve_param_list(op_params, doc)
+  if len(resolved_path) == 0 {
+    return resolved_op
+  }
+  if len(resolved_op) == 0 {
+    return resolved_path
+  }
+  var combined = []
+  var taken = []
+  for p in resolved_op {
+    let key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
+    taken = taken + [key]
+    combined = combined + [p]
+  }
+  for p in resolved_path {
+    let key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
+    if !taken.contains(key) {
+      combined = combined + [p]
+    }
+  }
+  return combined
+}
+
+fn _resolve_param_list(params, doc) {
+  var out = []
+  for p in params {
+    if type_of(p) == "dict" && p.get("$ref") != nil {
+      out = out + [_lookup_ref(doc, p.get("$ref"))]
+    } else {
+      out = out + [p]
+    }
+  }
+  return out
+}
+
+fn _synth_operation_id(method, path) {
+  let cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", path)
+  let trimmed = regex_replace_all("^_+|_+$", "", cleaned)
+  return method + "_" + trimmed
+}
+
+/** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
+pub fn schema(doc: dict, ref_or_inline) -> dict {
+  let resolved = _resolve_ref(doc, ref_or_inline)
+  let all_of = resolved.get("allOf")
+  if all_of == nil {
+    return resolved
+  }
+  var merged = {}
+  for part in all_of {
+    let piece = _resolve_ref(doc, part)
+    merged = _merge_schema(merged, piece)
+  }
+  let own = _omit_key(resolved, "allOf")
+  return _merge_schema(merged, own)
+}
+
+fn _resolve_ref(doc, node) {
+  if type_of(node) != "dict" {
+    return {}
+  }
+  let ref = node.get("$ref")
+  if ref == nil {
+    return node
+  }
+  return _lookup_ref(doc, ref)
+}
+
+fn _lookup_ref(doc, ref) {
+  if !starts_with(ref, "#/") {
+    throw "harn-openapi.schema: only local JSON Pointer refs are supported, got " + ref
+  }
+  let parts = split(substring(ref, 2), "/")
+  var node = doc
+  for raw_seg in parts {
+    let seg = _unescape_pointer(raw_seg)
+    if seg == "components" {
+      node = doc.components ?? {}
+    } else {
+      if node == nil {
+        throw "harn-openapi.schema: broken ref " + ref
+      }
+      node = node.get(seg)
+    }
+    if node == nil {
+      throw "harn-openapi.schema: broken ref " + ref
+    }
+  }
+  return node
+}
+
+fn _unescape_pointer(seg) {
+  return replace(replace(seg, "~1", "/"), "~0", "~")
+}
+
+fn _merge_schema(base, overlay) {
+  if type_of(overlay) != "dict" {
+    return base
+  }
+  var merged = base
+  for entry in overlay {
+    let k = entry.key
+    let v = entry.value
+    if k == "properties" {
+      let existing = merged.get("properties") ?? {}
+      merged = {...merged, properties: existing + v}
+    } else if k == "required" {
+      let existing = merged.get("required") ?? []
+      merged = {...merged, required: _dedupe(existing + v)}
+    } else {
+      merged = {...merged, [k]: v}
+    }
+  }
+  return merged
+}
+
+fn _omit_key(d, k) {
+  var out = {}
+  for entry in d {
+    if entry.key != k {
+      out = {...out, [entry.key]: entry.value}
+    }
+  }
+  return out
+}
+
+fn _dedupe(xs) {
+  var seen = []
+  var out = []
+  for x in xs {
+    if !seen.contains(x) {
+      seen = seen + [x]
+      out = out + [x]
+    }
+  }
+  return out
+}
+
+/** Return the enum variant list on a schema, or nil. */
+pub fn enum_values(sch) {
+  if type_of(sch) != "dict" {
+    return nil
+  }
+  let vs = sch.get("enum")
+  if vs == nil {
+    return nil
+  }
+  if type_of(vs) != "list" {
+    return nil
+  }
+  return vs
+}
+
+// -----------------------------------------------------------------------------
+// Codegen
+// -----------------------------------------------------------------------------
+
+let _MODULE_TEMPLATE = """
+  // Auto-generated by harn-openapi codegen — do not edit by hand.
+  // Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
+  // Module:     {{ module_name }}
+
+  /** Create a new {{ client_name }} handle. */
+  pub fn new_client(token: string, base_url: string = "{{ default_base_url }}") -> dict {
+    return {
+      base_url: base_url,
+      token: token,
+      extra_headers: {{ extra_headers_literal }},
+    }
+  }
+
+  fn _auth_headers(client: dict) -> dict {
+    var hs = {Authorization: "Bearer " + client.token, "Content-Type": "application/json"}
+    for entry in client.extra_headers {
+      hs = {...hs, [entry.key]: entry.value}
+    }
+    return hs
+  }
+
+  fn _interpolate(template: string, bindings: dict) -> string {
+    var out = template
+    for entry in bindings {
+      out = replace(out, "{" + entry.key + "}", to_string(entry.value))
+    }
+    return out
+  }
+
+  fn _query_string(params: dict) -> string {
+    var parts = []
+    for entry in params {
+      if entry.value != nil {
+        parts = parts + [url_encode(entry.key) + "=" + url_encode(to_string(entry.value))]
+      }
+    }
+    if len(parts) == 0 { return "" }
+    return "?" + join(parts, "&")
+  }
+
+  {{ for op in operations }}
+  {{ op.doc_comment }}
+  pub fn {{ op.fn_name }}({{ op.signature }}) -> dict {
+    let url = client.base_url + _interpolate("{{ op.path }}", {{ op.path_bindings }}){{ if op.has_query }} + _query_string({{ op.query_bindings }}){{ end }}
+    {{ if op.has_body }}let body_str = json_stringify(body)
+    let resp = http_{{ op.method }}(url, body_str, {headers: _auth_headers(client)}){{ else }}let resp = http_{{ op.method }}(url, {headers: _auth_headers(client)}){{ end }}
+    if resp.status >= 400 {
+      throw "{{ op.fn_name }}: HTTP " + to_string(resp.status) + " " + resp.body
+    }
+    if resp.body == "" { return {status: resp.status} }
+    return json_parse(resp.body)
+  }
+  {{ end }}
+  """
+
+/** Emit a Harn SDK module as source code. */
+pub fn codegen_module(doc: dict, options: dict) -> string {
+  let module_name = options.get("module_name") ?? "generated_sdk"
+  let client_name = options.get("client_name") ?? "Client"
+  let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
+  let header_overrides = options.get("header_overrides") ?? {}
+  let ops_raw = operations(doc)
+  var ops = []
+  var seen_names = []
+  for op in ops_raw {
+    let model = _build_op_model(op, seen_names)
+    seen_names = seen_names + [model.fn_name]
+    ops = ops + [model]
+  }
+  let bindings = {
+    doc_title: (doc.get("info") ?? {}).get("title") ?? module_name,
+    openapi_version: doc.openapi,
+    module_name: module_name,
+    client_name: client_name,
+    default_base_url: default_base_url,
+    extra_headers_literal: _render_dict_literal(header_overrides),
+    operations: ops,
+  }
+  return render_string(_MODULE_TEMPLATE, bindings)
+}
+
+fn _default_server_url(doc) {
+  let servers = doc.get("servers") ?? []
+  if len(servers) == 0 {
+    return ""
+  }
+  return servers[0].get("url") ?? ""
+}
+
+fn _build_op_model(op, taken_names) {
+  let fn_name = _unique_fn_name(_sanitize_fn_name(op.operation_id), taken_names)
+  let params = op.parameters
+  var path_params = []
+  var query_params = []
+  for p in params {
+    if p.get("name") != nil {
+      let loc = p.get("in") ?? "query"
+      if loc == "path" {
+        path_params = path_params + [p]
+      } else if loc == "query" {
+        query_params = query_params + [p]
+      }
+    }
+  }
+  var required_sig = ["client: dict"]
+  var optional_sig = []
+  var path_bindings_parts = []
+  for p in path_params {
+    let name = p.get("name")
+    let nm = _sanitize_ident(name)
+    required_sig = required_sig + [nm]
+    path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
+  }
+  var query_bindings_parts = []
+  for p in query_params {
+    let name = p.get("name")
+    let nm = _sanitize_ident(name)
+    if p.get("required") {
+      required_sig = required_sig + [nm]
+    } else {
+      optional_sig = optional_sig + [nm + " = nil"]
+    }
+    query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
+  }
+  let has_body = op.request_body != nil
+  if has_body {
+    required_sig = required_sig + ["body"]
+  }
+  let sig_parts = required_sig + optional_sig
+  let path_bindings = "{" + join(path_bindings_parts, ", ") + "}"
+  let query_bindings = "{" + join(query_bindings_parts, ", ") + "}"
+  let doc_lines = split(op.summary, "\n")
+  let first = if len(doc_lines) > 0 {
+    doc_lines[0]
+  } else {
+    ""
+  }
+  let safe_summary = if first == "" {
+    op.operation_id
+  } else {
+    first
+  }
+  let doc_comment = "/** " + _escape_comment(safe_summary) + " */"
+  return {
+    fn_name: fn_name,
+    method: op.method,
+    path: op.path,
+    signature: join(sig_parts, ", "),
+    path_bindings: path_bindings,
+    query_bindings: query_bindings,
+    has_query: len(query_params) > 0,
+    has_body: has_body,
+    doc_comment: doc_comment,
+  }
+}
+
+fn _sanitize_fn_name(raw) {
+  if raw == nil || raw == "" {
+    return "op"
+  }
+  let s1 = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
+  let s2 = regex_replace_all("^_+|_+$", "", s1)
+  let s3 = regex_replace_all("_+", "_", s2)
+  let lower = s3.lower()
+  if lower == "" {
+    return "op"
+  }
+  let first_char = substring(lower, 0, 1)
+  if _is_digit(first_char) {
+    return "op_" + lower
+  }
+  return lower
+}
+
+fn _sanitize_ident(raw) {
+  let s = _sanitize_fn_name(raw)
+  if _is_reserved(s) {
+    return s + "_"
+  }
+  return s
+}
+
+fn _is_digit(c) {
+  return c == "0" || c == "1" || c == "2" || c == "3" || c == "4"
+    || c == "5"
+    || c == "6"
+    || c == "7"
+    || c == "8"
+    || c == "9"
+}
+
+let _RESERVED = [
+  "if",
+  "else",
+  "elif",
+  "for",
+  "in",
+  "while",
+  "match",
+  "let",
+  "var",
+  "fn",
+  "pub",
+  "return",
+  "throw",
+  "try",
+  "catch",
+  "finally",
+  "pipeline",
+  "import",
+  "from",
+  "as",
+  "type",
+  "interface",
+  "enum",
+  "true",
+  "false",
+  "nil",
+  "and",
+  "or",
+  "not",
+  "skill",
+  "tool",
+  "body",
+  "client",
+]
+
+fn _is_reserved(s) {
+  return _RESERVED.contains(s)
+}
+
+fn _unique_fn_name(base, taken) {
+  if !taken.contains(base) {
+    return base
+  }
+  var n = 2
+  var candidate = base + "_" + to_string(n)
+  while taken.contains(candidate) {
+    n = n + 1
+    candidate = base + "_" + to_string(n)
+  }
+  return candidate
+}
+
+fn _escape_comment(s) {
+  return replace(replace(s, "*/", "* /"), "\n", " ")
+}
+
+fn _harn_dict_entry(key, value_expr) {
+  if _is_plain_identifier(key) {
+    return key + ": " + value_expr
+  }
+  return "\"" + _escape_string(key) + "\": " + value_expr
+}
+
+fn _is_plain_identifier(s) {
+  if s == "" {
+    return false
+  }
+  let first = substring(s, 0, 1)
+  if _is_digit(first) {
+    return false
+  }
+  return regex_match("^[A-Za-z_][A-Za-z0-9_]*$", s) != nil
+}
+
+fn _escape_string(s) {
+  return replace(replace(s, "\\", "\\\\"), "\"", "\\\"")
+}
+
+fn _render_dict_literal(d) {
+  if type_of(d) != "dict" {
+    return "{}"
+  }
+  var parts = []
+  for entry in d {
+    parts = parts + [_harn_dict_entry(entry.key, "\"" + _escape_string(to_string(entry.value)) + "\"")]
+  }
+  if len(parts) == 0 {
+    return "{}"
+  }
+  return "{" + join(parts, ", ") + "}"
+}
+
+// -----------------------------------------------------------------------------
+
+// Minimal template engine — the stdlib `render` helper reads from files
+// on disk, but we want the codegen template inline so the library stays
+// one-file-loadable. This engine supports the features we actually use:
+// {{ ident }}, {{ dotted.lookup }}, {{ for x in xs }}..{{ end }}, and
+// {{ if cond }}..{{ else if cond }}..{{ else }}..{{ end }}.
+
+// -----------------------------------------------------------------------------
+
+/** Render a triple-quoted template string against a bindings dict. */
+pub fn render_string(template: string, bindings: dict) -> string {
+  let tokens = _tpl_tokenize(template)
+  let result = _tpl_render_block(tokens, 0, len(tokens), bindings)
+  return result.text
+}
+
+fn _tpl_tokenize(src) {
+  var tokens = []
+  var i = 0
+  let n = len(src)
+  var buf = ""
+  while i < n {
+    if i + 1 < n && substring(src, i, 2) == "{{" {
+      if buf != "" {
+        tokens = tokens + [{kind: "text", body: buf}]
+        buf = ""
+      }
+      let close = _find_close(src, i + 2)
+      let inner = trim(substring(src, i + 2, close - (i + 2)))
+      tokens = tokens + [_tpl_classify(inner)]
+      i = close + 2
+    } else {
+      buf = buf + substring(src, i, 1)
+      i = i + 1
+    }
+  }
+  if buf != "" {
+    tokens = tokens + [{kind: "text", body: buf}]
+  }
+  return tokens
+}
+
+fn _find_close(src, start) {
+  let n = len(src)
+  var i = start
+  while i + 1 < n {
+    if substring(src, i, 2) == "}}" {
+      return i
+    }
+    i = i + 1
+  }
+  throw "render_string: unterminated '{{' in template"
+}
+
+fn _tpl_classify(inner) {
+  if starts_with(inner, "for ") {
+    let rest = trim(substring(inner, 4))
+    let space = _index_of(rest, " in ")
+    if space < 0 {
+      throw "render_string: malformed 'for' directive: " + inner
+    }
+    let var_name = trim(substring(rest, 0, space))
+    let expr = trim(substring(rest, space + 4))
+    return {kind: "for_open", var_name: var_name, expr: expr}
+  }
+  if starts_with(inner, "if ") {
+    return {kind: "if_open", expr: trim(substring(inner, 3))}
+  }
+  if starts_with(inner, "else if ") {
+    return {kind: "elif_open", expr: trim(substring(inner, 8))}
+  }
+  if inner == "else" {
+    return {kind: "else_open", expr: ""}
+  }
+  if inner == "end" {
+    return {kind: "end", expr: ""}
+  }
+  return {kind: "expr", expr: inner}
+}
+
+fn _index_of(hay, needle) {
+  let nh = len(hay)
+  let nn = len(needle)
+  if nn == 0 {
+    return 0
+  }
+  var i = 0
+  while i + nn <= nh {
+    if substring(hay, i, nn) == needle {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+fn _tpl_render_block(tokens, start, end, bindings) {
+  var out = ""
+  var i = start
+  while i < end {
+    let t = tokens[i]
+    let kind = t.kind
+    if kind == "text" {
+      out = out + t.body
+      i = i + 1
+    } else if kind == "expr" {
+      out = out + to_string(_tpl_eval(t.expr, bindings))
+      i = i + 1
+    } else if kind == "for_open" {
+      let close = _tpl_find_end(tokens, i + 1, end)
+      let seq = _tpl_eval(t.expr, bindings)
+      if type_of(seq) == "list" {
+        for item in seq {
+          let inner = _tpl_render_block(tokens, i + 1, close, {...bindings, [t.var_name]: item})
+          out = out + inner.text
+        }
+      }
+      i = close + 1
+    } else if kind == "if_open" {
+      let scan = _tpl_scan_if(tokens, i, end)
+      var taken = false
+      for branch in scan.branches {
+        if !taken {
+          let cond = if branch.kind == "else_open" {
+            true
+          } else {
+            _tpl_truthy(_tpl_eval(branch.expr, bindings))
+          }
+          if cond {
+            let inner = _tpl_render_block(tokens, branch.body_start, branch.body_end, bindings)
+            out = out + inner.text
+            taken = true
+          }
+        }
+      }
+      i = scan.end_index + 1
+    } else {
+      return {text: out, next: i}
+    }
+  }
+  return {text: out, next: i}
+}
+
+fn _tpl_find_end(tokens, start, end) {
+  var depth = 0
+  var i = start
+  while i < end {
+    let k = tokens[i].kind
+    if k == "for_open" || k == "if_open" {
+      depth = depth + 1
+    } else if k == "end" {
+      if depth == 0 {
+        return i
+      }
+      depth = depth - 1
+    }
+    i = i + 1
+  }
+  throw "render_string: missing {{ end }} for block"
+}
+
+fn _tpl_scan_if(tokens, start, end) {
+  var depth = 0
+  var branches = []
+  let head = tokens[start]
+  var current = {kind: head.kind, expr: head.expr, body_start: start + 1, body_end: start + 1}
+  var i = start + 1
+  while i < end {
+    let t = tokens[i]
+    let k = t.kind
+    if k == "for_open" || k == "if_open" {
+      depth = depth + 1
+    } else if k == "end" {
+      if depth == 0 {
+        current = {...current, body_end: i}
+        branches = branches + [current]
+        return {branches: branches, end_index: i}
+      }
+      depth = depth - 1
+    } else if depth == 0 && (k == "elif_open" || k == "else_open") {
+      current = {...current, body_end: i}
+      branches = branches + [current]
+      current = {kind: k, expr: t.expr, body_start: i + 1, body_end: i + 1}
+    }
+    i = i + 1
+  }
+  throw "render_string: missing {{ end }} for if-block"
+}
+
+fn _tpl_truthy(v) {
+  if v == nil {
+    return false
+  }
+  if type_of(v) == "bool" {
+    return v
+  }
+  if v == "" {
+    return false
+  }
+  if v == 0 {
+    return false
+  }
+  if type_of(v) == "list" && len(v) == 0 {
+    return false
+  }
+  return true
+}
+
+fn _tpl_eval(expr: string, bindings: dict) {
+  let path = split(trim(expr), ".")
+  if len(path) == 0 {
+    return nil
+  }
+  var node = bindings.get(path[0])
+  var i = 1
+  while i < len(path) {
+    if node == nil {
+      return nil
+    }
+    node = node.get(path[i])
+    i = i + 1
+  }
+  return node
+}

@@ -1,0 +1,34 @@
+// codegen_smoke — M3 acceptance: generate a Harn SDK module from the
+// pinned Notion fixture, write it out, and shell out to `harn check`
+// to assert the emitted source parses cleanly.
+
+import { parse, codegen_module } from "../src/lib"
+
+pipeline default() {
+  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let doc = parse(raw)
+
+  let src = codegen_module(doc, {
+    module_name: "notion",
+    client_name: "NotionClient",
+    default_base_url: "https://api.notion.com",
+    header_overrides: {"Notion-Version": "2025-09-03"},
+  })
+
+  let out_path = "/tmp/harn-openapi-codegen-smoke.harn"
+  write_file(out_path, src)
+  println("wrote generated module: ${out_path} (${len(src)} bytes)")
+
+  let harn_root = "/Users/ksinder/projects/harn"
+  let cmd = "cd " + harn_root
+    + " && cargo run --quiet --bin harn -- check " + out_path
+  let result = shell(cmd)
+  if !result.success {
+    println("harn check stderr:")
+    println(result.stderr)
+    println("harn check stdout:")
+    println(result.stdout)
+  }
+  assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
+  println("codegen_smoke: ok")
+}

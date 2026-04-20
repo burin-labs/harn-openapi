@@ -1,0 +1,31 @@
+// regen_demo — end-to-end demo of the parse → codegen → write loop
+// against the bundled Notion OpenAPI fixture. Writes a generated SDK
+// module to the Harn runtime temp directory so it doesn't dirty the
+// tree. Run directly:
+//
+//   cd /Users/ksinder/projects/harn
+//   cargo run --quiet --bin harn -- run \
+//     /Users/ksinder/projects/harn-openapi/scripts/regen_demo.harn
+
+import { parse, operations, codegen_module } from "../src/lib"
+
+pipeline default() {
+  let fixture = "/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json"
+  let raw = read_file(fixture)
+  let doc = parse(raw)
+  let ops = operations(doc)
+  println("parsed ${doc.info.title} (OpenAPI ${doc.openapi})")
+  println("  operations: ${len(ops)}")
+  println("  schemas:    ${len(doc.components.schemas)}")
+
+  let src = codegen_module(doc, {
+    module_name: "notion",
+    client_name: "NotionClient",
+    default_base_url: "https://api.notion.com",
+    header_overrides: {"Notion-Version": "2025-09-03"},
+  })
+  let out = "/tmp/harn-openapi-regen-demo.harn"
+  write_file(out, src)
+  println("  wrote:      ${out} (${len(src)} bytes)")
+  println("regen_demo: ok")
+}
