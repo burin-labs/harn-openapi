@@ -320,6 +320,10 @@ let _MODULE_TEMPLATE = """
   // Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
   // Module:     {{ module_name }}
 
+  {{ for alias in response_aliases }}
+  {{ alias.source }}
+  {{ end }}
+
   /** Create a new {{ client_name }} handle. */
   pub fn new_client({{ new_client_signature }}) -> dict {
     return {
@@ -361,15 +365,18 @@ let _MODULE_TEMPLATE = """
   {{ for op in operations }}
   {{ op.doc_comment }}{{ if op.security_note }}
   // {{ op.security_note }}{{ end }}
-  pub fn {{ op.fn_name }}({{ op.signature }}) -> dict {
+  pub fn {{ op.fn_name }}({{ op.signature }}) -> {{ op.return_type }} {
     let url = client.base_url + _interpolate("{{ op.path }}", {{ op.path_bindings }}){{ if op.has_query }} + _query_string({{ op.query_bindings }}){{ end }}
     {{ if op.has_body }}let body_str = json_stringify(body)
     let resp = http_{{ op.method }}(url, body_str, {headers: {{ op.headers_call }}}){{ else }}let resp = http_{{ op.method }}(url, {headers: {{ op.headers_call }}}){{ end }}
     if resp.status >= 400 {
       throw "{{ op.fn_name }}: HTTP " + to_string(resp.status) + " " + resp.body
     }
-    if resp.body == "" { return {status: resp.status} }
-    return json_parse(resp.body)
+    {{ if op.returns_nil }}return nil{{ else }}let raw = json_parse(resp.body)
+    if type_of(raw) != "dict" {
+      throw "{{ op.fn_name }}: expected dict response, got " + type_of(raw)
+    }
+    return raw{{ end }}
   }
   {{ end }}
   """
@@ -383,10 +390,10 @@ pub fn codegen_module(doc: dict, options: dict) -> string {
   let schemes = doc.get("security_schemes") ?? {}
   let doc_security = doc.get("security") ?? []
   let ops_raw = operations(doc)
-  // First pass: resolve each op's security choice so we can collect the
-  // set of schemes actually referenced. An explicit `security: []` at
-  // either the operation or document level means "no auth" and must NOT
-  // pull in a scheme.
+  // First pass (security): resolve each op's security choice so we can
+  // collect the set of schemes actually referenced. An explicit
+  // `security: []` at either the operation or document level means
+  // "no auth" and must NOT pull in a scheme.
   var used_schemes = []
   for op in ops_raw {
     let choice = _resolve_security(op.security, doc_security)
@@ -405,14 +412,31 @@ pub fn codegen_module(doc: dict, options: dict) -> string {
       auth_helpers = auth_helpers + [{body: _render_auth_helper(scheme_name, def)}]
     }
   }
-  // Second pass: build operation models with per-op dispatch wired up.
+  // Second pass (response types): collect response-type aliases, keyed so
+  // refs to the same component schema are emitted once and reused by every
+  // operation that returns it.
+  var alias_cache = {by_ref: {}, by_name: {}, order: []}
+  var op_return_types = []
+  for op in ops_raw {
+    let rt = _resolve_response_type(doc, op, alias_cache)
+    alias_cache = rt.cache
+    op_return_types = op_return_types + [rt.info]
+  }
+  // Third pass: build operation models with per-op security dispatch and
+  // typed return wired up.
   var ops = []
   var seen_names = []
-  for op in ops_raw {
+  for entry in ops_raw.enumerate() {
+    let op = entry.value
+    let ret = op_return_types[entry.index]
     let choice = _resolve_security(op.security, doc_security)
-    let model = _build_op_model(op, seen_names, choice, schemes)
+    let model = _build_op_model(op, seen_names, choice, schemes, ret)
     seen_names = seen_names + [model.fn_name]
     ops = ops + [model]
+  }
+  var alias_entries = []
+  for name in alias_cache.order {
+    alias_entries = alias_entries + [{source: alias_cache.by_name.get(name)}]
   }
   let bindings = {
     doc_title: (doc.get("info") ?? {}).get("title") ?? module_name,
@@ -424,6 +448,7 @@ pub fn codegen_module(doc: dict, options: dict) -> string {
     client_fields: client_fields,
     auth_helpers: auth_helpers,
     operations: ops,
+    response_aliases: alias_entries,
   }
   return render_string(_MODULE_TEMPLATE, bindings)
 }
@@ -663,7 +688,7 @@ fn _default_server_url(doc) {
   return servers[0].get("url") ?? ""
 }
 
-fn _build_op_model(op, taken_names, choice, schemes) {
+fn _build_op_model(op, taken_names, choice, schemes, ret) {
   let fn_name = _unique_fn_name(_sanitize_fn_name(op.operation_id), taken_names)
   let params = op.parameters
   var path_params = []
@@ -759,6 +784,8 @@ fn _build_op_model(op, taken_names, choice, schemes) {
     doc_comment: doc_comment,
     headers_call: headers_call,
     security_note: security_note,
+    return_type: ret.type_name,
+    returns_nil: ret.returns_nil,
   }
 }
 
@@ -784,6 +811,323 @@ fn _render_query_bindings(parts, has_apikey_query, scheme_name) {
     return "{" + join(parts, ", ") + ", " + extra + "}"
   }
   return "{" + join(parts, ", ") + "}"
+}
+
+// -----------------------------------------------------------------------------
+// Response type resolution
+// -----------------------------------------------------------------------------
+
+//   For each operation we pick the first 2xx response whose
+//   application/json body carries a JSON schema, classify that schema,
+//   and either emit a typed `type` alias for it or fall back to `dict`.
+//   Aliases keyed by component `$ref` are deduplicated across
+//   operations; inline schemas get an alias named after their op.
+
+// -----------------------------------------------------------------------------
+
+fn _resolve_response_type(doc, op, cache) {
+  let picked = _pick_success_response(op)
+  if picked == nil {
+    // No 2xx declared at all — legacy `dict` with empty-body fallback.
+    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+  }
+  if picked.kind == "nil" {
+    return {info: {type_name: "nil", returns_nil: true, alias_name: nil}, cache: cache}
+  }
+  if picked.kind == "opaque" {
+    // 2xx with a non-JSON body (e.g. application/octet-stream). Keep
+    // the legacy untyped surface; a future ticket can add typed
+    // byte/stream returns.
+    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+  }
+  let schema_raw = picked.schema
+  if schema_raw == nil {
+    // JSON content entry with no declared schema — fall back to dict.
+    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+  }
+  let ref = schema_raw.get("$ref")
+  // For classification we always work off the fully-resolved (allOf-
+  // merged) schema, since components often declare the interesting
+  // shape inside `allOf: [...]`.
+  let full = schema(doc, schema_raw)
+  let shape = _schema_shape_kind(full)
+  if shape == "nil" {
+    return {info: {type_name: "nil", returns_nil: true, alias_name: nil}, cache: cache}
+  }
+  if ref != nil {
+    let cached = cache.by_ref.get(ref)
+    if cached != nil {
+      if shape == "dict" {
+        return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+      }
+      return {info: {type_name: cached, returns_nil: false, alias_name: cached}, cache: cache}
+    }
+    if shape == "dict" {
+      // oneOf/anyOf/primitive/etc. — no struct alias for v0.
+      return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    }
+    if !_struct_has_renderable_keys(full) {
+      return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    }
+    let base_alias = _alias_name_from_ref(ref)
+    let alias_name = _unique_type_name(base_alias, cache)
+    let source = _emit_struct_alias(doc, alias_name, full)
+    let new_cache = {
+      by_ref: {...cache.by_ref, [ref]: alias_name},
+      by_name: {...cache.by_name, [alias_name]: source},
+      order: cache.order + [alias_name],
+    }
+    return {info: {type_name: alias_name, returns_nil: false, alias_name: alias_name}, cache: new_cache}
+  }
+  // Inline schema — classify, and if struct-shaped emit an alias named
+  // after the operation id.
+  if shape == "dict" {
+    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+  }
+  if !_struct_has_renderable_keys(full) {
+    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+  }
+  let base = _alias_name_from_operation(op.operation_id)
+  let alias_name = _unique_type_name(base, cache)
+  let source = _emit_struct_alias(doc, alias_name, full)
+  let new_cache = {
+    by_ref: cache.by_ref,
+    by_name: {...cache.by_name, [alias_name]: source},
+    order: cache.order + [alias_name],
+  }
+  return {info: {type_name: alias_name, returns_nil: false, alias_name: alias_name}, cache: new_cache}
+}
+
+fn _pick_success_response(op) {
+  // Walk responses in spec order. First entry whose status code starts
+  // with "2" wins. Returns one of:
+  //   {kind: "json", schema}   — JSON body we can try to type.
+  //   {kind: "nil"}            — 204 No Content (absent response body).
+  //   {kind: "opaque"}         — 2xx with a body but no JSON schema
+  //                              (e.g. application/octet-stream). The
+  //                              caller keeps the legacy `dict` return.
+  //   nil                      — operation has no 2xx response at all.
+  var saw_opaque = false
+  for entry in op.responses {
+    let code = entry.key
+    if _is_success_code(code) {
+      let resp = entry.value
+      let content = resp.get("content")
+      if content == nil {
+        return {kind: "nil"}
+      }
+      let app_json = content.get("application/json")
+      if app_json != nil {
+        return {kind: "json", schema: app_json.get("schema")}
+      }
+      saw_opaque = true
+    }
+  }
+  if saw_opaque {
+    return {kind: "opaque"}
+  }
+  return nil
+}
+
+fn _is_success_code(code) {
+  if type_of(code) != "string" {
+    return false
+  }
+  return starts_with(code, "2")
+}
+
+fn _schema_shape_kind(sch) {
+  // Returns "struct" (emit an object alias), "dict" (polymorphic /
+  // primitive / unsupported — fall back to `dict`), or "nil" (no
+  // response body shape to speak of).
+  //
+  // A schema that declares both `properties` and `oneOf`/`anyOf` is an
+  // intersection ("has these fields AND matches one of these shapes").
+  // v0 treats that as a struct — the depth-1 properties provide useful
+  // narrowing, and the union narrowing is deferred to `schema_is` at
+  // the call site.
+  if sch == nil {
+    return "nil"
+  }
+  if type_of(sch) != "dict" {
+    return "dict"
+  }
+  if sch.get("properties") != nil {
+    return "struct"
+  }
+  if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
+    return "dict"
+  }
+  let ty = sch.get("type")
+  if ty == "object" {
+    // `type: object` with no explicit properties — treat as bag-of-kv.
+    return "dict"
+  }
+  // Primitive or unspecified.
+  return "dict"
+}
+
+fn _alias_name_from_ref(ref) {
+  // "#/components/schemas/pageObjectResponse" -> "PageObjectResponse"
+  let parts = split(ref, "/")
+  let tail = parts[len(parts) - 1]
+  return _pascal_case(tail)
+}
+
+fn _alias_name_from_operation(operation_id) {
+  // Feed the raw operation_id into `_pascal_case` so camelCase ids
+  // like `searchItems` render as `SearchItems` rather than the
+  // lowercased `Searchitems` we'd get from `_sanitize_fn_name`.
+  return _pascal_case(operation_id) + "Response"
+}
+
+fn _pascal_case(raw) {
+  if raw == nil || raw == "" {
+    return "T"
+  }
+  let segments = split(regex_replace_all("[^a-zA-Z0-9]+", "_", raw), "_")
+  var out = ""
+  for seg in segments {
+    if seg != "" {
+      let first = substring(seg, 0, 1).upper()
+      let rest = if len(seg) > 1 {
+        substring(seg, 1, len(seg) - 1)
+      } else {
+        ""
+      }
+      out = out + first + rest
+    }
+  }
+  if out == "" {
+    return "T"
+  }
+  let first_char = substring(out, 0, 1)
+  if _is_digit(first_char) {
+    return "T" + out
+  }
+  return out
+}
+
+fn _unique_type_name(base, cache) {
+  if cache.by_name.get(base) == nil {
+    return base
+  }
+  var n = 2
+  var candidate = base + to_string(n)
+  while cache.by_name.get(candidate) != nil {
+    n = n + 1
+    candidate = base + to_string(n)
+  }
+  return candidate
+}
+
+fn _emit_struct_alias(doc, alias_name, resolved) {
+  let props = resolved.get("properties") ?? {}
+  var keys = []
+  for entry in props {
+    keys = keys + [entry.key]
+  }
+  keys.sort()
+  var field_lines = []
+  for key in keys {
+    let prop_schema = props.get(key)
+    let field_type = _harn_type_for_property(doc, prop_schema, 1)
+    let field_entry = _harn_struct_field(key, field_type.annotation)
+    let comment_suffix = if field_type.comment != "" {
+      "  // " + field_type.comment
+    } else {
+      ""
+    }
+    field_lines = field_lines + ["  " + field_entry + "," + comment_suffix]
+  }
+  var body = "type " + alias_name + " = {\n"
+  for line in field_lines {
+    body = body + line + "\n"
+  }
+  body = body + "}"
+  return body
+}
+
+fn _harn_type_for_property(doc, prop_schema, depth) {
+  // Returns {annotation: string, comment: string}. `depth` starts at 1
+  // for direct properties of the response. v0 rule: stop narrowing at
+  // depth 2 — nested dicts/lists render as bare `dict`/`list`.
+  if type_of(prop_schema) != "dict" {
+    return {annotation: "dict", comment: ""}
+  }
+  let ref = prop_schema.get("$ref")
+  if ref != nil {
+    let resolved = schema(doc, prop_schema)
+    let kind = _schema_shape_kind(resolved)
+    if kind == "dict" {
+      let ty = resolved.get("type")
+      let prim = _primitive_harn_type(ty)
+      if prim != nil {
+        return {annotation: prim, comment: ""}
+      }
+      let ref_name = _alias_name_from_ref(ref)
+      return {annotation: "dict", comment: ref_name + " (polymorphic or primitive) — narrow with schema_is."}
+    }
+    // Referenced schema is a struct. v0 does not recursively emit
+    // dependent aliases, so nested struct refs render as `dict` with a
+    // hint pointing at the schema name.
+    let ref_name = _alias_name_from_ref(ref)
+    return {annotation: "dict", comment: ref_name + " — nested; narrow with schema_is."}
+  }
+  if prop_schema.get("oneOf") != nil || prop_schema.get("anyOf") != nil {
+    return {annotation: "dict", comment: "polymorphic; narrow with schema_is."}
+  }
+  let ty = prop_schema.get("type")
+  if ty == "array" {
+    return {annotation: "list", comment: ""}
+  }
+  if ty == "object" {
+    if prop_schema.get("properties") != nil && depth < 2 {
+      // Could recurse inline, but v0 keeps it simple: bare dict with a
+      // nudge. Future work (issue follow-up) may emit nested aliases.
+      return {annotation: "dict", comment: "inline object; narrow with schema_is."}
+    }
+    return {annotation: "dict", comment: ""}
+  }
+  let prim = _primitive_harn_type(ty)
+  if prim != nil {
+    return {annotation: prim, comment: ""}
+  }
+  // Unknown / nullable-union / missing — fall back to dict.
+  return {annotation: "dict", comment: ""}
+}
+
+fn _primitive_harn_type(ty) {
+  if ty == "string" {
+    return "string"
+  }
+  if ty == "boolean" {
+    return "bool"
+  }
+  if ty == "integer" {
+    return "int"
+  }
+  if ty == "number" {
+    return "float"
+  }
+  return nil
+}
+
+fn _harn_struct_field(key, annotation) {
+  // Type-alias field names accept bare identifiers even when the name
+  // collides with a keyword (e.g. `type`, `object`). Callers guarantee
+  // the key is a plain identifier via `_struct_has_renderable_keys`.
+  return key + ": " + annotation
+}
+
+fn _struct_has_renderable_keys(resolved) {
+  let props = resolved.get("properties") ?? {}
+  for entry in props {
+    if !_is_plain_identifier(entry.key) {
+      return false
+    }
+  }
+  return true
 }
 
 fn _sanitize_fn_name(raw) {

@@ -1,0 +1,264 @@
+// response_types_smoke — issue #5 acceptance: the codegen emits a Harn
+// `type` alias per 2xx response schema, dedupes shared $refs, handles
+// inline schemas and 204 No Content, and the generated module passes
+// `harn check`.
+import { codegen_module, parse } from "../src/lib"
+
+let _TINY_DOC = """
+  {
+    "openapi": "3.1.0",
+    "info": { "title": "Tiny API", "version": "1.0.0" },
+    "servers": [{"url": "https://api.example.com"}],
+    "paths": {
+      "/pages/{id}": {
+        "get": {
+          "operationId": "getPage",
+          "parameters": [
+            {"name": "id", "in": "path", "required": true,
+             "schema": {"type": "string"}}
+          ],
+          "responses": {
+            "200": {
+              "description": "A page",
+              "content": {
+                "application/json": {
+                  "schema": {"$ref": "#/components/schemas/PageObject"}
+                }
+              }
+            }
+          }
+        },
+        "delete": {
+          "operationId": "deletePage",
+          "parameters": [
+            {"name": "id", "in": "path", "required": true,
+             "schema": {"type": "string"}}
+          ],
+          "responses": {
+            "204": {"description": "Deleted"}
+          }
+        }
+      },
+      "/pages/by-slug/{slug}": {
+        "get": {
+          "operationId": "getPageBySlug",
+          "parameters": [
+            {"name": "slug", "in": "path", "required": true,
+             "schema": {"type": "string"}}
+          ],
+          "responses": {
+            "200": {
+              "description": "Same shape as getPage",
+              "content": {
+                "application/json": {
+                  "schema": {"$ref": "#/components/schemas/PageObject"}
+                }
+              }
+            }
+          }
+        }
+      },
+      "/search": {
+        "get": {
+          "operationId": "searchItems",
+          "responses": {
+            "200": {
+              "description": "Paged results — defined inline",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "has_more": {"type": "boolean"},
+                      "next_cursor": {"type": "string"},
+                      "results": {"type": "array"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/raw": {
+        "get": {
+          "operationId": "getRawBytes",
+          "responses": {
+            "200": {
+              "description": "Binary bytes — non-JSON media type.",
+              "content": {
+                "application/octet-stream": {
+                  "schema": {"type": "string", "format": "binary"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "PageObject": {
+          "type": "object",
+          "required": ["id", "title", "archived"],
+          "properties": {
+            "id":       {"type": "string"},
+            "title":    {"type": "string"},
+            "archived": {"type": "boolean"},
+            "word_count": {"type": "integer"},
+            "score":    {"type": "number"},
+            "tags":     {"type": "array", "items": {"type": "string"}},
+            "meta":     {"type": "object"}
+          }
+        }
+      }
+    }
+  }
+  """
+
+fn _count_occurrences(haystack: string, needle: string) -> int {
+  var count = 0
+  var idx = 0
+  let hn = len(haystack)
+  let nn = len(needle)
+  if nn == 0 {
+    return 0
+  }
+  while idx + nn <= hn {
+    if substring(haystack, idx, nn) == needle {
+      count = count + 1
+      idx = idx + nn
+    } else {
+      idx = idx + 1
+    }
+  }
+  return count
+}
+
+pipeline default() {
+  let doc = parse(_TINY_DOC)
+  let src = codegen_module(
+    doc,
+    {
+    module_name: "tiny",
+    client_name: "TinyClient",
+    default_base_url: "https://api.example.com",
+    header_overrides: {},
+  },
+  )
+  let out_path = "/tmp/harn-openapi-response-types-smoke.harn"
+  write_file(out_path, src)
+  println("wrote tiny module: ${out_path} (${len(src)} bytes)")
+  // --- Acceptance 1: one alias per distinct response schema. ---
+  // PageObject (2 ops share it) + SearchItemsResponse (inline) = 2
+  // aliases; deletePage (204) and getRawBytes (non-JSON) emit no
+  // aliases.
+  let page_alias_hits = _count_occurrences(src, "type PageObject = {")
+  let search_alias_hits = _count_occurrences(src, "type SearchItemsResponse = {")
+  assert(
+    page_alias_hits == 1,
+    "PageObject alias must be emitted exactly once, got ${page_alias_hits}",
+  )
+  assert(
+    search_alias_hits == 1,
+    "SearchItemsResponse alias must be emitted once, got ${search_alias_hits}",
+  )
+  // --- Acceptance 2: the alias carries the resolved property set. ---
+  assert(contains(src, "id: string"), "PageObject.id must be typed as string")
+  assert(contains(src, "title: string"), "PageObject.title must be typed as string")
+  assert(contains(src, "archived: bool"), "PageObject.archived must be typed as bool")
+  assert(contains(src, "word_count: int"), "PageObject.word_count must be typed as int")
+  assert(contains(src, "score: float"), "PageObject.score must be typed as float")
+  assert(contains(src, "tags: list"), "PageObject.tags must be typed as list")
+  assert(contains(src, "meta: dict"), "PageObject.meta must be typed as dict")
+  // --- Acceptance 3: both operations sharing PageObject return the
+  // same typed alias. Existing codegen lowercases operation_id when it
+  // has no word separators (see `_sanitize_fn_name`), so
+  // `getPage` -> `getpage` etc. ---
+  assert(
+    contains(src, "pub fn getpage(client: dict, id) -> PageObject"),
+    "getpage must return PageObject",
+  )
+  assert(
+    contains(src, "pub fn getpagebyslug(client: dict, slug) -> PageObject"),
+    "getpagebyslug must return PageObject",
+  )
+  // --- Acceptance 4: inline search response gets a synthesized alias
+  // named after its operation. ---
+  assert(
+    contains(src, "pub fn searchitems(client: dict) -> SearchItemsResponse"),
+    "searchitems must return SearchItemsResponse",
+  )
+  assert(contains(src, "has_more: bool"), "inline alias must type has_more")
+  assert(contains(src, "next_cursor: string"), "inline alias must type next_cursor")
+  assert(contains(src, "results: list"), "inline alias must type results")
+  // --- Acceptance 5: 204 No Content -> nil return type, no json_parse. ---
+  assert(
+    contains(src, "pub fn deletepage(client: dict, id) -> nil"),
+    "deletepage (204) must return nil",
+  )
+  let delete_block_start = _count_occurrences(src, "pub fn deletepage")
+  assert(delete_block_start == 1, "deletepage must be emitted once")
+  // --- Acceptance 6: non-JSON success body -> untyped fallback dict,
+  // no bogus alias emission. ---
+  assert(
+    contains(src, "pub fn getrawbytes(client: dict) -> dict"),
+    "non-JSON response body must fall back to dict",
+  )
+  let raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
+  assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
+  // --- Acceptance 7: emitted module passes `harn check`. ---
+  let harn_root = "/Users/ksinder/projects/harn"
+  let result = shell("cd " + harn_root + " && cargo run --quiet --bin harn -- check " + out_path)
+  if !result.success {
+    println("harn check stderr:")
+    println(result.stderr)
+    println("harn check stdout:")
+    println(result.stdout)
+  }
+  assert(result.success, "generated module must pass `harn check` (status ${result.status})")
+  // --- Acceptance 8: on the Notion fixture, emit >=20 distinct type
+  // aliases, and fn signatures reuse them by name. ---
+  let notion_raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let notion_doc = parse(notion_raw)
+  let notion_src = codegen_module(
+    notion_doc,
+    {
+    module_name: "notion",
+    client_name: "NotionClient",
+    default_base_url: "https://api.notion.com",
+    header_overrides: {["Notion-Version"]: "2025-09-03"},
+  },
+  )
+  let alias_count = _count_occurrences(notion_src, "\ntype ")
+  println("notion aliases: ${alias_count}")
+  assert(alias_count >= 20, "expected >=20 aliases on the Notion fixture, got ${alias_count}")
+  // --- Acceptance 9: fileUploadObjectResponse is emitted once even
+  // though four operations return it. ---
+  let file_alias_hits = _count_occurrences(notion_src, "type FileUploadObjectResponse = {")
+  assert(
+    file_alias_hits == 1,
+    "FileUploadObjectResponse alias must dedupe across ops, got ${file_alias_hits}",
+  )
+  let file_return_hits = _count_occurrences(notion_src, "-> FileUploadObjectResponse")
+  assert(
+    file_return_hits >= 4,
+    "expected >=4 ops returning FileUploadObjectResponse, got ${file_return_hits}",
+  )
+  // --- Acceptance 10: user-object shared alias between get_self and
+  // get_user. ---
+  let user_alias_hits = _count_occurrences(notion_src, "type UserObjectResponse = {")
+  assert(
+    user_alias_hits == 1,
+    "UserObjectResponse alias must be emitted once, got ${user_alias_hits}",
+  )
+  assert(
+    contains(notion_src, "pub fn get_self(client: dict) -> UserObjectResponse"),
+    "get_self must return UserObjectResponse",
+  )
+  assert(
+    contains(notion_src, "pub fn get_user(client: dict, user_id) -> UserObjectResponse"),
+    "get_user must return UserObjectResponse",
+  )
+  println("response_types_smoke: ok")
+}
