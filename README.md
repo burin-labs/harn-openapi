@@ -58,12 +58,13 @@ write_file("./src/lib.harn", src)
 
 - `parse(json_string) -> dict` — normalize a 3.1.x doc to
   `{ openapi, info, servers, paths, webhooks, components,
-  security_schemes, tags }`. `paths` may be empty (3.1 allows
+  security_schemes, security, tags }`. `paths` may be empty (3.1 allows
   webhooks-only docs). `components.pathItems` is always present as a
   dict, even when the source doc omits it.
 - `operations(doc) -> list` — flatten `doc.paths` into operation
   records `{ method, path, operation_id, summary, parameters,
-  request_body, responses, security, tags, ... }`.
+  request_body, responses, security, tags, ... }`. Each operation's
+  `security` is resolved as `op.security ?? doc.security ?? []`.
 - `webhook_operations(doc) -> list` — flatten `doc.webhooks` into
   records `{ name, method, path_item, operation, operation_id,
   summary, parameters, request_body, responses, security, tags }`.
@@ -77,7 +78,47 @@ write_file("./src/lib.harn", src)
 - `enum_values(schema) -> list | nil` — extract the enum variant list,
   or `nil` when the schema is not an enum.
 - `codegen_module(doc, options) -> string` — emit a typed Harn SDK
-  module source string.
+  module source string with per-scheme security dispatch (see below).
+
+### Security handling in generated clients
+
+`codegen_module` inspects `components.securitySchemes` and emits a
+dedicated `_headers_<scheme>(client)` helper per scheme that is actually
+referenced by at least one operation. Each operation dispatches through
+the helper matching its *effective* security (`op.security ?? doc.security
+?? []`) — explicit `security: []` at either level routes through
+`_no_auth_headers(client)` so the call goes out without an `Authorization`
+header.
+
+`new_client` takes only the client fields implied by the schemes in use,
+all defaulted so callers only supply what their spec actually needs:
+
+| Scheme kind | Client field added |
+|---|---|
+| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""` |
+| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""` |
+| `apiKey` (header / query / cookie) | `api_keys: dict = {}` (keyed by scheme name) |
+| `mutualTLS` | (v0: no-op — op falls through to `_no_auth_headers`) |
+
+So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
+
+```harn
+new_client(
+  base_url: string = "https://api.notion.com",
+  token: string = "",
+  basic_user: string = "",
+  basic_password: string = "",
+  extra_headers: dict = {"Notion-Version": "..."},
+) -> dict
+```
+
+When an operation declares multiple security requirement alternatives
+(`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
+`TODO` comment above the generated function listing the alternatives so
+a human can retarget manually.
+
+Out of scope for v0: full OAuth2 flows (authorization-code, device,
+PKCE) and `mutualTLS` client-certificate plumbing.
 
 ## Development
 

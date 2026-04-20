@@ -5,14 +5,19 @@
 //   parse(json_string)           -> dict
 //       Parse an OpenAPI 3.1 JSON document into a normalized dict with
 //       shape { openapi, info, servers, paths, webhooks, components,
-//       security_schemes, tags }. OAS 3.1 makes `paths` optional and
-//       introduces first-class `webhooks` plus `components.pathItems`
-//       — all three are surfaced here. Throws on non-3.1.x docs.
+//       security_schemes, security, tags }. OAS 3.1 makes `paths`
+//       optional and introduces first-class `webhooks` plus
+//       `components.pathItems` — all three are surfaced here. The
+//       doc-level `security` is also surfaced so operation-level
+//       security falls back cleanly. Throws on non-3.1.x docs.
 //
 //   operations(doc)              -> list<operation>
 //       Flatten path-itemed operations in `doc.paths` into a list of
 //       { method, path, operation_id, summary, parameters,
-//       request_body, responses, security } dicts.
+//       request_body, responses, security } dicts. Each operation's
+//       `security` is resolved as `op.security ?? doc.security ?? []`,
+//       so an explicit `security: []` at either level survives as a
+//       signal to emit an unauthenticated call.
 //
 //   webhook_operations(doc)      -> list<webhook_operation>
 //       Flatten OAS 3.1 `doc.webhooks` into a list of
@@ -36,6 +41,15 @@
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides? }.
+//       The generated client handles per-operation security: a helper
+//       `_headers_<scheme>(client)` is emitted for each scheme declared
+//       in `components.securitySchemes` and actually referenced by at
+//       least one operation (bearer / basic / apiKey-in-{header,query,
+//       cookie} / oauth2 / openIdConnect). Operations with `security: []`
+//       dispatch through `_no_auth_headers(client)` so they never send
+//       an Authorization header. `new_client`'s parameter set is
+//       restricted to the fields the emitted helpers actually read
+//       (token, basic_user/basic_password, api_keys).
 //
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
@@ -65,6 +79,7 @@ pub fn parse(json_string: string) -> dict {
     webhooks: raw.get("webhooks") ?? {},
     components: components_with_path_items,
     security_schemes: components.get("securitySchemes") ?? {},
+    security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
   }
 }
@@ -306,22 +321,24 @@ let _MODULE_TEMPLATE = """
   // Module:     {{ module_name }}
 
   /** Create a new {{ client_name }} handle. */
-  pub fn new_client(token: string, base_url: string = "{{ default_base_url }}") -> dict {
+  pub fn new_client({{ new_client_signature }}) -> dict {
     return {
-      base_url: base_url,
-      token: token,
-      extra_headers: {{ extra_headers_literal }},
+      base_url: base_url,{{ for field in client_fields }}
+      {{ field.name }}: {{ field.name }},{{ end }}
+      extra_headers: extra_headers,
     }
   }
 
-  fn _auth_headers(client: dict) -> dict {
-    var hs = {Authorization: "Bearer " + client.token, "Content-Type": "application/json"}
+  fn _no_auth_headers(client: dict) -> dict {
+    var hs = {"Content-Type": "application/json"}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
     return hs
   }
-
+  {{ for helper in auth_helpers }}
+  {{ helper.body }}
+  {{ end }}
   fn _interpolate(template: string, bindings: dict) -> string {
     var out = template
     for entry in bindings {
@@ -342,11 +359,12 @@ let _MODULE_TEMPLATE = """
   }
 
   {{ for op in operations }}
-  {{ op.doc_comment }}
+  {{ op.doc_comment }}{{ if op.security_note }}
+  // {{ op.security_note }}{{ end }}
   pub fn {{ op.fn_name }}({{ op.signature }}) -> dict {
     let url = client.base_url + _interpolate("{{ op.path }}", {{ op.path_bindings }}){{ if op.has_query }} + _query_string({{ op.query_bindings }}){{ end }}
     {{ if op.has_body }}let body_str = json_stringify(body)
-    let resp = http_{{ op.method }}(url, body_str, {headers: _auth_headers(client)}){{ else }}let resp = http_{{ op.method }}(url, {headers: _auth_headers(client)}){{ end }}
+    let resp = http_{{ op.method }}(url, body_str, {headers: {{ op.headers_call }}}){{ else }}let resp = http_{{ op.method }}(url, {headers: {{ op.headers_call }}}){{ end }}
     if resp.status >= 400 {
       throw "{{ op.fn_name }}: HTTP " + to_string(resp.status) + " " + resp.body
     }
@@ -362,11 +380,37 @@ pub fn codegen_module(doc: dict, options: dict) -> string {
   let client_name = options.get("client_name") ?? "Client"
   let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
   let header_overrides = options.get("header_overrides") ?? {}
+  let schemes = doc.get("security_schemes") ?? {}
+  let doc_security = doc.get("security") ?? []
   let ops_raw = operations(doc)
+  // First pass: resolve each op's security choice so we can collect the
+  // set of schemes actually referenced. An explicit `security: []` at
+  // either the operation or document level means "no auth" and must NOT
+  // pull in a scheme.
+  var used_schemes = []
+  for op in ops_raw {
+    let choice = _resolve_security(op.security, doc_security)
+    if choice.scheme_name != nil && !used_schemes.contains(choice.scheme_name) {
+      used_schemes = used_schemes + [choice.scheme_name]
+    }
+  }
+  // Derive which client fields are needed from the used schemes.
+  let client_fields = _derive_client_fields(used_schemes, schemes)
+  let new_client_signature = _render_new_client_signature(client_fields, default_base_url, header_overrides)
+  // Emit per-scheme header/query helpers.
+  var auth_helpers = []
+  for scheme_name in used_schemes {
+    let def = schemes.get(scheme_name)
+    if def != nil {
+      auth_helpers = auth_helpers + [{body: _render_auth_helper(scheme_name, def)}]
+    }
+  }
+  // Second pass: build operation models with per-op dispatch wired up.
   var ops = []
   var seen_names = []
   for op in ops_raw {
-    let model = _build_op_model(op, seen_names)
+    let choice = _resolve_security(op.security, doc_security)
+    let model = _build_op_model(op, seen_names, choice, schemes)
     seen_names = seen_names + [model.fn_name]
     ops = ops + [model]
   }
@@ -376,10 +420,239 @@ pub fn codegen_module(doc: dict, options: dict) -> string {
     module_name: module_name,
     client_name: client_name,
     default_base_url: default_base_url,
-    extra_headers_literal: _render_dict_literal(header_overrides),
+    new_client_signature: new_client_signature,
+    client_fields: client_fields,
+    auth_helpers: auth_helpers,
     operations: ops,
   }
   return render_string(_MODULE_TEMPLATE, bindings)
+}
+
+/**
+ * Resolve which security requirement applies to a given operation.
+ *
+ * Returns a dict with:
+ *   scheme_name:   string | nil  — nil means "no auth"
+ *   alternatives:  list<string>  — other scheme names from requirements we dropped
+ *   explicit_none: bool          — true when the spec said `security: []`
+ */
+fn _resolve_security(op_security, doc_security) {
+  // operation.security wins even when it's an empty list (means "no auth").
+  let reqs = if op_security != nil {
+    op_security
+  } else {
+    doc_security
+  }
+  if type_of(reqs) != "list" || len(reqs) == 0 {
+    return {scheme_name: nil, alternatives: [], explicit_none: true}
+  }
+  let first = reqs[0]
+  if type_of(first) != "dict" {
+    return {scheme_name: nil, alternatives: [], explicit_none: true}
+  }
+  // Pick the first scheme key in the first requirement.
+  var picked = nil
+  for entry in first {
+    if picked == nil {
+      picked = entry.key
+    }
+  }
+  if picked == nil {
+    return {scheme_name: nil, alternatives: [], explicit_none: true}
+  }
+  var alternatives = []
+  var i = 1
+  while i < len(reqs) {
+    let alt = reqs[i]
+    if type_of(alt) == "dict" {
+      for entry in alt {
+        if !alternatives.contains(entry.key) && entry.key != picked {
+          alternatives = alternatives + [entry.key]
+        }
+      }
+    }
+    i = i + 1
+  }
+  return {scheme_name: picked, alternatives: alternatives, explicit_none: false}
+}
+
+/** Which client-struct fields are needed given the schemes actually used? */
+fn _derive_client_fields(used_schemes, schemes) {
+  var want_token = false
+  var want_basic = false
+  var want_api_keys = false
+  for name in used_schemes {
+    let def = schemes.get(name)
+    if def != nil {
+      let kind = _scheme_kind(def)
+      if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
+        want_token = true
+      } else if kind == "basic" {
+        want_basic = true
+      } else if kind == "apiKey-header" || kind == "apiKey-query" || kind == "apiKey-cookie" {
+        want_api_keys = true
+      }
+    }
+  }
+  var fields = []
+  if want_token {
+    fields = fields + [{name: "token", kind: "string", default: "\"\""}]
+  }
+  if want_basic {
+    fields = fields + [{name: "basic_user", kind: "string", default: "\"\""}]
+    fields = fields + [{name: "basic_password", kind: "string", default: "\"\""}]
+  }
+  if want_api_keys {
+    fields = fields + [{name: "api_keys", kind: "dict", default: "{}"}]
+  }
+  return fields
+}
+
+/**
+ * Classify a security scheme into one of our supported kinds.
+ *
+ * Returns: "bearer" | "basic" | "apiKey-header" | "apiKey-query" |
+ *          "apiKey-cookie" | "oauth2" | "openIdConnect" | "mutualTLS" |
+ *          "unknown".
+ */
+fn _scheme_kind(def) {
+  let ty = def.get("type")
+  if ty == "http" {
+    let scheme = def.get("scheme")
+    if scheme == "bearer" {
+      return "bearer"
+    }
+    if scheme == "basic" {
+      return "basic"
+    }
+    return "unknown"
+  }
+  if ty == "apiKey" {
+    let loc = def.get("in") ?? "header"
+    if loc == "header" {
+      return "apiKey-header"
+    }
+    if loc == "query" {
+      return "apiKey-query"
+    }
+    if loc == "cookie" {
+      return "apiKey-cookie"
+    }
+    return "unknown"
+  }
+  if ty == "oauth2" {
+    return "oauth2"
+  }
+  if ty == "openIdConnect" {
+    return "openIdConnect"
+  }
+  if ty == "mutualTLS" {
+    return "mutualTLS"
+  }
+  return "unknown"
+}
+
+fn _render_new_client_signature(fields, default_base_url, header_overrides) {
+  var parts = ["base_url: string = \"" + _escape_string(default_base_url) + "\""]
+  for f in fields {
+    if f.kind == "string" {
+      parts = parts + [f.name + ": string = " + f.default]
+    } else if f.kind == "dict" {
+      parts = parts + [f.name + ": dict = " + f.default]
+    }
+  }
+  parts = parts + ["extra_headers: dict = " + _render_dict_literal(header_overrides)]
+  return join(parts, ", ")
+}
+
+fn _render_auth_helper(scheme_name, def) {
+  let kind = _scheme_kind(def)
+  let fn_name = "_headers_" + _sanitize_ident(scheme_name)
+  if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
+    return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "    var hs = {Authorization: \"Bearer \" + to_string(client.token), \"Content-Type\": \"application/json\"}\n"
+      + "    for entry in client.extra_headers {\n"
+      + "      hs = {...hs, [entry.key]: entry.value}\n"
+      + "    }\n"
+      + "    return hs\n"
+      + "  }"
+  }
+  if kind == "basic" {
+    return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "    let encoded = base64_encode(to_string(client.basic_user) + \":\" + to_string(client.basic_password))\n"
+      + "    var hs = {Authorization: \"Basic \" + encoded, \"Content-Type\": \"application/json\"}\n"
+      + "    for entry in client.extra_headers {\n"
+      + "      hs = {...hs, [entry.key]: entry.value}\n"
+      + "    }\n"
+      + "    return hs\n"
+      + "  }"
+  }
+  if kind == "apiKey-header" {
+    let header_name = def.get("name") ?? scheme_name
+    return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "    var hs = {\""
+      + _escape_string(header_name)
+      + "\": to_string(client.api_keys.get(\""
+      + _escape_string(scheme_name)
+      + "\") ?? \"\"), \"Content-Type\": \"application/json\"}\n"
+      + "    for entry in client.extra_headers {\n"
+      + "      hs = {...hs, [entry.key]: entry.value}\n"
+      + "    }\n"
+      + "    return hs\n"
+      + "  }"
+  }
+  if kind == "apiKey-cookie" {
+    let cookie_name = def.get("name") ?? scheme_name
+    return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "    var hs = {Cookie: \""
+      + _escape_string(cookie_name)
+      + "=\" + to_string(client.api_keys.get(\""
+      + _escape_string(scheme_name)
+      + "\") ?? \"\"), \"Content-Type\": \"application/json\"}\n"
+      + "    for entry in client.extra_headers {\n"
+      + "      hs = {...hs, [entry.key]: entry.value}\n"
+      + "    }\n"
+      + "    return hs\n"
+      + "  }"
+  }
+  if kind == "apiKey-query" {
+    // Headers helper adds nothing beyond Content-Type; a parallel
+    // _query_<scheme>_dict helper contributes the auth parameter dict
+    // which is spread into each operation's query bindings.
+    let query_name = def.get("name") ?? scheme_name
+    let query_fn_name = "_query_" + _sanitize_ident(scheme_name) + "_dict"
+    return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "    var hs = {\"Content-Type\": \"application/json\"}\n"
+      + "    for entry in client.extra_headers {\n"
+      + "      hs = {...hs, [entry.key]: entry.value}\n"
+      + "    }\n"
+      + "    return hs\n"
+      + "  }\n"
+      + "\n"
+      + "  fn "
+      + query_fn_name
+      + "(client: dict) -> dict {\n"
+      + "    let v = client.api_keys.get(\""
+      + _escape_string(scheme_name)
+      + "\")\n"
+      + "    if v == nil {\n"
+      + "      return {}\n"
+      + "    }\n"
+      + "    return {\""
+      + _escape_string(query_name)
+      + "\": v}\n"
+      + "  }"
+  }
+  // mutualTLS and unknown kinds fall back to no-auth behavior with a note.
+  return "// NOTE: security scheme '" + _escape_string(scheme_name) + "' (kind='" + kind
+    + "') is not supported by this codegen. Operations that reference it\n"
+    + "  // will fall back to _no_auth_headers. File an issue upstream if you need\n"
+    + "  // first-class support.\n"
+    + "  fn "
+    + fn_name
+    + "(client: dict) -> dict {\n"
+    + "    return _no_auth_headers(client)\n"
+    + "  }"
 }
 
 fn _default_server_url(doc) {
@@ -390,7 +663,7 @@ fn _default_server_url(doc) {
   return servers[0].get("url") ?? ""
 }
 
-fn _build_op_model(op, taken_names) {
+fn _build_op_model(op, taken_names, choice, schemes) {
   let fn_name = _unique_fn_name(_sanitize_fn_name(op.operation_id), taken_names)
   let params = op.parameters
   var path_params = []
@@ -430,8 +703,30 @@ fn _build_op_model(op, taken_names) {
     required_sig = required_sig + ["body"]
   }
   let sig_parts = required_sig + optional_sig
-  let path_bindings = "{" + join(path_bindings_parts, ", ") + "}"
-  let query_bindings = "{" + join(query_bindings_parts, ", ") + "}"
+  // Figure out which headers helper this op calls. A nil scheme_name means
+  // "no auth" (either explicit security: [] or a doc with no declared
+  // default security).
+  let scheme_name = choice.scheme_name
+  let headers_call = if scheme_name == nil {
+    "_no_auth_headers(client)"
+  } else {
+    "_headers_" + _sanitize_ident(scheme_name) + "(client)"
+  }
+  // apiKey-in-query schemes contribute an extra entry to the query string,
+  // spliced into the query bindings literal via a spread.
+  var extra_query_spread = ""
+  if scheme_name != nil {
+    let def = schemes.get(scheme_name)
+    if def != nil && _scheme_kind(def) == "apiKey-query" {
+      // `_query_<scheme>(client)` returns a string "k=v" (already URL-encoded)
+      // or "" if no key is configured; it is appended to the query string
+      // via _apikey_suffix below.
+      extra_query_spread = "apikey-query"
+    }
+  }
+  let has_query_params = len(query_params) > 0
+  let has_apikey_query = extra_query_spread == "apikey-query"
+  let has_query = has_query_params || has_apikey_query
   let doc_lines = split(op.summary, "\n")
   let first = if len(doc_lines) > 0 {
     doc_lines[0]
@@ -444,17 +739,51 @@ fn _build_op_model(op, taken_names) {
     first
   }
   let doc_comment = "/** " + _escape_comment(safe_summary) + " */"
+  // If the op had multiple security requirement alternatives, preserve the
+  // discarded names in a TODO comment so a human can retarget manually.
+  let alts = choice.alternatives
+  let security_note = if type_of(alts) == "list" && len(alts) > 0 {
+    "TODO: security alternatives also accepted: " + join(alts, ", ")
+  } else {
+    ""
+  }
   return {
     fn_name: fn_name,
     method: op.method,
     path: op.path,
     signature: join(sig_parts, ", "),
-    path_bindings: path_bindings,
-    query_bindings: query_bindings,
-    has_query: len(query_params) > 0,
+    path_bindings: path_bindings_parts_render(path_bindings_parts),
+    query_bindings: _render_query_bindings(query_bindings_parts, has_apikey_query, scheme_name),
+    has_query: has_query,
     has_body: has_body,
     doc_comment: doc_comment,
+    headers_call: headers_call,
+    security_note: security_note,
   }
+}
+
+fn path_bindings_parts_render(parts) {
+  return "{" + join(parts, ", ") + "}"
+}
+
+fn _render_query_bindings(parts, has_apikey_query, scheme_name) {
+  // The emitted call reaches into `_query_<scheme>(client)` for apiKey-query
+  // schemes. We emit `_query_string({k: v, ...})` normally; apiKey-query
+  // schemes splice a "&<encoded>" suffix onto the query string via a
+  // post-concat. To keep the template uniform, we render a dict literal
+  // here and the caller wraps _query_string(...) for the base params,
+  // then appends _query_<scheme>(client) via a + concat in the template.
+  // For simplicity, we bake the apiKey-query param directly into the
+  // dict literal using a spread from a helper dict.
+  if has_apikey_query && scheme_name != nil {
+    let sanitized = _sanitize_ident(scheme_name)
+    let extra = "..._query_" + sanitized + "_dict(client)"
+    if len(parts) == 0 {
+      return "{" + extra + "}"
+    }
+    return "{" + join(parts, ", ") + ", " + extra + "}"
+  }
+  return "{" + join(parts, ", ") + "}"
 }
 
 fn _sanitize_fn_name(raw) {
