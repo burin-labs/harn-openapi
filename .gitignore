@@ -1,0 +1,6 @@
+.harn/
+.harn-runs/
+target/
+node_modules/
+.DS_Store
+*.log

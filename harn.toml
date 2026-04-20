@@ -1,0 +1,13 @@
+[package]
+name = "harn-openapi"
+version = "0.0.0"
+description = "Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/burin-labs/harn-openapi"
+
+[exports]
+default = "src/lib.harn"
+
+# Once package management v0 (harn#345) lands, dependencies will be declared
+# here. For now this repo has none.
+[dependencies]
