@@ -1,0 +1,285 @@
+// security_smoke — exercise per-scheme auth helpers emitted by
+// codegen_module against synthetic OpenAPI docs. Each sub-scenario
+// asserts the generated Harn source contains the correct auth-dispatch
+// wiring and that the corresponding helper functions produce the
+// expected Authorization / header / query bindings at runtime.
+//
+// Note: `http_mock_calls()` upstream records method/url/body but not
+// request headers (see burin-labs/harn#TBD). Until that lands, we
+// assert on generated source text plus runtime evaluation of helper
+// fns whose shape is deterministic.
+
+import { parse, codegen_module } from "../src/lib"
+
+fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
+  var paths = {}
+  for op in ops {
+    var method_entry = {
+      operationId: op.operation_id,
+      responses: {"200": {description: "ok"}},
+    }
+    if op.get("security") != nil {
+      method_entry = {...method_entry, security: op.security}
+    }
+    paths = {...paths, [op.path]: {[op.method]: method_entry}}
+  }
+  var root = {
+    openapi: "3.1.0",
+    info: {title: "Test", version: "0.0.1"},
+    servers: [{url: "https://api.example.com"}],
+    paths: paths,
+    components: {securitySchemes: sec_schemes},
+  }
+  if doc_security != nil {
+    root = {...root, security: doc_security}
+  }
+  return json_stringify(root)
+}
+
+fn assert_contains(haystack: string, needle: string, label: string) {
+  if !contains(haystack, needle) {
+    println("---BEGIN GENERATED SOURCE---")
+    println(haystack)
+    println("---END GENERATED SOURCE---")
+    assert(false, "${label}: expected source to contain \"${needle}\"")
+  }
+}
+
+fn assert_not_contains(haystack: string, needle: string, label: string) {
+  if contains(haystack, needle) {
+    println("---BEGIN GENERATED SOURCE---")
+    println(haystack)
+    println("---END GENERATED SOURCE---")
+    assert(false, "${label}: expected source NOT to contain \"${needle}\"")
+  }
+}
+
+fn check_generates(src: string, label: string) {
+  let tmp_path = "/tmp/harn-openapi-security-smoke-${label}.harn"
+  write_file(tmp_path, src)
+  let result = shell(
+    "cd /Users/ksinder/projects/harn && target/debug/harn check " + tmp_path,
+  )
+  if !result.success {
+    println("---harn check stderr---")
+    println(result.stderr)
+    println("---harn check stdout---")
+    println(result.stdout)
+  }
+  assert(result.success, "${label}: generated SDK must pass \`harn check\`")
+}
+
+@test
+pipeline default() {
+  // ------------------------------------------------------------------
+  // Scenario A: http bearer at the doc level, inherited by all ops.
+  // ------------------------------------------------------------------
+  let doc_a = build_doc(
+    {bearerAuth: {type: "http", scheme: "bearer"}},
+    [{bearerAuth: []}],
+    [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
+  )
+  let src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
+  assert_contains(src_a, "_headers_bearerauth(client)", "A/dispatch")
+  assert_contains(src_a, "Authorization: \"Bearer \" + to_string(client.token)", "A/bearer-helper")
+  assert_contains(src_a, "token: string = \"\"", "A/client-has-token")
+  assert_not_contains(src_a, "basic_user", "A/no-basic-field")
+  assert_not_contains(src_a, "api_keys", "A/no-apikey-field")
+  check_generates(src_a, "A")
+
+  // ------------------------------------------------------------------
+  // Scenario B: explicit security: [] on one op overrides doc default.
+  // ------------------------------------------------------------------
+  let doc_b = build_doc(
+    {bearerAuth: {type: "http", scheme: "bearer"}},
+    [{bearerAuth: []}],
+    [
+      {operation_id: "get-self", method: "get", path: "/v1/users/me"},
+      {operation_id: "public-ping", method: "get", path: "/health", security: []},
+    ],
+  )
+  let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
+  // Authed op still uses the bearer helper.
+  assert_contains(src_b, "_headers_bearerauth(client)", "B/authed-dispatch")
+  // The no-auth op must route through _no_auth_headers.
+  let b_lines = split(src_b, "\n")
+  var b_public_line = ""
+  var b_collect_public = false
+  for line in b_lines {
+    if contains(line, "pub fn public_ping") {
+      b_collect_public = true
+    }
+    if b_collect_public {
+      if contains(line, "let resp = ") {
+        b_public_line = line
+        b_collect_public = false
+      }
+    }
+  }
+  assert(
+    contains(b_public_line, "_no_auth_headers(client)"),
+    "B/public-op-must-use-no-auth-headers: got \"${b_public_line}\"",
+  )
+  assert(
+    !contains(b_public_line, "_headers_bearerauth"),
+    "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
+  )
+  check_generates(src_b, "B")
+
+  // ------------------------------------------------------------------
+  // Scenario C: http basic only.
+  // ------------------------------------------------------------------
+  let doc_c = build_doc(
+    {basicAuth: {type: "http", scheme: "basic"}},
+    [{basicAuth: []}],
+    [{operation_id: "login", method: "post", path: "/login"}],
+  )
+  let src_c = codegen_module(parse(doc_c), {module_name: "c", client_name: "C"})
+  assert_contains(src_c, "_headers_basicauth(client)", "C/dispatch")
+  assert_contains(src_c, "base64_encode", "C/basic-uses-base64")
+  assert_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
+  assert_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
+  assert_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
+  assert_not_contains(src_c, "token:", "C/no-token-field")
+  check_generates(src_c, "C")
+
+  // ------------------------------------------------------------------
+  // Scenario D: apiKey in header.
+  // ------------------------------------------------------------------
+  let doc_d = build_doc(
+    {xApiKey: {type: "apiKey", in: "header", name: "X-Api-Key"}},
+    [{xApiKey: []}],
+    [{operation_id: "get-thing", method: "get", path: "/thing"}],
+  )
+  let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
+  assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
+  assert_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
+  assert_contains(src_d, "client.api_keys.get(\"xApiKey\")", "D/reads-from-api-keys")
+  assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
+  assert_not_contains(src_d, "token:", "D/no-token-field")
+  check_generates(src_d, "D")
+
+  // ------------------------------------------------------------------
+  // Scenario E: apiKey in query.
+  // ------------------------------------------------------------------
+  let doc_e = build_doc(
+    {qKey: {type: "apiKey", in: "query", name: "api_key"}},
+    [{qKey: []}],
+    [{operation_id: "list-things", method: "get", path: "/things"}],
+  )
+  let src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
+  assert_contains(src_e, "_headers_qkey(client)", "E/headers-dispatch")
+  assert_contains(src_e, "_query_qkey_dict(client)", "E/query-spread-in-op")
+  assert_contains(src_e, "\"api_key\": v", "E/query-name-emitted")
+  assert_contains(src_e, "_query_string", "E/op-has-query-string-call")
+  check_generates(src_e, "E")
+
+  // ------------------------------------------------------------------
+  // Scenario F: apiKey in cookie.
+  // ------------------------------------------------------------------
+  let doc_f = build_doc(
+    {sessId: {type: "apiKey", in: "cookie", name: "sid"}},
+    [{sessId: []}],
+    [{operation_id: "me", method: "get", path: "/me"}],
+  )
+  let src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
+  assert_contains(src_f, "_headers_sessid(client)", "F/dispatch")
+  assert_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
+  assert_contains(src_f, "client.api_keys.get(\"sessId\")", "F/reads-from-api-keys")
+  check_generates(src_f, "F")
+
+  // ------------------------------------------------------------------
+  // Scenario G: oauth2 — treated as bearer for v0 (client already holds token).
+  // ------------------------------------------------------------------
+  let doc_g = build_doc(
+    {
+      oauth2Auth: {
+        type: "oauth2",
+        flows: {clientCredentials: {tokenUrl: "https://api.example.com/oauth/token", scopes: {}}},
+      },
+    },
+    [{oauth2Auth: []}],
+    [{operation_id: "do-thing", method: "get", path: "/thing"}],
+  )
+  let src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
+  assert_contains(src_g, "_headers_oauth2auth(client)", "G/dispatch")
+  assert_contains(src_g, "Authorization: \"Bearer \" + to_string(client.token)", "G/bearer-shape")
+  assert_contains(src_g, "token: string = \"\"", "G/client-has-token")
+  check_generates(src_g, "G")
+
+  // ------------------------------------------------------------------
+  // Scenario H: mixed schemes (bearer + basic) with per-op overrides,
+  // mirroring the real-world Notion shape.
+  // ------------------------------------------------------------------
+  let doc_h = build_doc(
+    {
+      bearerAuth: {type: "http", scheme: "bearer"},
+      basicAuth: {type: "http", scheme: "basic"},
+    },
+    [{bearerAuth: []}],
+    [
+      {operation_id: "get-me", method: "get", path: "/v1/users/me"},
+      {
+        operation_id: "create-a-token",
+        method: "post",
+        path: "/v1/oauth/token",
+        security: [{basicAuth: []}],
+      },
+    ],
+  )
+  let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
+  // Bearer helper defined and used by the default op.
+  assert_contains(src_h, "fn _headers_bearerauth(", "H/bearer-helper-defined")
+  assert_contains(src_h, "fn _headers_basicauth(", "H/basic-helper-defined")
+  // Check per-op dispatch line by line.
+  let h_lines = split(src_h, "\n")
+  var h_get_me_line = ""
+  var h_token_line = ""
+  var h_collect_me = false
+  var h_collect_token = false
+  for line in h_lines {
+    if contains(line, "pub fn get_me") {
+      h_collect_me = true
+    }
+    if contains(line, "pub fn create_a_token") {
+      h_collect_token = true
+    }
+    if h_collect_me && contains(line, "let resp = ") {
+      h_get_me_line = line
+      h_collect_me = false
+    }
+    if h_collect_token && contains(line, "let resp = ") {
+      h_token_line = line
+      h_collect_token = false
+    }
+  }
+  assert(
+    contains(h_get_me_line, "_headers_bearerauth(client)"),
+    "H/get_me-uses-bearer: got \"${h_get_me_line}\"",
+  )
+  assert(
+    contains(h_token_line, "_headers_basicauth(client)"),
+    "H/create_a_token-uses-basic: got \"${h_token_line}\"",
+  )
+  assert(
+    !contains(h_token_line, "_headers_bearerauth"),
+    "H/create_a_token-must-NOT-use-bearer: got \"${h_token_line}\"",
+  )
+  check_generates(src_h, "H")
+
+  // ------------------------------------------------------------------
+  // Scenario I: mutualTLS — v0 fallback to no-auth with a NOTE comment.
+  // ------------------------------------------------------------------
+  let doc_i = build_doc(
+    {mtls: {type: "mutualTLS"}},
+    [{mtls: []}],
+    [{operation_id: "mtls-op", method: "get", path: "/secure"}],
+  )
+  let src_i = codegen_module(parse(doc_i), {module_name: "i", client_name: "I"})
+  assert_contains(src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
+  assert_contains(src_i, "_headers_mtls(client)", "I/fallback-helper-called")
+  assert_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
+  check_generates(src_i, "I")
+
+  println("security_smoke: ok")
+}
