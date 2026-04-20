@@ -4,13 +4,26 @@
 //
 //   parse(json_string)           -> dict
 //       Parse an OpenAPI 3.1 JSON document into a normalized dict with
-//       shape { openapi, info, servers, paths, components,
-//       security_schemes, tags }. Throws on non-3.1.x docs.
+//       shape { openapi, info, servers, paths, webhooks, components,
+//       security_schemes, tags }. OAS 3.1 makes `paths` optional and
+//       introduces first-class `webhooks` plus `components.pathItems`
+//       — all three are surfaced here. Throws on non-3.1.x docs.
 //
 //   operations(doc)              -> list<operation>
-//       Flatten path-itemed operations into a list of
+//       Flatten path-itemed operations in `doc.paths` into a list of
 //       { method, path, operation_id, summary, parameters,
 //       request_body, responses, security } dicts.
+//
+//   webhook_operations(doc)      -> list<webhook_operation>
+//       Flatten OAS 3.1 `doc.webhooks` into a list of
+//       { name, method, path_item, operation } dicts. `name` is the
+//       webhook key (e.g. "commentCreated"); `method` is the HTTP
+//       verb declared on the path item; `operation` is the Operation
+//       object. Analogous to `operations()` for inbound payloads.
+//
+//   component_path_items(doc)    -> dict<string, PathItem>
+//       Passthrough accessor for `doc.components.pathItems` (new in
+//       OAS 3.1). Returns `{}` when absent.
 //
 //   schema(doc, ref_or_inline)   -> dict
 //       Resolve a `$ref` like "#/components/schemas/Foo" against the
@@ -43,12 +56,14 @@ pub fn parse(json_string: string) -> dict {
     throw "harn-openapi.parse: expected openapi 3.1.x, got " + to_string(version)
   }
   let components = raw.get("components") ?? {}
+  let components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
   return {
     openapi: version,
     info: raw.get("info") ?? {},
     servers: raw.get("servers") ?? [],
     paths: raw.get("paths") ?? {},
-    components: components,
+    webhooks: raw.get("webhooks") ?? {},
+    components: components_with_path_items,
     security_schemes: components.get("securitySchemes") ?? {},
     tags: raw.get("tags") ?? [],
   }
@@ -62,29 +77,64 @@ let _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch",
 
 /** Flatten every operation in the doc's `paths` dict. */
 pub fn operations(doc: dict) -> list {
+  return _flatten_path_item_map(doc.get("paths") ?? {}, doc, "path")
+}
+
+/** Flatten every operation in the doc's `webhooks` dict (OAS 3.1). */
+pub fn webhook_operations(doc: dict) -> list {
+  return _flatten_path_item_map(doc.get("webhooks") ?? {}, doc, "webhook")
+}
+
+/** Passthrough accessor for `components.pathItems` (OAS 3.1). */
+pub fn component_path_items(doc: dict) -> dict {
+  let components = doc.get("components") ?? {}
+  return components.get("pathItems") ?? {}
+}
+
+fn _flatten_path_item_map(items, doc, mode) {
   var out = []
-  for entry in doc.paths {
-    let path = entry.key
+  for entry in items {
+    let key = entry.key
     let item = entry.value
     for method in _HTTP_METHODS {
       let op = item.get(method)
       if op != nil {
         let raw_params = _merge_parameters(item.get("parameters") ?? [], op.get("parameters") ?? [], doc)
-        out = out
-          + [
-          {
-          method: method,
-          path: path,
-          operation_id: op.get("operationId") ?? _synth_operation_id(method, path),
-          summary: op.get("summary") ?? "",
-          description: op.get("description") ?? "",
-          parameters: raw_params,
-          request_body: op.get("requestBody"),
-          responses: op.get("responses") ?? {},
-          security: op.get("security") ?? doc.get("security") ?? [],
-          tags: op.get("tags") ?? [],
-        },
-        ]
+        if mode == "webhook" {
+          out = out
+            + [
+            {
+            name: key,
+            method: method,
+            path_item: item,
+            operation: op,
+            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+            summary: op.get("summary") ?? "",
+            description: op.get("description") ?? "",
+            parameters: raw_params,
+            request_body: op.get("requestBody"),
+            responses: op.get("responses") ?? {},
+            security: op.get("security") ?? doc.get("security") ?? [],
+            tags: op.get("tags") ?? [],
+          },
+          ]
+        } else {
+          out = out
+            + [
+            {
+            method: method,
+            path: key,
+            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+            summary: op.get("summary") ?? "",
+            description: op.get("description") ?? "",
+            parameters: raw_params,
+            request_body: op.get("requestBody"),
+            responses: op.get("responses") ?? {},
+            security: op.get("security") ?? doc.get("security") ?? [],
+            tags: op.get("tags") ?? [],
+          },
+          ]
+        }
       }
     }
   }
