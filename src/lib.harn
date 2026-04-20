@@ -1,0 +1,37 @@
+// harn-openapi — Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers.
+//
+// M1 exported surface:
+//
+//   parse(json_string) -> dict
+//       Parse an OpenAPI 3.1 JSON document into a normalized dict with
+//       shape { openapi, info, servers, paths, components,
+//       security_schemes, tags }. Throws on non-3.1.x docs.
+//
+// Walking helpers (operations, schema, enum_values) and codegen
+// (codegen_module) land in M2/M3 — see SESSION_PROMPT.md.
+
+// -----------------------------------------------------------------------------
+// Parsing
+// -----------------------------------------------------------------------------
+
+/** Parse an OpenAPI 3.1 JSON document into a normalized doc dict. */
+pub fn parse(json_string: string) -> dict {
+  let raw = json_parse(json_string)
+  let version = raw.get("openapi")
+  if version == nil {
+    throw "harn-openapi.parse: missing top-level 'openapi' field"
+  }
+  if !starts_with(version, "3.1") {
+    throw "harn-openapi.parse: expected openapi 3.1.x, got " + to_string(version)
+  }
+  let components = raw.get("components") ?? {}
+  return {
+    openapi: version,
+    info: raw.get("info") ?? {},
+    servers: raw.get("servers") ?? [],
+    paths: raw.get("paths") ?? {},
+    components: components,
+    security_schemes: components.get("securitySchemes") ?? {},
+    tags: raw.get("tags") ?? [],
+  }
+}
