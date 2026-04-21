@@ -1,0 +1,44 @@
+// render_string_smoke — direct coverage for the inline template engine
+// used by codegen_module. codegen_smoke exercises it indirectly; this
+// keeps the public helper covered on its own.
+
+import { render_string } from "../src/lib"
+
+pipeline default() {
+  let template = """
+Hello {{ user.name }}
+{{ if show }}shown{{ else }}hidden{{ end }}
+{{ for item in items }}[{{ item.label }}={{ item.value }}]{{ end }}
+{{ if missing }}bad{{ else if fallback }}fallback{{ else }}none{{ end }}
+"""
+  let out = render_string(
+    template,
+    {
+    user: {name: "Ada"},
+    show: true,
+    fallback: "yes",
+    items: [
+      {label: "alpha", value: 1},
+      {label: "beta", value: 2},
+    ],
+  },
+  )
+
+  assert(contains(out, "Hello Ada"), "dotted lookup should render nested fields")
+  assert(contains(out, "shown"), "truthy if branch should render")
+  assert(!contains(out, "hidden"), "else branch should not render after truthy if")
+  assert(
+    contains(out, "[alpha=1][beta=2]"),
+    "for loop should render every list item in order",
+  )
+  assert(contains(out, "fallback"), "else-if branch should render when first condition is false")
+  assert(!contains(out, "bad"), "falsey first branch should not render")
+
+  let empty_loop = render_string("{{ for item in items }}x{{ end }}", {items: []})
+  assert(empty_loop == "", "empty loops should render nothing")
+
+  let false_branch = render_string("{{ if zero }}bad{{ else }}ok{{ end }}", {zero: 0})
+  assert(false_branch == "ok", "numeric zero should be falsey")
+
+  println("render_string_smoke: ok")
+}

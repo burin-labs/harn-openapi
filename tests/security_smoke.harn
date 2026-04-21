@@ -281,5 +281,26 @@ pipeline default() {
   assert_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
   check_generates(src_i, "I")
 
+  // ------------------------------------------------------------------
+  // Scenario J: multiple security alternatives are preserved as a NOTE,
+  // not a TODO, so generated code can be committed without open TODOs.
+  // ------------------------------------------------------------------
+  let doc_j = build_doc(
+    {
+      bearerAuth: {type: "http", scheme: "bearer"},
+      basicAuth: {type: "http", scheme: "basic"},
+    },
+    [{bearerAuth: []}, {basicAuth: []}],
+    [{operation_id: "either-auth", method: "get", path: "/either"}],
+  )
+  let src_j = codegen_module(parse(doc_j), {module_name: "j", client_name: "J"})
+  assert_contains(
+    src_j,
+    "NOTE: security alternatives also accepted: basicAuth",
+    "J/security-alternative-note",
+  )
+  assert_not_contains(src_j, "TODO", "J/generated-source-has-no-todos")
+  check_generates(src_j, "J")
+
   println("security_smoke: ok")
 }

@@ -894,10 +894,10 @@ fn _build_op_model(op, taken_names, choice, schemes, ret) {
   }
   let doc_comment = "/** " + _escape_comment(safe_summary) + " */"
   // If the op had multiple security requirement alternatives, preserve the
-  // discarded names in a TODO comment so a human can retarget manually.
+  // discarded names in a note so a human can retarget manually.
   let alts = choice.alternatives
   let security_note = if type_of(alts) == "list" && len(alts) > 0 {
-    "TODO: security alternatives also accepted: " + join(alts, ", ")
+    "NOTE: security alternatives also accepted: " + join(alts, ", ")
   } else {
     ""
   }

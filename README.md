@@ -18,7 +18,7 @@ Once Harn package management v0
 harn add github.com/burin-labs/harn-openapi@v0.1.0
 ```
 
-Until then, depend on this repo via a path import in your `harn.toml`:
+Until then, depend on a local checkout of this repo through `harn.toml`:
 
 ```toml
 [dependencies]
@@ -27,14 +27,23 @@ harn-openapi = { path = "../harn-openapi" }
 
 ## Usage
 
+With either the future package install or the current `harn.toml` path
+dependency, import the named functions you use:
+
 ```harn
-import "harn-openapi"
+import {
+  parse,
+  operations,
+  webhook_operations,
+  component_path_items,
+  codegen_module,
+} from "harn-openapi"
 
 let raw = read_file("./notion.openapi.json")
-let doc: OpenApiDoc = parse(raw)
+let doc = parse(raw)
 
 // Walk operations
-let ops: list<Operation> = operations(doc)
+let ops = operations(doc)
 for op in ops {
   println("${op.method} ${op.path} -> ${op.operation_id}")
 }
@@ -45,7 +54,7 @@ for wop in webhook_operations(doc) {
 }
 
 // Passthrough accessor for the 3.1-new components.pathItems map
-let shared_path_items: dict<string, RefOr<PathItem>> = component_path_items(doc)
+let shared_path_items = component_path_items(doc)
 
 // Generate Harn SDK source from the parsed document
 let src = codegen_module(doc, {
@@ -53,6 +62,13 @@ let src = codegen_module(doc, {
   client_name: "Client",
 })
 write_file("./src/lib.harn", src)
+```
+
+When running examples or tests directly from this repository before package
+management ships, use the source path instead:
+
+```harn
+import { parse } from "../src/lib"
 ```
 
 ### Exported surface
@@ -118,7 +134,7 @@ new_client(
 
 When an operation declares multiple security requirement alternatives
 (`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
-`TODO` comment above the generated function listing the alternatives so
+`NOTE` comment above the generated function listing the alternatives so
 a human can retarget manually.
 
 Out of scope for v0: full OAuth2 flows (authorization-code, device,

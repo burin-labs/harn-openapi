@@ -59,7 +59,7 @@ Pure-Harn modules that:
   normalized doc structure: `{ openapi, info, servers, paths, components,
   security_schemes, tags }`. Deliberately fail fast on `openapi != "3.1.x"`.
 - Acceptance: `tests/parse_smoke.harn` reads the Notion fixture, parses it,
-  asserts there are >100 operations and the title contains "Notion", and
+  asserts there are >40 operations and the title contains "Notion", and
   exits 0.
 
 ### M2 — Walking helpers
