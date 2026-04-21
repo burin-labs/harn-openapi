@@ -17,7 +17,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   HARN_BIN: ${{ github.workspace }}/target/debug/harn
 
 jobs:
@@ -25,18 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out harn-openapi
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: harn-openapi
 
       - name: Check out harn
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: burin-labs/harn
           path: harn
 
       - name: Cache Cargo build outputs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/git
