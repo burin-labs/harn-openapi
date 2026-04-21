@@ -1,0 +1,201 @@
+// Update the pinned harn-cli version used by GitHub Actions.
+//
+// Usage:
+//   harn run scripts/bump_harn_cli_version.harn -- 0.7.30
+//
+// The default path updates both workflow files, installs the requested
+// harn-cli release from crates.io into a temp root, and runs the local gate.
+let _WORKFLOW_REL_PATHS = [".github/workflows/ci.yml", ".github/workflows/fixture-staleness.yml"]
+
+let _VERSION_KEY = "HARN_CLI_VERSION: "
+
+fn _repo_root() -> string {
+  return source_dir() + "/.."
+}
+
+fn _usage() -> string {
+  return """
+usage: scripts/bump_harn_cli_version.harn <version> [--no-verify] [--repo-root <path>]
+
+Updates the HARN_CLI_VERSION pin in this repo's GitHub Actions workflows.
+Versions may be passed with or without a leading "v".
+
+By default, this also installs harn-cli from crates.io and runs:
+  harn check src scripts
+  harn lint src scripts
+  harn fmt --check src scripts tests
+  harn run tests/*.harn
+  harn run scripts/regen_demo.harn
+"""
+}
+
+fn _normalize_version(raw: string) -> string {
+  let trimmed = trim(raw)
+  let version = if starts_with(trimmed, "v") {
+    trimmed[1:len(trimmed)]
+  } else {
+    trimmed
+  }
+  if regex_match("^[0-9]+\\.[0-9]+\\.[0-9]+([-.+][A-Za-z0-9._-]+)?$", version) == nil {
+    throw "bump_harn_cli_version: invalid harn-cli version '" + raw + "'"
+  }
+  return version
+}
+
+fn _parse_args() -> dict {
+  var version = ""
+  var repo_root = _repo_root()
+  var verify = true
+  var i = 0
+  while i < len(argv) {
+    let arg = argv[i]
+    if arg == "--help" || arg == "-h" {
+      println(_usage())
+      exit(0)
+    } else if arg == "--no-verify" {
+      verify = false
+      i = i + 1
+    } else if arg == "--verify" {
+      verify = true
+      i = i + 1
+    } else if arg == "--repo-root" {
+      if i + 1 >= len(argv) {
+        throw _usage()
+      }
+      repo_root = argv[i + 1]
+      i = i + 2
+    } else if starts_with(arg, "--") {
+      throw "bump_harn_cli_version: unknown option " + arg
+    } else if version == "" {
+      version = arg
+      i = i + 1
+    } else {
+      throw _usage()
+    }
+  }
+  if version == "" {
+    throw _usage()
+  }
+  return {repo_root: repo_root, version: _normalize_version(version), verify: verify}
+}
+
+fn _workflow_paths(repo_root: string) -> list<string> {
+  var out = []
+  for rel in _WORKFLOW_REL_PATHS {
+    out = out + [repo_root + "/" + rel]
+  }
+  return out
+}
+
+fn _replace_workflow_version(path: string, new_version: string) -> dict {
+  if !file_exists(path) {
+    throw "bump_harn_cli_version: missing workflow " + path
+  }
+  let content = read_file(path)
+  let lines = split(content, "\n")
+  var out = []
+  var found = 0
+  var old_version = ""
+  for line in lines {
+    let trimmed = trim(line)
+    if starts_with(trimmed, _VERSION_KEY) {
+      found = found + 1
+      let old = trimmed[len(_VERSION_KEY):len(trimmed)]
+      if old_version == "" {
+        old_version = old
+      }
+      out = out
+        + [regex_replace_all("HARN_CLI_VERSION: [A-Za-z0-9.+_-]+", "HARN_CLI_VERSION: " + new_version, line)]
+    } else {
+      out = out + [line]
+    }
+  }
+  if found != 1 {
+    throw "bump_harn_cli_version: expected exactly one HARN_CLI_VERSION in "
+      + path
+      + ", found "
+      + to_string(found)
+  }
+  let updated = join(out, "\n")
+  if updated != content {
+    write_file(path, updated)
+    println("updated ${path}: ${old_version} -> ${new_version}")
+  } else {
+    println("already current ${path}: ${new_version}")
+  }
+  return {path: path, old_version: old_version, new_version: new_version}
+}
+
+fn _sh_quote(value: string) -> string {
+  return "'" + replace(value, "'", "'\"'\"'") + "'"
+}
+
+fn _run(repo_root: string, label: string, cmd: string) {
+  println("running: ${label}")
+  let result = shell_at(repo_root, cmd)
+  if result.stdout != "" {
+    println(result.stdout.trim())
+  }
+  if !result.success {
+    if result.stderr != "" {
+      println(result.stderr.trim())
+    }
+    throw "bump_harn_cli_version: " + label + " failed"
+  }
+}
+
+fn _version_slug(version: string) -> string {
+  return regex_replace_all("[^A-Za-z0-9._-]+", "_", version)
+}
+
+fn _verify_version(repo_root: string, version: string) {
+  let slug = _version_slug(version)
+  let install_root = temp_dir() + "/harn-openapi-harn-cli-" + slug
+  let target_dir = temp_dir() + "/harn-openapi-harn-cli-target-" + slug
+  let harn_bin = install_root + "/bin/harn"
+  if !file_exists(harn_bin) {
+    _run(
+      repo_root,
+      "install harn-cli " + version,
+      "CARGO_TARGET_DIR="
+      + _sh_quote(target_dir)
+      + " cargo install harn-cli --version "
+      + _sh_quote(version)
+      + " --locked --root "
+      + _sh_quote(install_root),
+    )
+  } else {
+    println("using cached harn-cli ${version}: ${harn_bin}")
+  }
+  let env_prefix = "HARN_ROOT=" + _sh_quote(repo_root) + " HARN_BIN=" + _sh_quote(harn_bin) + " "
+  _run(repo_root, "harn version", _sh_quote(harn_bin) + " version")
+  _run(repo_root, "check Harn sources", env_prefix + _sh_quote(harn_bin) + " check src scripts")
+  _run(repo_root, "lint Harn sources", env_prefix + _sh_quote(harn_bin) + " lint src scripts")
+  _run(
+    repo_root,
+    "check Harn formatting",
+    env_prefix + _sh_quote(harn_bin) + " fmt --check src scripts tests",
+  )
+  _run(
+    repo_root,
+    "run smoke tests",
+    "for test in tests/*.harn; do "
+    + env_prefix
+    + _sh_quote(harn_bin)
+    + " run \"$test\" || exit 1; done",
+  )
+  _run(repo_root, "run regen demo", env_prefix + _sh_quote(harn_bin) + " run scripts/regen_demo.harn")
+}
+
+pipeline default() {
+  let args = _parse_args()
+  for path in _workflow_paths(args.repo_root) {
+    _replace_workflow_version(path, args.version)
+  }
+  if args.verify {
+    _verify_version(args.repo_root, args.version)
+  } else {
+    println("skipped verification")
+  }
+  println("bump_harn_cli_version: ok")
+}

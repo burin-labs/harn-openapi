@@ -194,6 +194,23 @@ capture timestamp, byte size, and SHA-256. CI runs
 between 90 and 180 days, and fails non-`main` branches once the fixture is over
 180 days old.
 
+### Harn CLI version bumps
+
+GitHub Actions pins `harn-cli` from crates.io in
+`.github/workflows/ci.yml` and `.github/workflows/fixture-staleness.yml`.
+When a new Harn release is published, update both pins and run the local gate
+with:
+
+```sh
+harn run scripts/bump_harn_cli_version.harn -- 0.7.30
+```
+
+The script accepts a leading `v` (`v0.7.30` is normalized to `0.7.30`),
+installs that `harn-cli` release into a temp directory, then runs check, lint,
+formatting, all smoke tests, and `scripts/regen_demo.harn`. Use
+`--no-verify` only when you intentionally want to edit the workflow pins
+without running the gate.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0. Choose whichever you prefer.
