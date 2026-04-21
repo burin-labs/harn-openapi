@@ -1,0 +1,106 @@
+/* Smoke coverage for issue #7 fixture refresh support scripts. */
+pipeline default() {
+  let repo_root = source_dir() + "/.."
+  let harn_root = "/Users/ksinder/projects/harn"
+  let unique = to_string(to_int(timestamp())) + "-" + uuid()
+  let old_path = temp_dir() + "/harn-openapi-old-" + unique + ".json"
+  let new_path = temp_dir() + "/harn-openapi-new-" + unique + ".json"
+  let old_doc = """
+    {
+      "openapi": "3.1.0",
+      "info": {"title": "Fixture Diff Smoke", "version": "1.0.0"},
+      "paths": {
+        "/widgets/{id}": {
+          "get": {
+            "operationId": "get-widget",
+            "responses": {"200": {"description": "ok"}}
+          }
+        },
+        "/legacy": {
+          "patch": {
+            "operationId": "patch-legacy",
+            "responses": {"200": {"description": "ok"}}
+          }
+        }
+      },
+      "components": {
+        "schemas": {
+          "Widget": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "old_name": {"type": "string"}
+            }
+          },
+          "Legacy": {"type": "object", "properties": {"id": {"type": "string"}}}
+        }
+      }
+    }
+    """
+  let new_doc = """
+    {
+      "openapi": "3.1.0",
+      "info": {"title": "Fixture Diff Smoke", "version": "1.0.1"},
+      "paths": {
+        "/widgets/{id}": {
+          "get": {
+            "operationId": "get-widget",
+            "responses": {"200": {"description": "ok"}}
+          }
+        },
+        "/widgets": {
+          "post": {
+            "operationId": "create-widget",
+            "responses": {"201": {"description": "created"}}
+          }
+        }
+      },
+      "components": {
+        "schemas": {
+          "Widget": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "name": {"type": "string"}
+            }
+          },
+          "NewThing": {"type": "object", "properties": {"id": {"type": "string"}}}
+        }
+      }
+    }
+    """
+  write_file(old_path, old_doc)
+  write_file(new_path, new_doc)
+  let diff_cmd = "cd " + harn_root + " && cargo run --quiet --bin harn -- run "
+    + repo_root
+    + "/scripts/fixture_diff.harn -- "
+    + old_path
+    + " "
+    + new_path
+  let diff = shell(diff_cmd)
+  if !diff.success {
+    println(diff.stderr)
+    println(diff.stdout)
+  }
+  require diff.success, "fixture_diff.harn must run"
+  require contains(diff.stdout, "added operations:"), "diff output must include added operations"
+  require contains(diff.stdout, "POST /widgets (create-widget)"), "diff output must include added op"
+  require contains(diff.stdout, "removed operations:"), "diff output must include removed operations"
+  require contains(diff.stdout, "PATCH /legacy (patch-legacy)"), "diff output must include removed op"
+  require contains(diff.stdout, "added schemas:"), "diff output must include added schemas"
+  require contains(diff.stdout, "NewThing"), "diff output must include added schema"
+  require contains(diff.stdout, "removed schemas:"), "diff output must include removed schemas"
+  require contains(diff.stdout, "Legacy"), "diff output must include removed schema"
+  require contains(diff.stdout, "Widget (+1 fields, -1 fields)"), "diff output must summarize schema field changes"
+  let stale_cmd = "cd " + harn_root + " && cargo run --quiet --bin harn -- run "
+    + repo_root
+    + "/scripts/check_fixture_staleness.harn"
+  let stale = shell(stale_cmd)
+  if !stale.success {
+    println(stale.stderr)
+    println(stale.stdout)
+  }
+  require stale.success, "check_fixture_staleness.harn must pass for committed metadata"
+  require contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet"
+  println("fixture_workflow_smoke: ok")
+}

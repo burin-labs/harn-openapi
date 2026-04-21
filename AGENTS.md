@@ -27,6 +27,25 @@ cargo run --quiet --bin harn -- lint /Users/ksinder/projects/harn-openapi/src/li
 cargo run --quiet --bin harn -- fmt --check /Users/ksinder/projects/harn-openapi/src/lib.harn
 ```
 
+## Fixture refresh workflow
+
+The Notion OpenAPI fixture is pinned for deterministic tests. Refresh it only
+when intentionally updating the snapshot:
+
+```sh
+cp tests/fixtures/notion.openapi.json /tmp/notion.openapi.old.json
+cd /Users/ksinder/projects/harn
+cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-openapi/scripts/refresh_fixtures.harn
+cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-openapi/scripts/fixture_diff.harn -- \
+  /tmp/notion.openapi.old.json \
+  /Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json
+```
+
+Commit the updated JSON and `tests/fixtures/notion.openapi.json.meta.toml`
+together. CI runs `scripts/check_fixture_staleness.harn`: under 90 days is OK,
+90–180 days prints a warning, and over 180 days fails non-`main` branches while
+warning on `main`.
+
 ## Upstream conventions
 
 For general Harn coding conventions and the broader project layout, defer to

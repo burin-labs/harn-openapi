@@ -219,7 +219,7 @@ pipeline default() {
   assert(result.success, "generated module must pass `harn check` (status ${result.status})")
   // --- Acceptance 8: on the Notion fixture, emit >=20 distinct type
   // aliases, and fn signatures reuse them by name. ---
-  let notion_raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let notion_raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let notion_doc = parse(notion_raw)
   let notion_src = codegen_module(
     notion_doc,

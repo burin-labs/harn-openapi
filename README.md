@@ -133,6 +133,28 @@ The upstream Harn language and runtime live at
 [burin-labs/harn](https://github.com/burin-labs/harn). For local development,
 clone it next to this repo at `../harn`.
 
+### Fixture refresh workflow
+
+The Notion OpenAPI fixture is intentionally pinned. To refresh it manually,
+save the current fixture, run the refresh script, then review the diff report:
+
+```sh
+cp tests/fixtures/notion.openapi.json /tmp/notion.openapi.old.json
+cd ../harn
+cargo run --quiet --bin harn -- run ../harn-openapi/scripts/refresh_fixtures.harn
+cargo run --quiet --bin harn -- run ../harn-openapi/scripts/fixture_diff.harn -- \
+  /tmp/notion.openapi.old.json \
+  ../harn-openapi/tests/fixtures/notion.openapi.json
+```
+
+`scripts/refresh_fixtures.harn` writes both
+`tests/fixtures/notion.openapi.json` and
+`tests/fixtures/notion.openapi.json.meta.toml`, including the upstream URL,
+capture timestamp, byte size, and SHA-256. CI runs
+`scripts/check_fixture_staleness.harn`; it is quiet under 90 days old, warns
+between 90 and 180 days, and fails non-`main` branches once the fixture is over
+180 days old.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0. Choose whichever you prefer.

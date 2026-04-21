@@ -1,0 +1,131 @@
+// Print a structured diff between two OpenAPI fixture captures.
+//
+// Usage:
+//   cargo run --quiet --bin harn -- run scripts/fixture_diff.harn -- old.json new.json
+import { operations, parse, schema } from "../src/lib"
+
+fn _sorted_keys(d) {
+  let ks = d.keys()
+  ks.sort()
+  return ks
+}
+
+fn _operation_key(op) -> string {
+  return op.method.upper() + " " + op.path
+}
+
+fn _operation_label(op) -> string {
+  return _operation_key(op) + " (" + op.operation_id + ")"
+}
+
+fn _operation_index(doc) -> dict {
+  var out = {}
+  for op in operations(doc) {
+    out = {...out, [_operation_key(op)]: op}
+  }
+  return out
+}
+
+fn _schema_names(doc) -> list<string> {
+  let schemas = (doc.components ?? {}).get("schemas") ?? {}
+  return _sorted_keys(schemas)
+}
+
+fn _schema_fields(doc, name: string) -> list<string> {
+  let schemas = (doc.components ?? {}).get("schemas") ?? {}
+  let raw = schemas.get(name)
+  if raw == nil {
+    return []
+  }
+  let resolved = schema(doc, raw)
+  let props = resolved.get("properties") ?? {}
+  return _sorted_keys(props)
+}
+
+fn _diff_list(old_items: list<string>, new_items: list<string>) -> dict {
+  var added = []
+  var removed = []
+  for item in new_items {
+    if !old_items.contains(item) {
+      added = added + [item]
+    }
+  }
+  for item in old_items {
+    if !new_items.contains(item) {
+      removed = removed + [item]
+    }
+  }
+  return {added: added, removed: removed}
+}
+
+fn _print_operation_section(title: string, keys: list<string>, index: dict) {
+  println(title + ":")
+  if len(keys) == 0 {
+    println("  (none)")
+    return
+  }
+  for key in keys {
+    println("  " + _operation_label(index[key]))
+  }
+}
+
+fn _print_schema_name_section(title: string, names: list<string>) {
+  println(title + ":")
+  if len(names) == 0 {
+    println("  (none)")
+    return
+  }
+  for name in names {
+    println("  " + name)
+  }
+}
+
+fn _print_changed_schemas(old_doc, new_doc, shared_names: list<string>) {
+  println("changed schemas:")
+  var count = 0
+  for name in shared_names {
+    let old_fields = _schema_fields(old_doc, name)
+    let new_fields = _schema_fields(new_doc, name)
+    let diff = _diff_list(old_fields, new_fields)
+    if len(diff.added) > 0 || len(diff.removed) > 0 {
+      count = count + 1
+      println(
+        "  " + name + " (+" + to_string(len(diff.added)) + " fields, -"
+        + to_string(len(diff.removed))
+        + " fields)",
+      )
+      if len(diff.added) > 0 {
+        println("    added: " + join(diff.added, ", "))
+      }
+      if len(diff.removed) > 0 {
+        println("    removed: " + join(diff.removed, ", "))
+      }
+    }
+  }
+  if count == 0 {
+    println("  (none)")
+  }
+}
+
+pipeline default() {
+  if len(argv) != 2 {
+    throw "usage: scripts/fixture_diff.harn <old.json> <new.json>"
+  }
+  let old_doc = parse(read_file(argv[0]))
+  let new_doc = parse(read_file(argv[1]))
+  let old_ops = _operation_index(old_doc)
+  let new_ops = _operation_index(new_doc)
+  let op_diff = _diff_list(_sorted_keys(old_ops), _sorted_keys(new_ops))
+  _print_operation_section("added operations", op_diff.added, new_ops)
+  _print_operation_section("removed operations", op_diff.removed, old_ops)
+  let schema_diff = _diff_list(_schema_names(old_doc), _schema_names(new_doc))
+  _print_schema_name_section("added schemas", schema_diff.added)
+  _print_schema_name_section("removed schemas", schema_diff.removed)
+  var shared_schemas = []
+  for name in _schema_names(new_doc) {
+    if _schema_names(old_doc).contains(name) {
+      shared_schemas = shared_schemas + [name]
+    }
+  }
+  _print_changed_schemas(old_doc, new_doc, shared_schemas)
+}
