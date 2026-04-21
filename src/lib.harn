@@ -2,8 +2,8 @@
 //
 // Exported surface:
 //
-//   parse(json_string)           -> dict
-//       Parse an OpenAPI 3.1 JSON document into a normalized dict with
+//   parse(json_string)           -> OpenApiDoc
+//       Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc with
 //       shape { openapi, info, servers, paths, webhooks, components,
 //       security_schemes, security, tags }. OAS 3.1 makes `paths`
 //       optional and introduces first-class `webhooks` plus
@@ -11,7 +11,7 @@
 //       doc-level `security` is also surfaced so operation-level
 //       security falls back cleanly. Throws on non-3.1.x docs.
 //
-//   operations(doc)              -> list<operation>
+//   operations(doc)              -> list<Operation>
 //       Flatten path-itemed operations in `doc.paths` into a list of
 //       { method, path, operation_id, summary, parameters,
 //       request_body, responses, security } dicts. Each operation's
@@ -19,24 +19,28 @@
 //       so an explicit `security: []` at either level survives as a
 //       signal to emit an unauthenticated call.
 //
-//   webhook_operations(doc)      -> list<webhook_operation>
+//   webhook_operations(doc)      -> list<WebhookOperation>
 //       Flatten OAS 3.1 `doc.webhooks` into a list of
 //       { name, method, path_item, operation } dicts. `name` is the
 //       webhook key (e.g. "commentCreated"); `method` is the HTTP
 //       verb declared on the path item; `operation` is the Operation
 //       object. Analogous to `operations()` for inbound payloads.
 //
-//   component_path_items(doc)    -> dict<string, PathItem>
+//   component_path_items(doc)    -> dict<string, RefOr<PathItem>>
 //       Passthrough accessor for `doc.components.pathItems` (new in
 //       OAS 3.1). Returns `{}` when absent.
 //
-//   schema(doc, ref_or_inline)   -> dict
+//   schema(doc, ref_or_inline)   -> Schema
 //       Resolve a `$ref` like "#/components/schemas/Foo" against the
-//       parsed doc, or return an inline schema unchanged. Merges one
-//       level of `allOf`; leaves `oneOf`/`anyOf` un-merged.
+//       parsed doc, or return an inline schema unchanged. Preserves
+//       `$ref` siblings, merges one level of `allOf`, and leaves
+//       `oneOf`/`anyOf` un-merged.
 //
 //   enum_values(schema)          -> list<string> | nil
 //       Return the enum variant list on a schema, or nil if absent.
+//
+//   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
+//       Guard helpers for common dynamic boundaries.
 //
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
@@ -54,13 +58,118 @@
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
+import "./types"
+
+// -----------------------------------------------------------------------------
+// Types
+// -----------------------------------------------------------------------------
+
+type JsonSchemaType = "null" | "boolean" | "object" | "array" | "number" | "string" | "integer"
+
+/**
+ * Harn shape fields cannot currently spell "$ref", so Reference is open and
+ * callers should read the reference target with value.get("$ref").
+ */
+type Reference = {summary?: string, description?: string}
+
+type RefOr<T> = Reference | T
+
+type Contact = {name?: string, url?: string, email?: string}
+
+type License = {name: string, identifier?: string, url?: string}
+
+type Info = {title: string, summary?: string, description?: string, termsOfService?: string, contact?: Contact, license?: License, version: string}
+
+type ServerVariable = {enum?: list<string>, default: string, description?: string}
+
+type Server = {url: string, description?: string, variables?: dict<string, ServerVariable>}
+
+type ExternalDocumentation = {description?: string, url: string}
+
+type Tag = {name: string, description?: string, externalDocs?: ExternalDocumentation}
+
+type SecurityRequirement = dict<string, list<string>>
+
+type Discriminator = {propertyName: string, mapping?: dict<string, string>}
+
+/**
+ * Schema is open-shaped by design. JSON Schema 2020-12 permits "$ref"
+ * siblings, so schema(doc, value) merges referenced content with any sibling
+ * keywords instead of treating "$ref" as an exclusive replacement.
+ * exclusiveMinimum / exclusiveMaximum are numeric in OAS 3.1, and oneOf /
+ * anyOf are first-class so polymorphic request bodies remain representable.
+ */
+type Schema = {title?: string, multipleOf?: float, maximum?: float, exclusiveMaximum?: float, minimum?: float, exclusiveMinimum?: float, maxLength?: int, minLength?: int, pattern?: string, maxItems?: int, minItems?: int, uniqueItems?: bool, maxProperties?: int, minProperties?: int, required?: list<string>, enum?: list, const?: any, type?: JsonSchemaType | list<JsonSchemaType>, allOf?: list<dict>, oneOf?: list<dict>, anyOf?: list<dict>, not?: dict, items?: dict | list<dict>, properties?: dict<string, dict>, additionalProperties?: bool | dict, description?: string, format?: string, default?: any, nullable?: bool, discriminator?: Discriminator, readOnly?: bool, writeOnly?: bool, xml?: dict, externalDocs?: ExternalDocumentation, example?: any, examples?: list<any>, deprecated?: bool}
+
+type Example = {summary?: string, description?: string, value?: any, externalValue?: string}
+
+type Encoding = {contentType?: string, headers?: dict, style?: string, explode?: bool, allowReserved?: bool}
+
+type MediaType = {schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, encoding?: dict<string, Encoding>}
+
+type ParameterLocation = "query" | "header" | "path" | "cookie"
+
+type Parameter = {name: string, in: ParameterLocation, description?: string, required?: bool, deprecated?: bool, allowEmptyValue?: bool, style?: string, explode?: bool, allowReserved?: bool, schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, content?: dict<string, MediaType>}
+
+type Header = {description?: string, required?: bool, deprecated?: bool, allowEmptyValue?: bool, style?: string, explode?: bool, allowReserved?: bool, schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, content?: dict<string, MediaType>}
+
+type RequestBody = {description?: string, content: dict<string, MediaType>, required?: bool}
+
+type Link = {operationRef?: string, operationId?: string, parameters?: dict<string, any>, requestBody?: any, description?: string, server?: Server}
+
+type Response = {description: string, headers?: dict<string, RefOr<Header>>, content?: dict<string, MediaType>, links?: dict<string, RefOr<Link>>}
+
+type Responses = dict<string, RefOr<Response>>
+
+type Callback = dict<string, dict>
+
+type Operation = {method?: string, path?: string, operation_id?: string, tags?: list<string>, summary?: string, description?: string, externalDocs?: ExternalDocumentation, operationId?: string, parameters?: list<RefOr<Parameter>>, requestBody?: RefOr<RequestBody>, request_body?: RefOr<RequestBody>, responses?: Responses, callbacks?: dict<string, RefOr<Callback>>, deprecated?: bool, security?: list<SecurityRequirement>, servers?: list<Server>}
+
+type PathItem = {summary?: string, description?: string, get?: Operation, put?: Operation, post?: Operation, delete?: Operation, options?: Operation, head?: Operation, patch?: Operation, trace?: Operation, servers?: list<Server>, parameters?: list<RefOr<Parameter>>}
+
+type ApiKeySecurityScheme = {type: "apiKey", description?: string, name: string, in: "query" | "header" | "cookie"}
+
+type HttpSecurityScheme = {type: "http", description?: string, scheme: string, bearerFormat?: string}
+
+type OAuthFlow = {authorizationUrl?: string, tokenUrl?: string, refreshUrl?: string, scopes: dict<string, string>}
+
+type OAuthFlows = {implicit?: OAuthFlow, password?: OAuthFlow, clientCredentials?: OAuthFlow, authorizationCode?: OAuthFlow}
+
+type OAuth2SecurityScheme = {type: "oauth2", description?: string, flows: OAuthFlows}
+
+type OpenIdConnectSecurityScheme = {type: "openIdConnect", description?: string, openIdConnectUrl: string}
+
+type MutualTLSSecurityScheme = {type: "mutualTLS", description?: string}
+
+type SecurityScheme = ApiKeySecurityScheme | HttpSecurityScheme | OAuth2SecurityScheme | OpenIdConnectSecurityScheme | MutualTLSSecurityScheme
+
+type Components = {schemas?: dict<string, Schema>, responses?: dict<string, RefOr<Response>>, parameters?: dict<string, RefOr<Parameter>>, examples?: dict<string, RefOr<Example>>, requestBodies?: dict<string, RefOr<RequestBody>>, headers?: dict<string, RefOr<Header>>, securitySchemes?: dict<string, RefOr<SecurityScheme>>, links?: dict<string, RefOr<Link>>, callbacks?: dict<string, RefOr<Callback>>, pathItems?: dict<string, RefOr<PathItem>>}
+
+type OpenApiDoc = {openapi: string, info: Info, jsonSchemaDialect?: string, servers?: list<Server>, paths?: dict<string, PathItem>, webhooks?: dict<string, RefOr<PathItem>>, components?: Components, security?: list<SecurityRequirement>, tags?: list<Tag>, externalDocs?: ExternalDocumentation, security_schemes?: dict<string, RefOr<SecurityScheme>>}
+
+type WebhookOperation = {name: string, method: string, path_item: PathItem, operation: Operation, operation_id: string, summary?: string, description?: string, parameters?: list<RefOr<Parameter>>, request_body?: RefOr<RequestBody>, responses?: Responses, security?: list<SecurityRequirement>, tags?: list<string>}
+
+type ParseOpenApiDoc = {openapi: string, info: Info, servers?: list, paths?: dict, webhooks?: dict, components?: dict, security_schemes?: dict, security?: list, tags?: list}
+
+let _OPENAPI_DOC_SCHEMA = {
+  type: "dict",
+  properties: {
+  openapi: {type: "string"},
+  info: {
+  type: "dict",
+  properties: {title: {type: "string"}, version: {type: "string"}},
+  required: ["title", "version"],
+},
+},
+  required: ["openapi", "info"],
+}
 
 // -----------------------------------------------------------------------------
 // Parsing
 // -----------------------------------------------------------------------------
 
-/** Parse an OpenAPI 3.1 JSON document into a normalized doc dict. */
-pub fn parse(json_string: string) -> dict {
+/** Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc. */
+pub fn parse(json_string: string) -> OpenApiDoc {
   let raw = json_parse(json_string)
   let version = raw.get("openapi")
   if version == nil {
@@ -71,7 +180,7 @@ pub fn parse(json_string: string) -> dict {
   }
   let components = raw.get("components") ?? {}
   let components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
-  return {
+  let doc = {
     openapi: version,
     info: raw.get("info") ?? {},
     servers: raw.get("servers") ?? [],
@@ -82,6 +191,7 @@ pub fn parse(json_string: string) -> dict {
     security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
   }
+  return schema_expect(doc, _OPENAPI_DOC_SCHEMA)
 }
 
 // -----------------------------------------------------------------------------
@@ -91,17 +201,17 @@ pub fn parse(json_string: string) -> dict {
 let _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]
 
 /** Flatten every operation in the doc's `paths` dict. */
-pub fn operations(doc: dict) -> list {
+pub fn operations(doc: OpenApiDoc) -> list<Operation> {
   return _flatten_path_item_map(doc.get("paths") ?? {}, doc, "path")
 }
 
 /** Flatten every operation in the doc's `webhooks` dict (OAS 3.1). */
-pub fn webhook_operations(doc: dict) -> list {
+pub fn webhook_operations(doc: OpenApiDoc) -> list<WebhookOperation> {
   return _flatten_path_item_map(doc.get("webhooks") ?? {}, doc, "webhook")
 }
 
 /** Passthrough accessor for `components.pathItems` (OAS 3.1). */
-pub fn component_path_items(doc: dict) -> dict {
+pub fn component_path_items(doc: OpenApiDoc) -> dict<string, RefOr<PathItem>> {
   let components = doc.get("components") ?? {}
   return components.get("pathItems") ?? {}
 }
@@ -200,7 +310,7 @@ fn _synth_operation_id(method, path) {
 }
 
 /** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
-pub fn schema(doc: dict, ref_or_inline) -> dict {
+pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
   let resolved = _resolve_ref(doc, ref_or_inline)
   let all_of = resolved.get("allOf")
   if all_of == nil {
@@ -223,7 +333,8 @@ fn _resolve_ref(doc, node) {
   if ref == nil {
     return node
   }
-  return _lookup_ref(doc, ref)
+  let target = _lookup_ref(doc, ref)
+  return _merge_schema(target, node)
 }
 
 fn _lookup_ref(doc, ref) {
@@ -297,7 +408,7 @@ fn _dedupe(xs) {
 }
 
 /** Return the enum variant list on a schema, or nil. */
-pub fn enum_values(sch) {
+pub fn enum_values(sch: Schema) -> list<string> | nil {
   if type_of(sch) != "dict" {
     return nil
   }
@@ -309,6 +420,24 @@ pub fn enum_values(sch) {
     return nil
   }
   return vs
+}
+
+/** True when a value matches the minimum normalized OpenApiDoc shape. */
+pub fn is_openapi_doc(value: unknown) -> bool {
+  return schema_is(value, _OPENAPI_DOC_SCHEMA)
+}
+
+/** True when a value is a local or remote OpenAPI Reference Object. */
+pub fn is_reference(value: unknown) -> bool {
+  if type_of(value) != "dict" {
+    return false
+  }
+  return value.get("$ref") != nil
+}
+
+/** True when a value is object-like enough to be used as an OAS Schema. */
+pub fn is_schema(value: unknown) -> bool {
+  return schema_is(value, {type: "dict"})
 }
 
 // -----------------------------------------------------------------------------
@@ -382,7 +511,7 @@ let _MODULE_TEMPLATE = """
   """
 
 /** Emit a Harn SDK module as source code. */
-pub fn codegen_module(doc: dict, options: dict) -> string {
+pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   let module_name = options.get("module_name") ?? "generated_sdk"
   let client_name = options.get("client_name") ?? "Client"
   let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)

@@ -1,0 +1,23 @@
+// types_smoke — validate the public typed surface from a wildcard import.
+import "../src/lib"
+
+@test
+pipeline default() {
+  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let doc: OpenApiDoc = parse(raw)
+  require is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard"
+  let ops: list<Operation> = operations(doc)
+  require len(ops) > 40, "expected >40 typed operations"
+  require ops[0].method != nil, "typed operation should expose method"
+  require ops[0].path != nil, "typed operation should expose path"
+  require ops[0].operation_id != nil, "typed operation should expose operation_id"
+  let ref_with_sibling = {["$ref"]: "#/components/schemas/annotationResponse", description: "sibling description"}
+  require is_reference(ref_with_sibling), "is_reference should detect $ref dicts"
+  let resolved: Schema = schema(doc, ref_with_sibling)
+  require resolved.get("$ref") != nil, "schema() should preserve the original $ref sibling"
+  require resolved.description == "sibling description", "schema() should preserve $ref siblings"
+  let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
+  let values = enum_values(enum_schema)
+  require values != nil && len(values) == 2, "enum_values should preserve typed enum lists"
+  println("types_smoke: ok")
+}
