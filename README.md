@@ -140,6 +140,29 @@ a human can retarget manually.
 Out of scope for v0: full OAuth2 flows (authorization-code, device,
 PKCE) and `mutualTLS` client-certificate plumbing.
 
+### Polymorphic request bodies
+
+For `application/json` request bodies whose top-level schema is `oneOf` or
+`anyOf`, `codegen_module` emits the normal umbrella operation plus one
+constructor per variant. Callers can build the body dynamically and pass it to
+the umbrella, while static callers can use the variant constructor directly:
+
+```harn
+let body = update_page_markdown_insert_content({
+  content: "## New section",
+})
+let page = update_page_markdown(client, page_id, body)
+```
+
+The constructor adds an internal `_variant` tag so the umbrella can validate
+which variant was selected, then strips `_variant` before serializing the HTTP
+body. When an OpenAPI discriminator mapping is present, the mapping key is used
+as the `_variant` tag.
+
+Downstream SDK wrappers can expose the same two styles as methods, e.g.
+`client.update_page_markdown(body)` for dynamic dispatch and
+`client.update_page_markdown_insert_content({...})` for a static variant call.
+
 ## Development
 
 This repo is being built out by Claude Code sessions following a structured

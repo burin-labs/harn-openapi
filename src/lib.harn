@@ -506,6 +506,19 @@ let _MODULE_TEMPLATE = """
     return "?" + join(parts, "&")
   }
 
+  fn _strip_codegen_variant(body) -> dict {
+    if type_of(body) != "dict" {
+      throw "polymorphic request body must be a dict with a _variant marker"
+    }
+    var out = {}
+    for entry in body {
+      if entry.key != "_variant" {
+        out = {...out, [entry.key]: entry.value}
+      }
+    }
+    return out
+  }
+
   {{ for op in operations }}
   {{ op.doc_comment }}{{ if op.security_note }}
   // {{ op.security_note }}{{ end }}
@@ -515,7 +528,7 @@ let _MODULE_TEMPLATE = """
     {{ if op.has_query }}let query_bindings = {{ op.query_bindings }}
     var url = client.base_url + path
     url = url + _query_string(query_bindings){{ else }}let url = client.base_url + path{{ end }}
-    {{ if op.has_body }}let body_str = json_stringify(body)
+    {{ if op.has_body }}{{ op.body_prepare }}
     let resp = http_{{ op.method }}(url, body_str, {headers: {{ op.headers_call }}}){{ else }}let resp = http_{{ op.method }}(url, {headers: {{ op.headers_call }}}){{ end }}
     if resp.status >= 400 {
       throw "{{ op.fn_name }}: HTTP " + to_string(resp.status) + " " + resp.body
@@ -526,6 +539,7 @@ let _MODULE_TEMPLATE = """
     }
     return raw{{ end }}
   }
+  {{ op.body_variant_constructors }}
   {{ end }}
   """
 
@@ -578,8 +592,8 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     let op = entry.value
     let ret = op_return_types[entry.index]
     let choice = _resolve_security(op.security, doc_security)
-    let model = _build_op_model(op, seen_names, choice, schemes, ret)
-    seen_names = seen_names + [model.fn_name]
+    let model = _build_op_model(doc, op, seen_names, choice, schemes, ret)
+    seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
   }
   var alias_entries = []
@@ -780,11 +794,12 @@ fn _normalize_generated_source(src, module_name) {
   while contains(out, "\n\n\n") {
     out = replace(out, "\n\n\n", "\n\n")
   }
-  return replace(
+  out = replace(
     out,
     " * Module:     " + module_name + "\n */\n\n",
     " * Module:     " + module_name + "\n */\n",
   )
+  return out.trim() + "\n"
 }
 
 fn _render_auth_helper(scheme_name, def) {
@@ -913,7 +928,7 @@ fn _default_server_url(doc) {
   return servers[0].get("url") ?? ""
 }
 
-fn _build_op_model(op, taken_names, choice, schemes, ret) {
+fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
   let fn_name = _unique_fn_name(_sanitize_fn_name(op.operation_id), taken_names)
   let params = op.parameters
   var path_params = []
@@ -997,6 +1012,7 @@ fn _build_op_model(op, taken_names, choice, schemes, ret) {
   } else {
     ""
   }
+  let body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
   return {
     fn_name: fn_name,
     method: op.method,
@@ -1006,6 +1022,9 @@ fn _build_op_model(op, taken_names, choice, schemes, ret) {
     query_bindings: _render_query_bindings(query_bindings_parts, has_apikey_query, scheme_name),
     has_query: has_query,
     has_body: has_body,
+    body_prepare: _render_body_prepare(fn_name, body_variants),
+    body_variant_constructors: _render_body_variant_constructors(body_variants),
+    body_variant_fn_names: _body_variant_fn_names(body_variants),
     doc_comment: doc_comment,
     headers_call: headers_call,
     security_note: security_note,
@@ -1047,6 +1066,302 @@ fn _render_binding_dict(parts) {
   }
   out = out + "  }"
   return out
+}
+
+fn _request_json_schema(doc, request_body) {
+  if request_body == nil {
+    return nil
+  }
+  let rb = _resolve_ref(doc, request_body)
+  let content = rb.get("content")
+  if content == nil {
+    return nil
+  }
+  let app_json = content.get("application/json")
+  if app_json == nil {
+    return nil
+  }
+  return app_json.get("schema")
+}
+
+fn _body_variants_for_op(doc, op, fn_name, taken_names) {
+  let raw_schema = _request_json_schema(doc, op.request_body)
+  if raw_schema == nil {
+    return []
+  }
+  let root = schema(doc, raw_schema)
+  let variant_nodes = if root.get("oneOf") != nil {
+    root.get("oneOf")
+  } else {
+    root.get("anyOf")
+  }
+  if type_of(variant_nodes) != "list" || len(variant_nodes) < 2 {
+    return []
+  }
+  let discriminator = root.get("discriminator")
+  let discriminator_property = if type_of(discriminator) == "dict" {
+    discriminator.get("propertyName")
+  } else {
+    nil
+  }
+  var variants = []
+  var taken_suffixes = []
+  var taken_fn_names = taken_names + [fn_name]
+  for entry in variant_nodes.enumerate() {
+    let raw_variant = entry.value
+    let resolved = schema(doc, raw_variant)
+    let mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
+    let display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
+    let tag = _variant_tag(discriminator_property, resolved, display_name, mapping_tag)
+    let suffix_base = _snake_case_ident(display_name)
+    let suffix = _unique_fn_name(suffix_base, taken_suffixes)
+    taken_suffixes = taken_suffixes + [suffix]
+    let variant_fn_name = _unique_fn_name(fn_name + "_" + suffix, taken_fn_names)
+    taken_fn_names = taken_fn_names + [variant_fn_name]
+    variants = variants
+      + [
+      {
+      name: display_name,
+      tag: tag,
+      fn_name: variant_fn_name,
+      fields: _variant_constructor_fields(doc, resolved),
+    },
+    ]
+  }
+  return variants
+}
+
+fn _discriminator_mapping_tag(discriminator, raw_variant) {
+  if type_of(discriminator) != "dict" || type_of(raw_variant) != "dict" {
+    return nil
+  }
+  let mapping = discriminator.get("mapping")
+  if type_of(mapping) != "dict" {
+    return nil
+  }
+  let ref = raw_variant.get("$ref")
+  if ref == nil {
+    return nil
+  }
+  for entry in mapping {
+    if entry.value == ref {
+      return entry.key
+    }
+  }
+  return nil
+}
+
+fn _variant_display_name(raw_variant, resolved, mapping_tag, index) {
+  if type_of(resolved) == "dict" {
+    let title = resolved.get("title")
+    if type_of(title) == "string" && title != "" {
+      return _pascal_case(title)
+    }
+  }
+  if type_of(raw_variant) == "dict" {
+    let ref = raw_variant.get("$ref")
+    if type_of(ref) == "string" && ref != "" {
+      return _alias_name_from_ref(ref)
+    }
+  }
+  if type_of(mapping_tag) == "string" && mapping_tag != "" {
+    return _pascal_case(mapping_tag)
+  }
+  return "Variant" + to_string(index + 1)
+}
+
+fn _variant_tag(discriminator_property, resolved, display_name, mapping_tag) {
+  if type_of(mapping_tag) == "string" && mapping_tag != "" {
+    return mapping_tag
+  }
+  if type_of(discriminator_property) == "string" && discriminator_property != "" {
+    let const_tag = _schema_property_literal(resolved, discriminator_property)
+    if const_tag != nil {
+      return to_string(const_tag)
+    }
+  }
+  return display_name
+}
+
+fn _schema_property_literal(resolved, property_name) {
+  if type_of(resolved) != "dict" {
+    return nil
+  }
+  let props = resolved.get("properties") ?? {}
+  let prop = props.get(property_name)
+  if type_of(prop) != "dict" {
+    return nil
+  }
+  let const_value = prop.get("const")
+  if const_value != nil {
+    return const_value
+  }
+  let values = prop.get("enum")
+  if type_of(values) == "list" && len(values) > 0 {
+    return values[0]
+  }
+  return nil
+}
+
+fn _variant_constructor_fields(doc, resolved) {
+  if type_of(resolved) != "dict" || type_of(resolved.get("properties")) != "dict" {
+    return []
+  }
+  let props = resolved.get("properties") ?? {}
+  let required = resolved.get("required") ?? []
+  var keys = []
+  for entry in props {
+    keys = keys + [entry.key]
+  }
+  keys.sort()
+  var fields = []
+  var taken_idents = []
+  for key in keys {
+    let prop_schema = props.get(key)
+    let const_value = if type_of(prop_schema) == "dict" {
+      prop_schema.get("const")
+    } else {
+      nil
+    }
+    let ident_base = _sanitize_ident(key)
+    let ident = _unique_fn_name(ident_base, taken_idents)
+    taken_idents = taken_idents + [ident]
+    let ty = _harn_type_for_property(doc, prop_schema, 1).annotation
+    fields = fields
+      + [
+      {
+      key: key,
+      ident: ident,
+      annotation: ty,
+      required: required.contains(key),
+      const_value: const_value,
+      has_const: const_value != nil,
+    },
+    ]
+  }
+  return fields
+}
+
+fn _body_variant_fn_names(variants) {
+  var names = []
+  for variant in variants {
+    names = names + [variant.fn_name]
+  }
+  return names
+}
+
+fn _body_variant_tags(variants) {
+  var tags = []
+  for variant in variants {
+    tags = tags + [variant.tag]
+  }
+  return tags
+}
+
+fn _render_body_prepare(fn_name, variants) {
+  if len(variants) == 0 {
+    return "let body_str = json_stringify(body)"
+  }
+  let tags = _render_string_list(_body_variant_tags(variants))
+  let ctor_names = join(_body_variant_fn_names(variants), ", ")
+  return "let body_variant = if type_of(body) == \"dict\" {\n"
+    + "    body.get(\"_variant\")\n"
+    + "  } else {\n"
+    + "    nil\n"
+    + "  }\n"
+    + "  if body_variant == nil {\n"
+    + "    throw \""
+    + fn_name
+    + ": polymorphic request body must be built with one of: "
+    + _escape_string(ctor_names)
+    + "\"\n"
+    + "  }\n"
+    + "  if !"
+    + tags
+    + ".contains(body_variant) {\n"
+    + "    throw \""
+    + fn_name
+    + ": unknown request body variant \" + to_string(body_variant)\n"
+    + "  }\n"
+    + "  let body_str = json_stringify(_strip_codegen_variant(body))"
+}
+
+fn _render_string_list(items) {
+  var parts = []
+  for item in items {
+    parts = parts + ["\"" + _escape_string(to_string(item)) + "\""]
+  }
+  return "[" + join(parts, ", ") + "]"
+}
+
+fn _render_body_variant_constructors(variants) {
+  if len(variants) == 0 {
+    return ""
+  }
+  var chunks = []
+  for variant in variants {
+    chunks = chunks + [_render_body_variant_constructor(variant)]
+  }
+  return "\n" + join(chunks, "\n\n")
+}
+
+fn _render_body_variant_constructor(variant) {
+  var required_sig = []
+  var optional_sig = []
+  var literal_entries = []
+  var optional_lines = []
+  for field in variant.fields {
+    if field.has_const {
+      literal_entries = literal_entries + [_harn_dict_entry(field.key, _render_literal(field.const_value))]
+    } else if field.required {
+      required_sig = required_sig + [field.ident + ": " + field.annotation]
+      literal_entries = literal_entries + [_harn_dict_entry(field.key, field.ident)]
+    } else {
+      optional_sig = optional_sig + [field.ident + " = nil"]
+      optional_lines = optional_lines
+        + [
+        "  if "
+        + field.ident
+        + " != nil {\n"
+        + "    body = {...body, "
+        + _harn_dict_entry(field.key, field.ident)
+        + "}\n"
+        + "  }",
+      ]
+    }
+  }
+  let sig_parts = required_sig + optional_sig
+  if len(sig_parts) == 0 && len(literal_entries) == 0 {
+    return "pub fn "
+      + variant.fn_name
+      + "(payload: dict) -> dict {\n"
+      + "  return {...payload, _variant: \""
+      + _escape_string(variant.tag)
+      + "\"}\n"
+      + "}"
+  }
+  literal_entries = literal_entries + [_harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\"")]
+  var body = "pub fn " + variant.fn_name + "(" + join(sig_parts, ", ") + ") -> dict {\n"
+  body = body + "  var body = " + _render_binding_dict(literal_entries) + "\n"
+  for line in optional_lines {
+    body = body + line + "\n"
+  }
+  body = body + "  return body\n"
+  body = body + "}"
+  return body
+}
+
+fn _render_literal(value) {
+  if type_of(value) == "string" {
+    return "\"" + _escape_string(value) + "\""
+  }
+  if type_of(value) == "bool" {
+    return to_string(value)
+  }
+  if value == nil {
+    return "nil"
+  }
+  return json_stringify(value)
 }
 
 // -----------------------------------------------------------------------------
@@ -1379,6 +1694,45 @@ fn _sanitize_ident(raw) {
     return s + "_"
   }
   return s
+}
+
+fn _snake_case_ident(raw) {
+  if raw == nil || raw == "" {
+    return "variant"
+  }
+  let cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
+  var out = ""
+  var i = 0
+  while i < len(cleaned) {
+    let ch = substring(cleaned, i, 1)
+    if ch == "_" {
+      if out != "" && substring(out, len(out) - 1, 1) != "_" {
+        out = out + "_"
+      }
+    } else {
+      if _is_upper(ch) && out != "" && substring(out, len(out) - 1, 1) != "_" {
+        out = out + "_"
+      }
+      out = out + ch.lower()
+    }
+    i = i + 1
+  }
+  out = regex_replace_all("^_+|_+$", "", out)
+  if out == "" {
+    return "variant"
+  }
+  let first_char = substring(out, 0, 1)
+  if _is_digit(first_char) {
+    out = "variant_" + out
+  }
+  if _is_reserved(out) {
+    return out + "_"
+  }
+  return out
+}
+
+fn _is_upper(c) {
+  return regex_match("^[A-Z]$", c) != nil
 }
 
 fn _is_digit(c) {

@@ -1,0 +1,256 @@
+// polymorphic_body_smoke — issue #3 acceptance: codegen detects
+// oneOf/anyOf JSON request bodies, emits variant constructors, strips
+// the internal _variant tag before sending, and respects discriminator
+// mapping values as tags.
+import { codegen_module, parse } from "../src/lib"
+
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
+
+let _POLY_DOC = """
+  {
+    "openapi": "3.1.0",
+    "info": { "title": "Polymorphic API", "version": "1.0.0" },
+    "servers": [{"url": "https://api.example.com"}],
+    "paths": {
+      "/pets/{pet_id}": {
+        "patch": {
+          "operationId": "update-pet",
+          "parameters": [
+            {"name": "pet_id", "in": "path", "required": true,
+             "schema": {"type": "string"}}
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {"$ref": "#/components/schemas/CatUpdate"},
+                    {"$ref": "#/components/schemas/DogUpdate"}
+                  ],
+                  "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {
+                      "cat": "#/components/schemas/CatUpdate",
+                      "dog": "#/components/schemas/DogUpdate"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "ok",
+              "content": {"application/json": {"schema": {"type": "object"}}}
+            }
+          }
+        }
+      },
+      "/shape": {
+        "post": {
+          "operationId": "submit-shape",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "title": "Circle Shape",
+                      "type": "object",
+                      "required": ["radius"],
+                      "properties": {"radius": {"type": "number"}}
+                    },
+                    {
+                      "title": "Square Shape",
+                      "type": "object",
+                      "required": ["side"],
+                      "properties": {"side": {"type": "number"}}
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "responses": {"204": {"description": "accepted"}}
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "CatUpdate": {
+          "type": "object",
+          "required": ["kind", "meow"],
+          "properties": {
+            "kind": {"type": "string", "const": "cat"},
+            "meow": {"type": "string"},
+            "lives": {"type": "integer"}
+          }
+        },
+        "DogUpdate": {
+          "type": "object",
+          "required": ["kind", "bark"],
+          "properties": {
+            "kind": {"type": "string", "const": "dog"},
+            "bark": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+  """
+
+fn count_occurrences(haystack: string, needle: string) -> int {
+  var count = 0
+  var idx = 0
+  let hn = len(haystack)
+  let nn = len(needle)
+  if nn == 0 {
+    return 0
+  }
+  while idx + nn <= hn {
+    if substring(haystack, idx, nn) == needle {
+      count = count + 1
+      idx = idx + nn
+    } else {
+      idx = idx + 1
+    }
+  }
+  return count
+}
+
+fn assert_contains(haystack: string, needle: string, label: string) {
+  if !contains(haystack, needle) {
+    println("---BEGIN GENERATED SOURCE---")
+    println(haystack)
+    println("---END GENERATED SOURCE---")
+    assert(false, "${label}: expected generated source to contain ${needle}")
+  }
+}
+
+fn check_file(path: string, label: string) {
+  let result = shell(harn_cmd("check " + path))
+  if !result.success {
+    println("---${label} harn check stderr---")
+    println(result.stderr)
+    println("---${label} harn check stdout---")
+    println(result.stdout)
+  }
+  assert(result.success, "${label}: generated module must pass harn check")
+}
+
+fn run_file(path: string, label: string) {
+  let result = shell(harn_cmd("run " + path))
+  if !result.success {
+    println("---${label} harn run stderr---")
+    println(result.stderr)
+    println("---${label} harn run stdout---")
+    println(result.stdout)
+  }
+  assert(result.success, "${label}: generated module runtime smoke must pass")
+}
+
+pipeline default() {
+  let doc = parse(_POLY_DOC)
+  let src = codegen_module(
+    doc,
+    {
+    module_name: "poly",
+    client_name: "PolyClient",
+    default_base_url: "https://api.example.com",
+    header_overrides: {},
+  },
+  )
+  let out_path = "/tmp/harn-openapi-polymorphic-generated.harn"
+  write_file(out_path, src)
+  assert_contains(src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
+  assert_contains(src, "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict", "cat ctor")
+  assert_contains(src, "pub fn update_pet_dog_update(bark: bool) -> dict", "dog ctor")
+  assert_contains(src, "if ![\"cat\", \"dog\"].contains(body_variant)", "discriminator tags")
+  assert_contains(src, "kind: \"cat\"", "cat const discriminator")
+  assert_contains(src, "_variant: \"cat\"", "cat internal tag")
+  assert_contains(src, "pub fn submit_shape_circle_shape(radius: float) -> dict", "anyOf ctor")
+  assert_contains(src, "pub fn submit_shape_square_shape(side: float) -> dict", "anyOf ctor")
+  check_file(out_path, "poly")
+  let runner_path = "/tmp/harn-openapi-polymorphic-runner.harn"
+  write_file(
+    runner_path,
+    """
+    import { new_client, update_pet, update_pet_cat_update } from "/tmp/harn-openapi-polymorphic-generated"
+
+    pipeline default() {
+      http_mock_clear()
+      http_mock("PATCH", "https://api.example.com/pets/p1", {
+        status: 200,
+        body: "{}",
+        headers: {},
+      })
+      let client = new_client()
+      let body = update_pet_cat_update("mew", 9)
+      assert(body._variant == "cat", "constructor must tag cat body")
+      update_pet(client, "p1", body)
+      let calls = http_mock_calls()
+      assert(len(calls) == 1, "expected one mocked call")
+      let sent = json_parse(calls[0].body)
+      assert(sent.kind == "cat", "outbound body keeps discriminator")
+      assert(sent.meow == "mew", "outbound body keeps required field")
+      assert(sent.lives == 9, "outbound body keeps optional field")
+      assert(sent.get("_variant") == nil, "outbound body strips internal _variant")
+    }
+    """,
+  )
+  run_file(runner_path, "poly")
+  let notion_raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let notion_src = codegen_module(
+    parse(notion_raw),
+    {
+    module_name: "notion",
+    client_name: "NotionClient",
+    default_base_url: "https://api.notion.com",
+    header_overrides: {["Notion-Version"]: "2025-09-03"},
+  },
+  )
+  assert_contains(
+    notion_src,
+    "pub fn update_page_markdown(client: dict, page_id, body) -> PageMarkdownResponse",
+    "notion umbrella",
+  )
+  assert_contains(
+    notion_src,
+    "pub fn update_page_markdown_insert_content(insert_content: dict) -> dict",
+    "notion insert_content ctor",
+  )
+  assert_contains(
+    notion_src,
+    "pub fn update_page_markdown_replace_content_range(replace_content_range: dict) -> dict",
+    "notion replace_content_range ctor",
+  )
+  assert_contains(
+    notion_src,
+    "pub fn update_page_markdown_update_content(update_content: dict) -> dict",
+    "notion update_content ctor",
+  )
+  assert_contains(
+    notion_src,
+    "pub fn update_page_markdown_replace_content(replace_content: dict) -> dict",
+    "notion replace_content ctor",
+  )
+  let notion_ctors = count_occurrences(notion_src, "pub fn update_page_markdown_")
+  assert(notion_ctors == 4, "expected four Notion markdown constructors, got ${notion_ctors}")
+  assert_contains(notion_src, "_strip_codegen_variant(body)", "notion strips _variant")
+  println("polymorphic_body_smoke: ok")
+}
