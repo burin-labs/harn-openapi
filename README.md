@@ -9,6 +9,42 @@ external Harn library and powers downstream typed SDKs such as
 > [burin-labs/harn](https://github.com/burin-labs/harn). See the
 > [Pure-Harn Connectors Pivot epic #350](https://github.com/burin-labs/harn/issues/350).
 
+## Intent
+
+`harn-openapi` is the OpenAPI layer for Harn's external connector ecosystem.
+Provider-specific SDKs and connectors should not each learn OpenAPI parsing,
+schema walking, security handling, or typed SDK generation independently. This
+repo keeps that shared logic in one pure-Harn package:
+
+- parse OpenAPI 3.1 JSON into normalized Harn records;
+- walk paths, webhooks, components, schemas, enums, and security metadata;
+- generate typed Harn SDK source for downstream provider repos;
+- keep a pinned real-world Notion OpenAPI fixture for deterministic coverage.
+
+The repo intentionally has no Cargo workspace, `package.json`, generated build
+system, or non-Harn runtime dependency. Harn package management is not available
+yet, so consumers currently use a local `harn.toml` path dependency.
+
+## Repository Layout
+
+| Path | Purpose |
+|---|---|
+| `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and `src/types.harn` exports shared types. |
+| `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
+| `src/types.harn` | Type aliases used by the public surface and tests. |
+| `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
+| `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
+| `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
+| `scripts/regen_demo.harn` | End-to-end parse to codegen demo that writes generated SDK source to `/tmp`. |
+| `scripts/refresh_fixtures.harn` | Refreshes the pinned Notion fixture and metadata intentionally. |
+| `scripts/fixture_diff.harn` | Prints a structured operation/schema diff between two fixture captures. |
+| `scripts/check_fixture_staleness.harn` | CI guard for fixture age. |
+| `scripts/bump_harn_cli_version.harn` | Updates the pinned crates.io `harn-cli` version in GitHub Actions and runs the local gate. |
+| `.github/workflows/ci.yml` | Main Harn check/lint/fmt/test/demo workflow. |
+| `.github/workflows/fixture-staleness.yml` | Lightweight fixture freshness workflow. |
+| `SESSION_PROMPT.md` | Historical project bootstrap and v0 milestone context. |
+| `AGENTS.md` | Repo-specific instructions for coding agents. |
+
 ## Install
 
 Once Harn package management v0
@@ -171,6 +207,43 @@ prompt. **Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) before making changes.**
 The upstream Harn language and runtime live at
 [burin-labs/harn](https://github.com/burin-labs/harn). For local development,
 clone it next to this repo at `../harn`.
+
+### Local checks
+
+The GitHub workflows install `harn-cli` from crates.io, but local development
+can use either a released `harn` binary or the upstream checkout. With a
+released binary:
+
+```sh
+HARN_ROOT="$PWD" harn check src scripts
+HARN_ROOT="$PWD" harn lint src scripts
+HARN_ROOT="$PWD" harn fmt --check src scripts tests
+for test in tests/*.harn; do HARN_ROOT="$PWD" harn run "$test" || exit 1; done
+HARN_ROOT="$PWD" harn run scripts/regen_demo.harn
+```
+
+When using the sibling upstream checkout instead:
+
+```sh
+cd ../harn
+cargo run --quiet --bin harn -- check ../harn-openapi/src ../harn-openapi/scripts
+cargo run --quiet --bin harn -- lint ../harn-openapi/src ../harn-openapi/scripts
+cargo run --quiet --bin harn -- fmt --check ../harn-openapi/src ../harn-openapi/scripts ../harn-openapi/tests
+for test in ../harn-openapi/tests/*.harn; do cargo run --quiet --bin harn -- run "$test" || exit 1; done
+cargo run --quiet --bin harn -- run ../harn-openapi/scripts/regen_demo.harn
+```
+
+### CI and merge queue
+
+Both workflows run on pull requests, `main` pushes, merge queue
+`merge_group` events, and manual dispatch. They install a pinned crates.io
+`harn-cli` version with `cargo install --locked`, cache the install and cargo
+registry data, and then run repo-local Harn commands.
+
+`main` is protected by GitHub's merge queue. Changes should be pushed on a
+branch, opened as a PR, and queued after checks pass. The merge queue runs the
+same workflows again on GitHub's synthetic queue branch before landing the PR
+on `main`.
 
 ### Fixture refresh workflow
 
