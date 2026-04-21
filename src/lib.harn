@@ -334,7 +334,8 @@ fn _resolve_ref(doc, node) {
     return node
   }
   let target = _lookup_ref(doc, ref)
-  return _merge_schema(target, node)
+  let siblings = _omit_key(node, "$ref")
+  return _merge_shallow(target, siblings)
 }
 
 fn _lookup_ref(doc, ref) {
@@ -381,6 +382,20 @@ fn _merge_schema(base, overlay) {
     } else {
       merged = {...merged, [k]: v}
     }
+  }
+  return merged
+}
+
+fn _merge_shallow(base, overlay) {
+  if type_of(base) != "dict" {
+    return overlay
+  }
+  if type_of(overlay) != "dict" {
+    return base
+  }
+  var merged = base
+  for entry in overlay {
+    merged = {...merged, [entry.key]: entry.value}
   }
   return merged
 }
