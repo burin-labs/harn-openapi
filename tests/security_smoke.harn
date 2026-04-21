@@ -67,6 +67,16 @@ fn check_generates(src: string, label: string) {
     println(result.stdout)
   }
   assert(result.success, "${label}: generated SDK must pass \`harn check\`")
+  let fmt_result = shell(
+    "cd /Users/ksinder/projects/harn && target/debug/harn fmt --check " + tmp_path,
+  )
+  if !fmt_result.success {
+    println("---harn fmt --check stderr---")
+    println(fmt_result.stderr)
+    println("---harn fmt --check stdout---")
+    println(fmt_result.stdout)
+  }
+  assert(fmt_result.success, "${label}: generated SDK must pass \`harn fmt --check\`")
 }
 
 @test
@@ -153,7 +163,7 @@ pipeline default() {
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
   assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
-  assert_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
+  assert_contains(src_d, "[\"X-Api-Key\"]:", "D/header-name-emitted")
   assert_contains(src_d, "client.api_keys.get(\"xApiKey\")", "D/reads-from-api-keys")
   assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
   assert_not_contains(src_d, "token:", "D/no-token-field")
@@ -170,7 +180,7 @@ pipeline default() {
   let src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
   assert_contains(src_e, "_headers_qkey(client)", "E/headers-dispatch")
   assert_contains(src_e, "_query_qkey_dict(client)", "E/query-spread-in-op")
-  assert_contains(src_e, "\"api_key\": v", "E/query-name-emitted")
+  assert_contains(src_e, "api_key: v", "E/query-name-emitted")
   assert_contains(src_e, "_query_string", "E/op-has-query-string-call")
   check_generates(src_e, "E")
 

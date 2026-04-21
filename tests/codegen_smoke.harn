@@ -30,5 +30,18 @@ pipeline default() {
     println(result.stdout)
   }
   assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
+  let fmt_cmd = "cd " + harn_root
+    + " && cargo run --quiet --bin harn -- fmt --check " + out_path
+  let fmt_result = shell(fmt_cmd)
+  if !fmt_result.success {
+    println("harn fmt --check stderr:")
+    println(fmt_result.stderr)
+    println("harn fmt --check stdout:")
+    println(fmt_result.stdout)
+  }
+  assert(
+    fmt_result.success,
+    "generated SDK must pass `harn fmt --check` (status ${fmt_result.status})",
+  )
   println("codegen_smoke: ok")
 }
