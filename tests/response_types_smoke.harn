@@ -4,6 +4,22 @@
 // `harn check`.
 import { codegen_module, parse } from "../src/lib"
 
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
+
 let _TINY_DOC = """
   {
     "openapi": "3.1.0",
@@ -208,8 +224,7 @@ pipeline default() {
   let raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
   // --- Acceptance 7: emitted module passes `harn check`. ---
-  let harn_root = "/Users/ksinder/projects/harn"
-  let result = shell("cd " + harn_root + " && cargo run --quiet --bin harn -- check " + out_path)
+  let result = shell(harn_cmd("check " + out_path))
   if !result.success {
     println("harn check stderr:")
     println(result.stderr)

@@ -1,7 +1,22 @@
 /* Smoke coverage for issue #7 fixture refresh support scripts. */
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
+
 pipeline default() {
   let repo_root = source_dir() + "/.."
-  let harn_root = "/Users/ksinder/projects/harn"
   let unique = to_string(to_int(timestamp())) + "-" + uuid()
   let old_path = temp_dir() + "/harn-openapi-old-" + unique + ".json"
   let new_path = temp_dir() + "/harn-openapi-new-" + unique + ".json"
@@ -71,12 +86,14 @@ pipeline default() {
     """
   write_file(old_path, old_doc)
   write_file(new_path, new_doc)
-  let diff_cmd = "cd " + harn_root + " && cargo run --quiet --bin harn -- run "
+  let diff_cmd = harn_cmd(
+    "run "
     + repo_root
     + "/scripts/fixture_diff.harn -- "
     + old_path
     + " "
-    + new_path
+    + new_path,
+  )
   let diff = shell(diff_cmd)
   if !diff.success {
     println(diff.stderr)
@@ -92,9 +109,7 @@ pipeline default() {
   require contains(diff.stdout, "removed schemas:"), "diff output must include removed schemas"
   require contains(diff.stdout, "Legacy"), "diff output must include removed schema"
   require contains(diff.stdout, "Widget (+1 fields, -1 fields)"), "diff output must summarize schema field changes"
-  let stale_cmd = "cd " + harn_root + " && cargo run --quiet --bin harn -- run "
-    + repo_root
-    + "/scripts/check_fixture_staleness.harn"
+  let stale_cmd = harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn")
   let stale = shell(stale_cmd)
   if !stale.success {
     println(stale.stderr)

@@ -1,4 +1,4 @@
-name: Fixture staleness
+name: CI
 
 on:
   pull_request:
@@ -17,10 +17,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  HARN_ROOT: ${{ github.workspace }}/harn
   HARN_BIN: ${{ github.workspace }}/target/debug/harn
 
 jobs:
-  check-fixture-staleness:
+  harn:
+    name: Harn library checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out harn-openapi
@@ -49,6 +51,38 @@ jobs:
         run: cargo build --quiet --bin harn
         working-directory: harn
 
-      - name: Check fixture staleness
-        run: "$HARN_BIN" run ../harn-openapi/scripts/check_fixture_staleness.harn
+      - name: Check Harn sources
+        run: |
+          "$HARN_BIN" check \
+            ../harn-openapi/src \
+            ../harn-openapi/scripts
+        working-directory: harn
+
+      - name: Lint Harn sources
+        run: |
+          "$HARN_BIN" lint \
+            ../harn-openapi/src \
+            ../harn-openapi/scripts
+        working-directory: harn
+
+      - name: Check Harn formatting
+        run: |
+          "$HARN_BIN" fmt --check \
+            ../harn-openapi/src \
+            ../harn-openapi/scripts \
+            ../harn-openapi/tests
+        working-directory: harn
+
+      - name: Run smoke tests
+        run: |
+          set -euo pipefail
+          for test in ../harn-openapi/tests/*.harn; do
+            echo "::group::$(basename "$test")"
+            "$HARN_BIN" run "$test"
+            echo "::endgroup::"
+          done
+        working-directory: harn
+
+      - name: Run regen demo
+        run: "$HARN_BIN" run ../harn-openapi/scripts/regen_demo.harn
         working-directory: harn

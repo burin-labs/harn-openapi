@@ -8,16 +8,28 @@
 // request headers (see burin-labs/harn#TBD). Until that lands, we
 // assert on generated source text plus runtime evaluation of helper
 // fns whose shape is deterministic.
+import { codegen_module, parse } from "../src/lib"
 
-import { parse, codegen_module } from "../src/lib"
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
 
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   var paths = {}
   for op in ops {
-    var method_entry = {
-      operationId: op.operation_id,
-      responses: {"200": {description: "ok"}},
-    }
+    var method_entry = {operationId: op.operation_id, responses: {["200"]: {description: "ok"}}}
     if op.get("security") != nil {
       method_entry = {...method_entry, security: op.security}
     }
@@ -57,26 +69,22 @@ fn assert_not_contains(haystack: string, needle: string, label: string) {
 fn check_generates(src: string, label: string) {
   let tmp_path = "/tmp/harn-openapi-security-smoke-${label}.harn"
   write_file(tmp_path, src)
-  let result = shell(
-    "cd /Users/ksinder/projects/harn && target/debug/harn check " + tmp_path,
-  )
+  let result = shell(harn_cmd("check " + tmp_path))
   if !result.success {
     println("---harn check stderr---")
     println(result.stderr)
     println("---harn check stdout---")
     println(result.stdout)
   }
-  assert(result.success, "${label}: generated SDK must pass \`harn check\`")
-  let fmt_result = shell(
-    "cd /Users/ksinder/projects/harn && target/debug/harn fmt --check " + tmp_path,
-  )
+  assert(result.success, "${label}: generated SDK must pass \\`harn check\\`")
+  let fmt_result = shell(harn_cmd("fmt --check " + tmp_path))
   if !fmt_result.success {
     println("---harn fmt --check stderr---")
     println(fmt_result.stderr)
     println("---harn fmt --check stdout---")
     println(fmt_result.stdout)
   }
-  assert(fmt_result.success, "${label}: generated SDK must pass \`harn fmt --check\`")
+  assert(fmt_result.success, "${label}: generated SDK must pass \\`harn fmt --check\\`")
 }
 
 @test
@@ -96,7 +104,6 @@ pipeline default() {
   assert_not_contains(src_a, "basic_user", "A/no-basic-field")
   assert_not_contains(src_a, "api_keys", "A/no-apikey-field")
   check_generates(src_a, "A")
-
   // ------------------------------------------------------------------
   // Scenario B: explicit security: [] on one op overrides doc default.
   // ------------------------------------------------------------------
@@ -104,9 +111,9 @@ pipeline default() {
     {bearerAuth: {type: "http", scheme: "bearer"}},
     [{bearerAuth: []}],
     [
-      {operation_id: "get-self", method: "get", path: "/v1/users/me"},
-      {operation_id: "public-ping", method: "get", path: "/health", security: []},
-    ],
+    {operation_id: "get-self", method: "get", path: "/v1/users/me"},
+    {operation_id: "public-ping", method: "get", path: "/health", security: []},
+  ],
   )
   let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
   // Authed op still uses the bearer helper.
@@ -135,7 +142,6 @@ pipeline default() {
     "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
   )
   check_generates(src_b, "B")
-
   // ------------------------------------------------------------------
   // Scenario C: http basic only.
   // ------------------------------------------------------------------
@@ -152,7 +158,6 @@ pipeline default() {
   assert_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
   assert_not_contains(src_c, "token:", "C/no-token-field")
   check_generates(src_c, "C")
-
   // ------------------------------------------------------------------
   // Scenario D: apiKey in header.
   // ------------------------------------------------------------------
@@ -168,7 +173,6 @@ pipeline default() {
   assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
   assert_not_contains(src_d, "token:", "D/no-token-field")
   check_generates(src_d, "D")
-
   // ------------------------------------------------------------------
   // Scenario E: apiKey in query.
   // ------------------------------------------------------------------
@@ -183,7 +187,6 @@ pipeline default() {
   assert_contains(src_e, "api_key: v", "E/query-name-emitted")
   assert_contains(src_e, "_query_string", "E/op-has-query-string-call")
   check_generates(src_e, "E")
-
   // ------------------------------------------------------------------
   // Scenario F: apiKey in cookie.
   // ------------------------------------------------------------------
@@ -197,17 +200,16 @@ pipeline default() {
   assert_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
   assert_contains(src_f, "client.api_keys.get(\"sessId\")", "F/reads-from-api-keys")
   check_generates(src_f, "F")
-
   // ------------------------------------------------------------------
   // Scenario G: oauth2 — treated as bearer for v0 (client already holds token).
   // ------------------------------------------------------------------
   let doc_g = build_doc(
     {
-      oauth2Auth: {
-        type: "oauth2",
-        flows: {clientCredentials: {tokenUrl: "https://api.example.com/oauth/token", scopes: {}}},
-      },
-    },
+    oauth2Auth: {
+    type: "oauth2",
+    flows: {clientCredentials: {tokenUrl: "https://api.example.com/oauth/token", scopes: {}}},
+  },
+  },
     [{oauth2Auth: []}],
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
@@ -216,26 +218,22 @@ pipeline default() {
   assert_contains(src_g, "Authorization: \"Bearer \" + to_string(client.token)", "G/bearer-shape")
   assert_contains(src_g, "token: string = \"\"", "G/client-has-token")
   check_generates(src_g, "G")
-
   // ------------------------------------------------------------------
   // Scenario H: mixed schemes (bearer + basic) with per-op overrides,
   // mirroring the real-world Notion shape.
   // ------------------------------------------------------------------
   let doc_h = build_doc(
-    {
-      bearerAuth: {type: "http", scheme: "bearer"},
-      basicAuth: {type: "http", scheme: "basic"},
-    },
+    {bearerAuth: {type: "http", scheme: "bearer"}, basicAuth: {type: "http", scheme: "basic"}},
     [{bearerAuth: []}],
     [
-      {operation_id: "get-me", method: "get", path: "/v1/users/me"},
-      {
-        operation_id: "create-a-token",
-        method: "post",
-        path: "/v1/oauth/token",
-        security: [{basicAuth: []}],
-      },
-    ],
+    {operation_id: "get-me", method: "get", path: "/v1/users/me"},
+    {
+    operation_id: "create-a-token",
+    method: "post",
+    path: "/v1/oauth/token",
+    security: [{basicAuth: []}],
+  },
+  ],
   )
   let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
@@ -276,7 +274,6 @@ pipeline default() {
     "H/create_a_token-must-NOT-use-bearer: got \"${h_token_line}\"",
   )
   check_generates(src_h, "H")
-
   // ------------------------------------------------------------------
   // Scenario I: mutualTLS — v0 fallback to no-auth with a NOTE comment.
   // ------------------------------------------------------------------
@@ -290,16 +287,12 @@ pipeline default() {
   assert_contains(src_i, "_headers_mtls(client)", "I/fallback-helper-called")
   assert_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
   check_generates(src_i, "I")
-
   // ------------------------------------------------------------------
   // Scenario J: multiple security alternatives are preserved as a NOTE,
   // not a TODO, so generated code can be committed without open TODOs.
   // ------------------------------------------------------------------
   let doc_j = build_doc(
-    {
-      bearerAuth: {type: "http", scheme: "bearer"},
-      basicAuth: {type: "http", scheme: "basic"},
-    },
+    {bearerAuth: {type: "http", scheme: "bearer"}, basicAuth: {type: "http", scheme: "basic"}},
     [{bearerAuth: []}, {basicAuth: []}],
     [{operation_id: "either-auth", method: "get", path: "/either"}],
   )
@@ -311,6 +304,5 @@ pipeline default() {
   )
   assert_not_contains(src_j, "TODO", "J/generated-source-has-no-todos")
   check_generates(src_j, "J")
-
   println("security_smoke: ok")
 }
