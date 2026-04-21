@@ -1,16 +1,13 @@
 // walk_smoke — M2 acceptance: enumerate operations, resolve the
 // databases.query request body schema, print its property names, and
 // exercise enum_values() on a known enum schema.
-
-import { parse, operations, schema, enum_values } from "../src/lib"
+import { enum_values, operations, parse, schema } from "../src/lib"
 
 pipeline default() {
-  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
-
   let ops = operations(doc)
   println("operation count: ${len(ops)}")
-
   // Locate the query-a-data-source operation. Notion 2025-11 renamed
   // the classic "databases.query" endpoint to the data-sources URL,
   // so we look up the operation_id instead of the path.
@@ -22,7 +19,6 @@ pipeline default() {
   }
   assert(query_op != nil, "could not find post-database-query operation")
   println("query op: ${query_op.method} ${query_op.path}")
-
   let body_schema_raw = query_op.request_body.content["application/json"].schema
   let resolved = schema(doc, body_schema_raw)
   let fields = resolved.properties.keys()
@@ -32,7 +28,6 @@ pipeline default() {
     println("  - ${f}")
   }
   assert(fields.contains("filter"), "expected 'filter' field on query request body")
-
   // Find any schema with an enum and verify enum_values returns a list.
   var enum_name = ""
   var enum_size = 0
@@ -47,9 +42,7 @@ pipeline default() {
   }
   assert(enum_name != "", "expected at least one enum schema in fixture")
   println("enum example '${enum_name}': ${enum_size} values")
-
   // Sanity-check that enum_values on a non-enum schema returns nil.
   assert(enum_values({type: "object"}) == nil, "enum_values on non-enum must return nil")
-
   println("walk_smoke: ok")
 }

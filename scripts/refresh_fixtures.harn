@@ -1,0 +1,79 @@
+// Refresh the pinned Notion OpenAPI fixture and write capture metadata.
+//
+// Run from the upstream Harn checkout:
+//   cargo run --quiet --bin harn -- run \
+//     /path/to/harn-openapi/scripts/refresh_fixtures.harn
+let _NOTION_OPENAPI_URL = "https://developers.notion.com/openapi.json"
+
+let _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
+
+let _META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
+
+fn _repo_root() -> string {
+  return source_dir() + "/.."
+}
+
+fn _fixture_path() -> string {
+  return _repo_root() + "/" + _FIXTURE_REL_PATH
+}
+
+fn _meta_path() -> string {
+  return _repo_root() + "/" + _META_REL_PATH
+}
+
+fn _toml_quote(value: string) -> string {
+  return "\"" + replace(replace(value, "\\", "\\\\"), "\"", "\\\"") + "\""
+}
+
+fn _render_meta(captured_at: string, hash: string, byte_size: int) -> string {
+  return "upstream_url = " + _toml_quote(_NOTION_OPENAPI_URL) + "\n"
+    + "captured_at = "
+    + _toml_quote(captured_at)
+    + "\n"
+    + "captured_by = \"scripts/refresh_fixtures.harn\"\n"
+    + "sha256 = "
+    + _toml_quote(hash)
+    + "\n"
+    + "byte_size = "
+    + to_string(byte_size)
+    + "\n"
+}
+
+pipeline default() {
+  let fixture_path = _fixture_path()
+  let meta_path = _meta_path()
+  let old_size = if file_exists(fixture_path) {
+    stat(fixture_path).size
+  } else {
+    0
+  }
+  let old_hash = if file_exists(fixture_path) {
+    sha256(read_file(fixture_path))
+  } else {
+    ""
+  }
+  println("fetching ${_NOTION_OPENAPI_URL}")
+  let response = http_get(
+    _NOTION_OPENAPI_URL,
+    {timeout_ms: 60000, headers: {["User-Agent"]: "harn-openapi-fixture-refresh"}},
+  )
+  if !response.ok {
+    throw "refresh_fixtures: upstream returned HTTP " + to_string(response.status)
+  }
+  let captured_at = date_iso()
+  let body = response.body
+  let new_hash = sha256(body)
+  write_file(fixture_path, body)
+  let new_size = stat(fixture_path).size
+  write_file(meta_path, _render_meta(captured_at, new_hash, new_size))
+  let delta = new_size - old_size
+  println("wrote ${fixture_path}")
+  println("wrote ${meta_path}")
+  println("captured_at: ${captured_at}")
+  println("sha256: ${new_hash}")
+  println("bytes: ${old_size} -> ${new_size} (delta ${delta})")
+  if old_hash != "" && old_hash != new_hash {
+    println("previous sha256: ${old_hash}")
+  }
+  println("refresh_fixtures: ok")
+}

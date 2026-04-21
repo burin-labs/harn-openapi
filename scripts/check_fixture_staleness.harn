@@ -1,0 +1,77 @@
+// Warn or fail when the pinned Notion fixture metadata is stale.
+//
+// Default target:
+//   tests/fixtures/notion.openapi.json.meta.toml
+//
+// Optional argv[0] overrides the metadata path for tests or one-off checks.
+let _DEFAULT_META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
+
+let _WARN_AFTER_DAYS = 90
+
+let _FAIL_AFTER_DAYS = 180
+
+fn _repo_root() -> string {
+  return source_dir() + "/.."
+}
+
+fn _default_meta_path() -> string {
+  return _repo_root() + "/" + _DEFAULT_META_REL_PATH
+}
+
+fn _current_branch() -> string {
+  let github_ref = env("GITHUB_REF_NAME")
+  if github_ref != nil && github_ref != "" {
+    return github_ref
+  }
+  let result = shell_at(_repo_root(), "git branch --show-current")
+  if result.success {
+    return result.stdout.trim()
+  }
+  return ""
+}
+
+fn _fixture_age_days(captured_at: string) -> int {
+  let captured_ts = date_parse(captured_at)
+  let now_ts = date_now().timestamp
+  return floor((now_ts - captured_ts) / 86400.0)
+}
+
+pipeline default() {
+  let meta_path = if len(argv) > 0 {
+    argv[0]
+  } else {
+    _default_meta_path()
+  }
+  if !file_exists(meta_path) {
+    throw "check_fixture_staleness: missing metadata file " + meta_path
+  }
+  let meta = toml_parse(read_file(meta_path))
+  let captured_at = meta.get("captured_at")
+  if captured_at == nil || captured_at == "" {
+    throw "check_fixture_staleness: metadata missing captured_at"
+  }
+  let age_days = _fixture_age_days(captured_at)
+  let upstream_url = meta.get("upstream_url") ?? "unknown upstream"
+  let branch = _current_branch()
+  println("fixture captured_at: ${captured_at}")
+  println("fixture upstream: ${upstream_url}")
+  println("fixture age: ${age_days} days")
+  if age_days < _WARN_AFTER_DAYS {
+    println("fixture staleness: ok")
+    return
+  }
+  if age_days < _FAIL_AFTER_DAYS {
+    println(
+      "::warning title=Notion OpenAPI fixture stale::Pinned fixture is ${age_days} days old; run scripts/refresh_fixtures.harn and review scripts/fixture_diff.harn output.",
+    )
+    return
+  }
+  let message = "Pinned Notion OpenAPI fixture is " + to_string(age_days)
+    + " days old; refresh it or file a periodic refresh issue."
+  if branch == "main" {
+    println("::warning title=Notion OpenAPI fixture expired::${message}")
+    println("fixture staleness: expired on main, warning only")
+    return
+  }
+  throw "check_fixture_staleness: " + message
+}

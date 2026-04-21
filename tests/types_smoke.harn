@@ -3,7 +3,7 @@ import "../src/lib"
 
 @test
 pipeline default() {
-  let raw = read_file("/Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json")
+  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc: OpenApiDoc = parse(raw)
   require is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard"
   let ops: list<Operation> = operations(doc)

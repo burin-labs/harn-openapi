@@ -1,0 +1,28 @@
+name: Fixture staleness
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  check-fixture-staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out harn-openapi
+        uses: actions/checkout@v4
+        with:
+          path: harn-openapi
+
+      - name: Check out harn
+        uses: actions/checkout@v4
+        with:
+          repository: burin-labs/harn
+          path: harn
+
+      - name: Check fixture staleness
+        run: |
+          cd harn
+          cargo run --quiet --bin harn -- run ../harn-openapi/scripts/check_fixture_staleness.harn
