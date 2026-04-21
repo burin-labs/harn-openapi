@@ -1,0 +1,63 @@
+// ref_siblings_smoke - issue #6 acceptance: JSON Schema 2020-12
+// allows `$ref` siblings, and caller-side sibling keywords must survive
+// resolution with caller-side values taking precedence.
+import { parse, schema } from "../src/lib"
+
+let _TINY_DOC = """
+  {
+    "openapi": "3.1.0",
+    "info": { "title": "Ref Siblings API", "version": "1.0.0" },
+    "paths": {},
+    "components": {
+      "schemas": {
+        "BaseObject": {
+          "title": "Base title",
+          "description": "Base description",
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" }
+          }
+        },
+        "ComposedObject": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/BaseObject",
+              "title": "Branch title"
+            },
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+  """
+
+pipeline default() {
+  let doc = parse(_TINY_DOC)
+  let bare = schema(doc, {["$ref"]: "#/components/schemas/BaseObject"})
+  assert(bare.get("$ref") == nil, "bare $ref should resolve to the target schema")
+  assert(bare.title == "Base title", "bare $ref should preserve target title")
+  assert(bare.description == "Base description", "bare $ref should preserve target description")
+  assert(bare.properties.get("id") != nil, "bare $ref should preserve target properties")
+  let described = schema(doc, {["$ref"]: "#/components/schemas/BaseObject", description: "Caller description"})
+  assert(described.get("$ref") == nil, "resolved schema should not keep the control $ref keyword")
+  assert(
+    described.description == "Caller description",
+    "$ref sibling description should override the target description",
+  )
+  assert(described.title == "Base title", "unrelated target keywords should remain")
+  let composed = schema(doc, {["$ref"]: "#/components/schemas/ComposedObject"})
+  assert(composed.title == "Branch title", "$ref sibling title on allOf branch should survive merge")
+  assert(composed.properties.get("id") != nil, "allOf merge should keep referenced branch properties")
+  assert(composed.properties.get("name") != nil, "allOf merge should keep inline branch properties")
+  assert(composed.required.contains("id"), "allOf merge should keep referenced branch requirements")
+  assert(composed.required.contains("name"), "allOf merge should keep inline branch requirements")
+  println("ref_siblings_smoke: ok")
+}

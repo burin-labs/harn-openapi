@@ -14,8 +14,8 @@ pipeline default() {
   let ref_with_sibling = {["$ref"]: "#/components/schemas/annotationResponse", description: "sibling description"}
   require is_reference(ref_with_sibling), "is_reference should detect $ref dicts"
   let resolved: Schema = schema(doc, ref_with_sibling)
-  require resolved.get("$ref") != nil, "schema() should preserve the original $ref sibling"
-  require resolved.description == "sibling description", "schema() should preserve $ref siblings"
+  require resolved.get("$ref") == nil, "schema() should resolve the control $ref keyword away"
+  require resolved.description == "sibling description", "schema() should preserve non-$ref siblings"
   let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
   let values = enum_values(enum_schema)
   require values != nil && len(values) == 2, "enum_values should preserve typed enum lists"
