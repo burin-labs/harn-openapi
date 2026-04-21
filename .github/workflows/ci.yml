@@ -84,5 +84,6 @@ jobs:
         working-directory: harn
 
       - name: Run regen demo
-        run: "$HARN_BIN" run ../harn-openapi/scripts/regen_demo.harn
+        run: |
+          "$HARN_BIN" run ../harn-openapi/scripts/regen_demo.harn
         working-directory: harn

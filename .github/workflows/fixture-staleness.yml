@@ -50,5 +50,6 @@ jobs:
         working-directory: harn
 
       - name: Check fixture staleness
-        run: "$HARN_BIN" run ../harn-openapi/scripts/check_fixture_staleness.harn
+        run: |
+          "$HARN_BIN" run ../harn-openapi/scripts/check_fixture_staleness.harn
         working-directory: harn
