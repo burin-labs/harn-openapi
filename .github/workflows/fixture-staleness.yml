@@ -16,8 +16,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_TARGET_DIR: ${{ github.workspace }}/target
-  HARN_BIN: ${{ github.workspace }}/target/debug/harn
+  HARN_CLI_VERSION: 0.7.29
+  HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-bin
+  HARN_INSTALL_TARGET: ${{ github.workspace }}/target/harn-install
+  HARN_BIN: ${{ github.workspace }}/harn-bin/bin/harn
 
 jobs:
   check-fixture-staleness:
@@ -28,28 +30,30 @@ jobs:
         with:
           path: harn-openapi
 
-      - name: Check out harn
-        uses: actions/checkout@v6
-        with:
-          repository: burin-labs/harn
-          path: harn
-
-      - name: Cache Cargo build outputs
+      - name: Cache Harn install
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('harn/Cargo.lock') }}
+            harn-bin
+            target/harn-install
+          key: ${{ runner.os }}-harn-cli-${{ env.HARN_CLI_VERSION }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-harn-cli-
 
-      - name: Build harn
-        run: cargo build --quiet --bin harn
-        working-directory: harn
+      - name: Install harn
+        run: |
+          if [ ! -x "$HARN_BIN" ]; then
+            CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
+              cargo install harn-cli \
+                --version "$HARN_CLI_VERSION" \
+                --locked \
+                --root "$HARN_INSTALL_ROOT"
+          fi
+          "$HARN_BIN" version
 
       - name: Check fixture staleness
         run: |
-          "$HARN_BIN" run ../harn-openapi/scripts/check_fixture_staleness.harn
-        working-directory: harn
+          "$HARN_BIN" run scripts/check_fixture_staleness.harn
+        working-directory: harn-openapi
