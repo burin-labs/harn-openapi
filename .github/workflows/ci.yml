@@ -17,6 +17,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   HARN_ROOT: ${{ github.workspace }}/harn
   HARN_BIN: ${{ github.workspace }}/target/debug/harn
 
