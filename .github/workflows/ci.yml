@@ -17,7 +17,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  HARN_CLI_VERSION: 0.7.29
   HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-bin
   HARN_INSTALL_TARGET: ${{ github.workspace }}/target/harn-install
   HARN_ROOT: ${{ github.workspace }}/harn-openapi
@@ -33,6 +32,14 @@ jobs:
         with:
           path: harn-openapi
 
+      - name: Read Harn version
+        id: harn-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$HARN_ROOT/.harn-version")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Cache Harn install
         uses: actions/cache@v5
         with:
@@ -41,7 +48,7 @@ jobs:
             ~/.cargo/registry
             harn-bin
             target/harn-install
-          key: ${{ runner.os }}-harn-cli-${{ env.HARN_CLI_VERSION }}
+          key: ${{ runner.os }}-harn-cli-${{ steps.harn-version.outputs.version }}
           restore-keys: |
             ${{ runner.os }}-harn-cli-
 
@@ -50,7 +57,7 @@ jobs:
           if [ ! -x "$HARN_BIN" ]; then
             CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
               cargo install harn-cli \
-                --version "$HARN_CLI_VERSION" \
+                --version "${{ steps.harn-version.outputs.version }}" \
                 --locked \
                 --root "$HARN_INSTALL_ROOT"
           fi
@@ -92,3 +99,19 @@ jobs:
         run: |
           "$HARN_BIN" run scripts/regen_demo.harn
         working-directory: harn-openapi
+
+      - name: Package install smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "$smoke_root"' EXIT
+          cat > "$smoke_root/harn.toml" <<'EOF'
+          [package]
+          name = "harn-openapi-consumer-smoke"
+          version = "0.0.0"
+          EOF
+          cd "$smoke_root"
+          "$HARN_BIN" add "$HARN_ROOT@HEAD"
+          printf 'import "harn-openapi/default"\n' > smoke.harn
+          "$HARN_BIN" check smoke.harn

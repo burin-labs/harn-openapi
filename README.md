@@ -22,8 +22,8 @@ repo keeps that shared logic in one pure-Harn package:
 - keep a pinned real-world Notion OpenAPI fixture for deterministic coverage.
 
 The repo intentionally has no Cargo workspace, `package.json`, generated build
-system, or non-Harn runtime dependency. Harn package management is not available
-yet, so consumers currently use a local `harn.toml` path dependency.
+system, or non-Harn runtime dependency. CI and local development install the
+pinned Harn CLI from crates.io using `.harn-version`.
 
 ## Repository Layout
 
@@ -39,7 +39,8 @@ yet, so consumers currently use a local `harn.toml` path dependency.
 | `scripts/refresh_fixtures.harn` | Refreshes the pinned Notion fixture and metadata intentionally. |
 | `scripts/fixture_diff.harn` | Prints a structured operation/schema diff between two fixture captures. |
 | `scripts/check_fixture_staleness.harn` | CI guard for fixture age. |
-| `scripts/bump_harn_cli_version.harn` | Updates the pinned crates.io `harn-cli` version in GitHub Actions and runs the local gate. |
+| `.harn-version` | Pinned crates.io `harn-cli` version used by CI and local gates. |
+| `scripts/bump_harn_cli_version.harn` | Updates the pinned crates.io `harn-cli` version and runs the local gate. |
 | `.github/workflows/ci.yml` | Main Harn check/lint/fmt/test/demo workflow. |
 | `.github/workflows/fixture-staleness.yml` | Lightweight fixture freshness workflow. |
 | `SESSION_PROMPT.md` | Historical project bootstrap and v0 milestone context. |
@@ -47,14 +48,11 @@ yet, so consumers currently use a local `harn.toml` path dependency.
 
 ## Install
 
-Once Harn package management v0
-([harn#345](https://github.com/burin-labs/harn/issues/345)) lands:
-
 ```sh
-harn add github.com/burin-labs/harn-openapi@v0.1.0
+harn add github.com/burin-labs/harn-openapi@main
 ```
 
-Until then, depend on a local checkout of this repo through `harn.toml`:
+For local multi-repo development, a path dependency is still useful:
 
 ```toml
 [dependencies]
@@ -63,8 +61,7 @@ harn-openapi = { path = "../harn-openapi" }
 
 ## Usage
 
-With either the future package install or the current `harn.toml` path
-dependency, import the named functions you use:
+With either package install path, import the named functions you use:
 
 ```harn
 import {
@@ -73,7 +70,7 @@ import {
   webhook_operations,
   component_path_items,
   codegen_module,
-} from "harn-openapi"
+} from "harn-openapi/default"
 
 let raw = read_file("./notion.openapi.json")
 let doc = parse(raw)
@@ -100,8 +97,8 @@ let src = codegen_module(doc, {
 write_file("./src/lib.harn", src)
 ```
 
-When running examples or tests directly from this repository before package
-management ships, use the source path instead:
+When running examples or tests directly from this repository checkout, use the
+source path instead:
 
 ```harn
 import { parse } from "../src/lib"
@@ -269,20 +266,18 @@ between 90 and 180 days, and fails non-`main` branches once the fixture is over
 
 ### Harn CLI version bumps
 
-GitHub Actions pins `harn-cli` from crates.io in
-`.github/workflows/ci.yml` and `.github/workflows/fixture-staleness.yml`.
-When a new Harn release is published, update both pins and run the local gate
-with:
+GitHub Actions pins `harn-cli` from crates.io via `.harn-version`. When a new
+Harn release is published, update that pin and run the local gate with:
 
 ```sh
-harn run scripts/bump_harn_cli_version.harn -- 0.7.30
+harn run scripts/bump_harn_cli_version.harn -- 0.7.32
 ```
 
-The script accepts a leading `v` (`v0.7.30` is normalized to `0.7.30`),
+The script accepts a leading `v` (`v0.7.32` is normalized to `0.7.32`),
 installs that `harn-cli` release into a temp directory, then runs check, lint,
 formatting, all smoke tests, and `scripts/regen_demo.harn`. Use
-`--no-verify` only when you intentionally want to edit the workflow pins
-without running the gate.
+`--no-verify` only when you intentionally want to edit the version pin without
+running the gate.
 
 ## License
 

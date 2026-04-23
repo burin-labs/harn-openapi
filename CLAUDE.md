@@ -15,16 +15,17 @@ pivot context, what's blocked, what's unblocked, and the v0 milestones.
 
 ## How to test
 
-Until `harn add` ships
-([harn#345](https://github.com/burin-labs/harn/issues/345)), drive everything
-through the upstream binary:
+Install the pinned Harn CLI from crates.io, then run the local gate:
 
 ```sh
-cd /Users/ksinder/projects/harn
-cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-openapi/tests/smoke.harn
-cargo run --quiet --bin harn -- check /Users/ksinder/projects/harn-openapi/src/lib.harn
-cargo run --quiet --bin harn -- lint /Users/ksinder/projects/harn-openapi/src/lib.harn
-cargo run --quiet --bin harn -- fmt --check /Users/ksinder/projects/harn-openapi/src/lib.harn
+cargo install harn-cli --version "$(cat .harn-version)" --locked
+harn check src scripts
+harn lint src scripts
+harn fmt --check src scripts tests
+for test in tests/*.harn; do
+  harn run "$test" || exit 1
+done
+harn run scripts/regen_demo.harn
 ```
 
 ## Fixture refresh workflow

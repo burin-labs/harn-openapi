@@ -17,10 +17,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  HARN_CLI_VERSION: 0.7.29
   HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-bin
   HARN_INSTALL_TARGET: ${{ github.workspace }}/target/harn-install
   HARN_BIN: ${{ github.workspace }}/harn-bin/bin/harn
+  HARN_ROOT: ${{ github.workspace }}/harn-openapi
 
 jobs:
   check-fixture-staleness:
@@ -31,6 +31,14 @@ jobs:
         with:
           path: harn-openapi
 
+      - name: Read Harn version
+        id: harn-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$HARN_ROOT/.harn-version")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Cache Harn install
         uses: actions/cache@v5
         with:
@@ -39,7 +47,7 @@ jobs:
             ~/.cargo/registry
             harn-bin
             target/harn-install
-          key: ${{ runner.os }}-harn-cli-${{ env.HARN_CLI_VERSION }}
+          key: ${{ runner.os }}-harn-cli-${{ steps.harn-version.outputs.version }}
           restore-keys: |
             ${{ runner.os }}-harn-cli-
 
@@ -48,7 +56,7 @@ jobs:
           if [ ! -x "$HARN_BIN" ]; then
             CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
               cargo install harn-cli \
-                --version "$HARN_CLI_VERSION" \
+                --version "${{ steps.harn-version.outputs.version }}" \
                 --locked \
                 --root "$HARN_INSTALL_ROOT"
           fi
