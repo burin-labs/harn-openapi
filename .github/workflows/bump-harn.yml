@@ -1,0 +1,178 @@
+name: Bump Harn Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional Harn tag to bump to, for example v0.7.33. Defaults to the latest published release."
+        required: false
+        type: string
+  schedule:
+    - cron: "39 9 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-harn-runtime
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target Harn release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_VERSION:-}"
+          if [ -z "${VERSION}" ]; then
+            VERSION="$(gh api repos/burin-labs/harn/releases/latest --jq '.tag_name')"
+          fi
+          if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected tag like v0.7.33, got '${VERSION}'" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for harn-cli crate to exist
+        id: published
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_NO_V: ${{ steps.version.outputs.version_no_v }}
+        run: |
+          set -euo pipefail
+          if curl -fsSL "https://crates.io/api/v1/crates/harn-cli/${VERSION_NO_V}" >/dev/null; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "harn-cli ${VERSION_NO_V} is published to crates.io." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping bump for ${VERSION}: crates.io does not expose harn-cli ${VERSION_NO_V} yet." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Stop when crate is not ready
+        if: steps.published.outputs.ready != 'true'
+        run: exit 0
+
+      - name: Update Harn pin surfaces
+        id: update
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_NO_V: ${{ steps.version.outputs.version_no_v }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          version_no_v = os.environ["VERSION_NO_V"]
+
+          def replace(path_str: str, pattern: str, replacement: str, count: int = 0) -> None:
+              path = Path(path_str)
+              text = path.read_text(encoding="utf-8")
+              updated, matches = re.subn(pattern, replacement, text, count=count, flags=re.MULTILINE)
+              if matches == 0:
+                  raise SystemExit(f"{path_str}: bump marker not found")
+              path.write_text(updated, encoding="utf-8")
+
+          replace(
+              ".github/workflows/ci.yml",
+              r"(^\\s*HARN_CLI_VERSION:\\s+)[0-9]+\\.[0-9]+\\.[0-9]+$",
+              rf"\\g<1>{version_no_v}",
+              count=1,
+          )
+          replace(
+              ".github/workflows/fixture-staleness.yml",
+              r"(^\\s*HARN_CLI_VERSION:\\s+)[0-9]+\\.[0-9]+\\.[0-9]+$",
+              rf"\\g<1>{version_no_v}",
+              count=1,
+          )
+          replace(
+              "scripts/bump_harn_cli_version.harn",
+              r"(harn run scripts/bump_harn_cli_version\\.harn -- )[0-9]+\\.[0-9]+\\.[0-9]+",
+              rf"\\g<1>{version_no_v}",
+              count=1,
+          )
+          replace(
+              "README.md",
+              r"(harn run scripts/bump_harn_cli_version\\.harn -- )[0-9]+\\.[0-9]+\\.[0-9]+",
+              rf"\\g<1>{version_no_v}",
+              count=1,
+          )
+          replace(
+              "README.md",
+              r"`v[0-9]+\\.[0-9]+\\.[0-9]+` is normalized to `[0-9]+\\.[0-9]+\\.[0-9]+`",
+              f"`v{version_no_v}` is normalized to `{version_no_v}`",
+              count=1,
+          )
+          PY
+
+          if git diff --quiet -- .github/workflows/ci.yml .github/workflows/fixture-staleness.yml scripts/bump_harn_cli_version.harn README.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop when repo is already current
+        if: steps.update.outputs.changed != 'true'
+        run: |
+          echo "Harn pin already matches ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Commit and push bump branch
+        if: steps.update.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="automation/bump-harn-runtime"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${BRANCH}"
+          git add .github/workflows/ci.yml .github/workflows/fixture-staleness.yml scripts/bump_harn_cli_version.harn README.md
+          git commit -m "chore: bump Harn runtime to ${VERSION}"
+          git push --force-with-lease origin HEAD:${BRANCH}
+
+      - name: Create or refresh PR
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="automation/bump-harn-runtime"
+          TITLE="Bump Harn runtime to ${VERSION}"
+          BODY_FILE="$(mktemp)"
+          cat > "${BODY_FILE}" <<EOF
+          ## Summary
+          - bump the pinned \`harn-cli\` version in the GitHub workflows to \`${VERSION}\`
+          - refresh the checked-in bump-script usage examples to the same version
+          - let the normal CI workflow re-run the Harn checks against the published release
+
+          ## Verification
+          - GitHub Actions will re-run the repo's Harn CI lanes
+          EOF
+
+          PR_NUMBER="$(gh pr list --repo "${REPO}" --head "${BRANCH}" --base main --json number --jq '.[0].number // ""')"
+          if [ -n "${PR_NUMBER}" ]; then
+            gh pr edit "${PR_NUMBER}" --repo "${REPO}" --title "${TITLE}" --body-file "${BODY_FILE}"
+          else
+            gh pr create \
+              --repo "${REPO}" \
+              --base main \
+              --head "${BRANCH}" \
+              --title "${TITLE}" \
+              --body-file "${BODY_FILE}"
+          fi
