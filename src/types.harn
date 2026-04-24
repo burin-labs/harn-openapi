@@ -90,3 +90,9 @@ type Components = {schemas?: dict<string, Schema>, responses?: dict<string, RefO
 type OpenApiDoc = {openapi: string, info: Info, jsonSchemaDialect?: string, servers?: list<Server>, paths?: dict<string, PathItem>, webhooks?: dict<string, RefOr<PathItem>>, components?: Components, security?: list<SecurityRequirement>, tags?: list<Tag>, externalDocs?: ExternalDocumentation, security_schemes?: dict<string, RefOr<SecurityScheme>>}
 
 type WebhookOperation = {name: string, method: string, path_item: PathItem, operation: Operation, operation_id: string, summary?: string, description?: string, parameters?: list<RefOr<Parameter>>, request_body?: RefOr<RequestBody>, responses?: Responses, security?: list<SecurityRequirement>, tags?: list<string>}
+
+type AuthHelper = {scheme_name: string, kind: string, client_fields: list<string>, location?: string, parameter_name?: string, scopes?: list<string>}
+
+type PaginationPlan = {operation_id: string, method: string, path: string, kind: string, items_field?: string, cursor_param?: string, cursor_response_field?: string, has_more_field?: string, page_param?: string, page_size_param?: string, next_link_field?: string, link_header?: string}
+
+type RateLimitMetadata = {operation_id: string, method: string, path: string, status?: string, retry_after_header?: string, limit_headers: list<string>, remaining_headers: list<string>, reset_headers: list<string>}
