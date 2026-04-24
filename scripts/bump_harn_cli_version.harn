@@ -1,13 +1,11 @@
-// Update the pinned harn-cli version used by GitHub Actions.
+// Update the pinned harn-cli version used by local and CI gates.
 //
 // Usage:
-//   harn run scripts/bump_harn_cli_version.harn -- 0.7.30
+//   harn run scripts/bump_harn_cli_version.harn -- 0.7.32
 //
-// The default path updates both workflow files, installs the requested
-// harn-cli release from crates.io into a temp root, and runs the local gate.
-let _WORKFLOW_REL_PATHS = [".github/workflows/ci.yml", ".github/workflows/fixture-staleness.yml"]
-
-let _VERSION_KEY = "HARN_CLI_VERSION: "
+// The default path updates `.harn-version`, installs the requested harn-cli
+// release from crates.io into a temp root, and runs the local gate.
+let _VERSION_REL_PATH = ".harn-version"
 
 fn _repo_root() -> string {
   return source_dir() + "/.."
@@ -17,7 +15,7 @@ fn _usage() -> string {
   return """
 usage: scripts/bump_harn_cli_version.harn <version> [--no-verify] [--repo-root <path>]
 
-Updates the HARN_CLI_VERSION pin in this repo's GitHub Actions workflows.
+Updates the .harn-version pin used by this repo's GitHub Actions workflows.
 Versions may be passed with or without a leading "v".
 
 By default, this also installs harn-cli from crates.io and runs:
@@ -79,53 +77,6 @@ fn _parse_args() -> dict {
   return {repo_root: repo_root, version: _normalize_version(version), verify: verify}
 }
 
-fn _workflow_paths(repo_root: string) -> list<string> {
-  var out = []
-  for rel in _WORKFLOW_REL_PATHS {
-    out = out + [repo_root + "/" + rel]
-  }
-  return out
-}
-
-fn _replace_workflow_version(path: string, new_version: string) -> dict {
-  if !file_exists(path) {
-    throw "bump_harn_cli_version: missing workflow " + path
-  }
-  let content = read_file(path)
-  let lines = split(content, "\n")
-  var out = []
-  var found = 0
-  var old_version = ""
-  for line in lines {
-    let trimmed = trim(line)
-    if starts_with(trimmed, _VERSION_KEY) {
-      found = found + 1
-      let old = trimmed[len(_VERSION_KEY):len(trimmed)]
-      if old_version == "" {
-        old_version = old
-      }
-      out = out
-        + [regex_replace_all("HARN_CLI_VERSION: [A-Za-z0-9.+_-]+", "HARN_CLI_VERSION: " + new_version, line)]
-    } else {
-      out = out + [line]
-    }
-  }
-  if found != 1 {
-    throw "bump_harn_cli_version: expected exactly one HARN_CLI_VERSION in "
-      + path
-      + ", found "
-      + to_string(found)
-  }
-  let updated = join(out, "\n")
-  if updated != content {
-    write_file(path, updated)
-    println("updated ${path}: ${old_version} -> ${new_version}")
-  } else {
-    println("already current ${path}: ${new_version}")
-  }
-  return {path: path, old_version: old_version, new_version: new_version}
-}
-
 fn _sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
@@ -146,6 +97,23 @@ fn _run(repo_root: string, label: string, cmd: string) {
 
 fn _version_slug(version: string) -> string {
   return regex_replace_all("[^A-Za-z0-9._-]+", "_", version)
+}
+
+fn _replace_version_file(repo_root: string, new_version: string) -> dict {
+  let path = repo_root + "/" + _VERSION_REL_PATH
+  let old_version = if file_exists(path) {
+    trim(read_file(path))
+  } else {
+    ""
+  }
+  let updated = new_version + "\n"
+  if !file_exists(path) || read_file(path) != updated {
+    write_file(path, updated)
+    println("updated ${path}: ${old_version} -> ${new_version}")
+  } else {
+    println("already current ${path}: ${new_version}")
+  }
+  return {path: path, old_version: old_version, new_version: new_version}
 }
 
 fn _verify_version(repo_root: string, version: string) {
@@ -189,9 +157,7 @@ fn _verify_version(repo_root: string, version: string) {
 
 pipeline default() {
   let args = _parse_args()
-  for path in _workflow_paths(args.repo_root) {
-    _replace_workflow_version(path, args.version)
-  }
+  _replace_version_file(args.repo_root, args.version)
   if args.verify {
     _verify_version(args.repo_root, args.version)
   } else {

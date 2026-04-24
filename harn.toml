@@ -9,6 +9,5 @@ repository = "https://github.com/burin-labs/harn-openapi"
 default = "src/lib.harn"
 types = "src/types.harn"
 
-# Once package management v0 (harn#345) lands, dependencies will be declared
-# here. For now this repo has none.
+# Harn-side package dependencies live here. This package currently has none.
 [dependencies]

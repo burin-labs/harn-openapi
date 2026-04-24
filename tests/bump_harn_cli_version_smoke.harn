@@ -19,16 +19,6 @@ fn sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn workflow_fixture(version: string) -> string {
-  return "name: Example\n"
-    + "\n"
-    + "env:\n"
-    + "  HARN_CLI_VERSION: "
-    + version
-    + "\n"
-    + "  HARN_BIN: ${{ github.workspace }}/harn-bin/bin/harn\n"
-}
-
 fn cat_file(path: string) -> string {
   let result = shell("cat " + sh_quote(path))
   if !result.success {
@@ -41,10 +31,8 @@ fn cat_file(path: string) -> string {
 pipeline default() {
   let repo_root = source_dir() + "/.."
   let fake_root = temp_dir() + "/harn-openapi-bump-smoke-" + uuid()
-  let workflow_dir = fake_root + "/.github/workflows"
-  mkdir(workflow_dir)
-  write_file(workflow_dir + "/ci.yml", workflow_fixture("0.0.1"))
-  write_file(workflow_dir + "/fixture-staleness.yml", workflow_fixture("0.0.1"))
+  mkdir(fake_root)
+  write_file(fake_root + "/.harn-version", "0.0.1\n")
   let cmd = harn_cmd(
     "run "
     + sh_quote(repo_root + "/scripts/bump_harn_cli_version.harn")
@@ -60,11 +48,7 @@ pipeline default() {
   require result.success, "bump_harn_cli_version.harn must run"
   require contains(result.stdout, "0.0.1 -> 9.8.7"), "script should report version update"
   require contains(result.stdout, "skipped verification"), "test path should skip the full gate"
-  let ci = cat_file(workflow_dir + "/ci.yml")
-  let fixture = cat_file(workflow_dir + "/fixture-staleness.yml")
-  require contains(ci, "HARN_CLI_VERSION: 9.8.7"), "ci workflow version must update"
-  require contains(fixture, "HARN_CLI_VERSION: 9.8.7"), "fixture workflow version must update"
-  require !contains(ci, "HARN_CLI_VERSION: 0.0.1"), "ci workflow old version must be gone"
-  require !contains(fixture, "HARN_CLI_VERSION: 0.0.1"), "fixture workflow old version must be gone"
+  let version = cat_file(fake_root + "/.harn-version")
+  require version == "9.8.7\n", ".harn-version must update"
   println("bump_harn_cli_version_smoke: ok")
 }
