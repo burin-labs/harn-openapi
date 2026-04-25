@@ -42,6 +42,18 @@
 //   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
 //       Guard helpers for common dynamic boundaries.
 //
+//   auth_helpers(doc)           -> list<AuthHelper>
+//       Classify reusable auth helper metadata for each declared security
+//       scheme without choosing provider-specific credential policy.
+//
+//   pagination_plans(doc)       -> list<PaginationPlan>
+//       Detect simple cursor, page-number, and next-link list patterns from
+//       operation parameters and success-response schemas.
+//
+//   rate_limit_metadata(doc)    -> list<RateLimitMetadata>
+//       Surface per-operation 429 / Retry-After / X-RateLimit-* response
+//       header conventions for connector retry and backoff code.
+//
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides? }.
@@ -51,9 +63,15 @@
 //       least one operation (bearer / basic / apiKey-in-{header,query,
 //       cookie} / oauth2 / openIdConnect). Operations with `security: []`
 //       dispatch through `_no_auth_headers(client)` so they never send
-//       an Authorization header. `new_client`'s parameter set is
-//       restricted to the fields the emitted helpers actually read
-//       (token, basic_user/basic_password, api_keys).
+//       an Authorization header. `new_client`'s parameter set is restricted
+//       to the fields the emitted helpers actually read and also accepts
+//       SecretProvider-friendly hooks (`token_provider`, `api_key_provider`,
+//       `basic_provider`) so generated SDKs do not embed static secrets.
+//
+//   codegen_harn_toml(options) -> string
+//       Emit package metadata for generated SDK repos. Options:
+//       { package_name, version?, description?, default_export?,
+//       types_export?, dependencies? }.
 //
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
@@ -148,6 +166,12 @@ type Components = {schemas?: dict<string, Schema>, responses?: dict<string, RefO
 type OpenApiDoc = {openapi: string, info: Info, jsonSchemaDialect?: string, servers?: list<Server>, paths?: dict<string, PathItem>, webhooks?: dict<string, RefOr<PathItem>>, components?: Components, security?: list<SecurityRequirement>, tags?: list<Tag>, externalDocs?: ExternalDocumentation, security_schemes?: dict<string, RefOr<SecurityScheme>>}
 
 type WebhookOperation = {name: string, method: string, path_item: PathItem, operation: Operation, operation_id: string, summary?: string, description?: string, parameters?: list<RefOr<Parameter>>, request_body?: RefOr<RequestBody>, responses?: Responses, security?: list<SecurityRequirement>, tags?: list<string>}
+
+type AuthHelper = {scheme_name: string, kind: string, client_fields: list<string>, location?: string, parameter_name?: string, scopes?: list<string>}
+
+type PaginationPlan = {operation_id: string, method: string, path: string, kind: string, items_field?: string, cursor_param?: string, cursor_response_field?: string, has_more_field?: string, page_param?: string, page_size_param?: string, next_link_field?: string, link_header?: string}
+
+type RateLimitMetadata = {operation_id: string, method: string, path: string, status?: string, retry_after_header?: string, limit_headers: list<string>, remaining_headers: list<string>, reset_headers: list<string>}
 
 type ParseOpenApiDoc = {openapi: string, info: Info, servers?: list, paths?: dict, webhooks?: dict, components?: dict, security_schemes?: dict, security?: list, tags?: list}
 
@@ -455,6 +479,234 @@ pub fn is_schema(value: unknown) -> bool {
   return schema_is(value, {type: "dict"})
 }
 
+/** Classify reusable auth helper metadata for declared security schemes. */
+pub fn auth_helpers(doc: OpenApiDoc) -> list<AuthHelper> {
+  let schemes = doc.get("security_schemes") ?? {}
+  var out = []
+  for entry in schemes {
+    let name = entry.key
+    let def = entry.value
+    let kind = _scheme_kind(def)
+    var helper = {scheme_name: name, kind: kind, client_fields: _client_fields_for_scheme_kind(kind)}
+    if starts_with(kind, "apiKey-") {
+      helper = {...helper, location: def.get("in") ?? "header", parameter_name: def.get("name") ?? name}
+    }
+    if kind == "oauth2" {
+      helper = {...helper, scopes: _oauth_scope_names(def)}
+    }
+    out = out + [helper]
+  }
+  return out
+}
+
+fn _client_fields_for_scheme_kind(kind) {
+  if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
+    return ["token", "token_provider"]
+  }
+  if kind == "basic" {
+    return ["basic_user", "basic_password", "basic_provider"]
+  }
+  if kind == "apiKey-header" || kind == "apiKey-query" || kind == "apiKey-cookie" {
+    return ["api_keys", "api_key_provider"]
+  }
+  return []
+}
+
+fn _oauth_scope_names(def) {
+  let flows = def.get("flows") ?? {}
+  var scopes = []
+  for flow_name in ["implicit", "password", "clientCredentials", "authorizationCode"] {
+    let flow = flows.get(flow_name)
+    if type_of(flow) == "dict" {
+      let flow_scopes = flow.get("scopes") ?? {}
+      for entry in flow_scopes {
+        if !scopes.contains(entry.key) {
+          scopes = scopes + [entry.key]
+        }
+      }
+    }
+  }
+  scopes.sort()
+  return scopes
+}
+
+/** Detect reusable pagination patterns from operation params and responses. */
+pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
+  var out = []
+  for op in operations(doc) {
+    let plan = _pagination_plan_for_op(doc, op)
+    if plan != nil {
+      out = out + [plan]
+    }
+  }
+  return out
+}
+
+fn _pagination_plan_for_op(doc, op) {
+  let params = op.parameters ?? []
+  let cursor_param = _first_param_named(params, ["start_cursor", "cursor", "after", "page_token", "next_page_token"])
+  let page_param = _first_param_named(params, ["page", "page_number", "page_index", "offset"])
+  let page_size_param = _first_param_named(params, ["page_size", "per_page", "limit", "size"])
+  let picked = _pick_success_response(op)
+  if picked == nil || picked.kind != "json" {
+    return nil
+  }
+  let full = schema(doc, picked.schema)
+  let props = full.get("properties") ?? {}
+  let items_field = _first_present_key(props, ["results", "data", "items", "records", "objects"])
+  let next_cursor = _first_present_key(props, ["next_cursor", "next_page_token", "cursor", "after"])
+  let has_more = _first_present_key(props, ["has_more", "hasMore", "more"])
+  let next_link = _first_present_key(props, ["next", "next_url", "next_link", "nextPageUrl"])
+  let link_header = _success_response_header(op, "Link")
+  if cursor_param != nil && next_cursor != nil {
+    return {
+      operation_id: op.operation_id,
+      method: op.method,
+      path: op.path,
+      kind: "cursor",
+      items_field: items_field,
+      cursor_param: cursor_param,
+      cursor_response_field: next_cursor,
+      has_more_field: has_more,
+      page_size_param: page_size_param,
+    }
+  }
+  if page_param != nil {
+    return {
+      operation_id: op.operation_id,
+      method: op.method,
+      path: op.path,
+      kind: "page",
+      items_field: items_field,
+      page_param: page_param,
+      page_size_param: page_size_param,
+    }
+  }
+  if next_link != nil || link_header != nil {
+    return {
+      operation_id: op.operation_id,
+      method: op.method,
+      path: op.path,
+      kind: "next_link",
+      items_field: items_field,
+      next_link_field: next_link,
+      link_header: link_header,
+    }
+  }
+  return nil
+}
+
+fn _first_param_named(params, names) {
+  for wanted in names {
+    for p in params {
+      if p.get("in") == "query" && p.get("name") == wanted {
+        return wanted
+      }
+    }
+  }
+  return nil
+}
+
+fn _first_present_key(d, names) {
+  if type_of(d) != "dict" {
+    return nil
+  }
+  for name in names {
+    if d.get(name) != nil {
+      return name
+    }
+  }
+  return nil
+}
+
+fn _success_response_header(op, header_name) {
+  for entry in op.responses {
+    if _is_success_code(entry.key) {
+      let headers = entry.value.get("headers") ?? {}
+      let found = _header_name_case_insensitive(headers, header_name)
+      if found != nil {
+        return found
+      }
+    }
+  }
+  return nil
+}
+
+fn _header_name_case_insensitive(headers, wanted) {
+  if type_of(headers) != "dict" {
+    return nil
+  }
+  for entry in headers {
+    if entry.key.lower() == wanted.lower() {
+      return entry.key
+    }
+  }
+  return nil
+}
+
+/** Surface response header conventions used by retry/backoff code. */
+pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
+  var out = []
+  for op in operations(doc) {
+    let meta = _rate_limit_metadata_for_op(op)
+    if meta != nil {
+      out = out + [meta]
+    }
+  }
+  return out
+}
+
+fn _rate_limit_metadata_for_op(op) {
+  var status = nil
+  var retry_after = nil
+  var limit_headers = []
+  var remaining_headers = []
+  var reset_headers = []
+  for response_entry in op.responses {
+    let code = response_entry.key
+    let headers = response_entry.value.get("headers") ?? {}
+    if code == "429" {
+      status = "429"
+    }
+    let retry_header = _header_name_case_insensitive(headers, "Retry-After")
+    if retry_header != nil {
+      retry_after = retry_header
+    }
+    for header_entry in headers {
+      let header = header_entry.key
+      let normalized = header.lower()
+      if contains(normalized, "ratelimit-limit") || contains(normalized, "rate-limit-limit") {
+        if !limit_headers.contains(header) {
+          limit_headers = limit_headers + [header]
+        }
+      } else if contains(normalized, "ratelimit-remaining")
+        || contains(normalized, "rate-limit-remaining") {
+        if !remaining_headers.contains(header) {
+          remaining_headers = remaining_headers + [header]
+        }
+      } else if contains(normalized, "ratelimit-reset") || contains(normalized, "rate-limit-reset") {
+        if !reset_headers.contains(header) {
+          reset_headers = reset_headers + [header]
+        }
+      }
+    }
+  }
+  if status == nil && retry_after == nil && len(limit_headers) == 0 && len(remaining_headers) == 0
+    && len(reset_headers) == 0 {
+    return nil
+  }
+  return {
+    operation_id: op.operation_id,
+    method: op.method,
+    path: op.path,
+    status: status,
+    retry_after_header: retry_after,
+    limit_headers: limit_headers,
+    remaining_headers: remaining_headers,
+    reset_headers: reset_headers,
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Codegen
 // -----------------------------------------------------------------------------
@@ -482,9 +734,148 @@ let _MODULE_TEMPLATE = """
     }
     return hs
   }
+
+  /** Build a token-provider hook backed by the active connector SecretProvider. */
+  pub fn token_from_secret(secret_id: string) {
+    return fn() {
+      let value = secret_get(secret_id)
+      if value == nil {
+        return ""
+      }
+      return to_string(value)
+    }
+  }
+
+  /** Build an api-key-provider hook backed by the active connector SecretProvider. */
+  pub fn api_key_from_secret(secret_ids: dict) {
+    return fn(scheme_name) {
+      let secret_id = secret_ids.get(scheme_name)
+      if secret_id == nil {
+        return ""
+      }
+      let value = secret_get(secret_id)
+      if value == nil {
+        return ""
+      }
+      return to_string(value)
+    }
+  }
+
+  fn _client_token(client: dict) -> string {
+    let provider = client.get("token_provider")
+    if provider != nil {
+      return to_string(provider())
+    }
+    return to_string(client.get("token") ?? "")
+  }
+
+  fn _client_api_key(client: dict, scheme_name: string) -> string {
+    let provider = client.get("api_key_provider")
+    if provider != nil {
+      return to_string(provider(scheme_name))
+    }
+    return to_string((client.get("api_keys") ?? {}).get(scheme_name) ?? "")
+  }
+
+  fn _client_basic(client: dict) -> dict {
+    let provider = client.get("basic_provider")
+    if provider != nil {
+      return provider()
+    }
+    return {user: client.get("basic_user") ?? "", password: client.get("basic_password") ?? ""}
+  }
+
   {{ for helper in auth_helpers }}
   {{ helper.body }}
   {{ end }}
+  /** Pagination plans detected from the OpenAPI operation shapes. */
+  pub fn pagination_plans() -> list {
+    return {{ pagination_plan_literal }}
+  }
+
+  pub fn pagination_plan(operation_id: string) -> dict | nil {
+    for plan in pagination_plans() {
+      if plan.operation_id == operation_id {
+        return plan
+      }
+    }
+    return nil
+  }
+
+  pub fn pagination_items(response: dict, plan: dict) -> list {
+    let field = plan.get("items_field")
+    if field == nil {
+      return []
+    }
+    let value = response.get(field)
+    if type_of(value) == "list" {
+      return value
+    }
+    return []
+  }
+
+  pub fn pagination_next(response: dict, plan: dict) -> dict {
+    let kind = plan.get("kind")
+    if kind == "cursor" {
+      let cursor_field = plan.get("cursor_response_field")
+      let cursor = if cursor_field == nil {
+        nil
+      } else {
+        response.get(cursor_field)
+      }
+      let has_more_field = plan.get("has_more_field")
+      let has_more = if has_more_field == nil {
+        cursor != nil
+      } else {
+        response.get(has_more_field)
+      }
+      return {done: cursor == nil || has_more == false, query: {[plan.cursor_param]: cursor}}
+    }
+    if kind == "page" {
+      return {done: false, query: {}}
+    }
+    if kind == "next_link" {
+      let field = plan.get("next_link_field")
+      let url = if field == nil {
+        nil
+      } else {
+        response.get(field)
+      }
+      return {done: url == nil || url == "", url: url}
+    }
+    return {done: true, query: {}}
+  }
+
+  /** Rate-limit response/header conventions detected from OpenAPI responses. */
+  pub fn rate_limit_metadata() -> list {
+    return {{ rate_limit_metadata_literal }}
+  }
+
+  fn _header_ci(headers: dict, wanted: string) {
+    for entry in headers {
+      if entry.key.lower() == wanted.lower() {
+        return entry.value
+      }
+    }
+    return nil
+  }
+
+  pub fn rate_limit_from_response(resp: dict) -> dict {
+    let headers = resp.get("headers") ?? {}
+    return {
+      status: resp.get("status"),
+      retry_after: _header_ci(headers, "Retry-After"),
+      limit: _header_ci(headers, "X-RateLimit-Limit"),
+      remaining: _header_ci(headers, "X-RateLimit-Remaining"),
+      reset: _header_ci(headers, "X-RateLimit-Reset"),
+    }
+  }
+
+  pub fn is_rate_limited_response(resp: dict) -> bool {
+    let headers = resp.get("headers") ?? {}
+    return resp.get("status") == 429 || _header_ci(headers, "Retry-After") != nil
+  }
+
   fn _interpolate(template: string, bindings: dict) -> string {
     var out = template
     for entry in bindings {
@@ -612,8 +1003,34 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     auth_helpers: auth_helpers,
     operations: ops,
     response_aliases: alias_entries,
+    pagination_plan_literal: _render_json_parse_expr(pagination_plans(doc)),
+    rate_limit_metadata_literal: _render_json_parse_expr(rate_limit_metadata(doc)),
   }
   return _normalize_generated_source(render_string(_MODULE_TEMPLATE, bindings), module_name)
+}
+
+/** Emit a harn.toml manifest for a generated SDK package. */
+pub fn codegen_harn_toml(options: dict) -> string {
+  let package_name = options.get("package_name") ?? options.get("module_name") ?? "generated-sdk"
+  let version = options.get("version") ?? "0.0.0"
+  let description = options.get("description") ?? "Generated Harn SDK package."
+  let default_export = options.get("default_export") ?? "src/lib.harn"
+  let types_export = options.get("types_export")
+  let dependencies = options.get("dependencies") ?? {}
+  var out = "[package]\n"
+  out = out + "name = \"" + _escape_toml_string(package_name) + "\"\n"
+  out = out + "version = \"" + _escape_toml_string(version) + "\"\n"
+  out = out + "description = \"" + _escape_toml_string(description) + "\"\n\n"
+  out = out + "[exports]\n"
+  out = out + "default = \"" + _escape_toml_string(default_export) + "\"\n"
+  if types_export != nil {
+    out = out + "types = \"" + _escape_toml_string(types_export) + "\"\n"
+  }
+  out = out + "\n[dependencies]\n"
+  for entry in dependencies {
+    out = out + _render_manifest_dependency(entry.key, entry.value)
+  }
+  return out
 }
 
 /**
@@ -685,13 +1102,16 @@ fn _derive_client_fields(used_schemes, schemes) {
   var fields = []
   if want_token {
     fields = fields + [{name: "token", kind: "string", default: "\"\""}]
+    fields = fields + [{name: "token_provider", kind: "dynamic", default: "nil"}]
   }
   if want_basic {
     fields = fields + [{name: "basic_user", kind: "string", default: "\"\""}]
     fields = fields + [{name: "basic_password", kind: "string", default: "\"\""}]
+    fields = fields + [{name: "basic_provider", kind: "dynamic", default: "nil"}]
   }
   if want_api_keys {
     fields = fields + [{name: "api_keys", kind: "dict", default: "{}"}]
+    fields = fields + [{name: "api_key_provider", kind: "dynamic", default: "nil"}]
   }
   return fields
 }
@@ -747,6 +1167,8 @@ fn _render_new_client_decl(fields, default_base_url, header_overrides) {
       parts = parts + [f.name + ": string = " + f.default]
     } else if f.kind == "dict" {
       parts = parts + [f.name + ": dict = " + f.default]
+    } else {
+      parts = parts + [f.name + " = " + f.default]
     }
   }
   parts = parts + ["extra_headers: dict = " + _render_dict_literal(header_overrides)]
@@ -810,7 +1232,7 @@ fn _render_auth_helper(scheme_name, def) {
       + "  var hs = "
       + _render_binding_dict(
       [
-      "Authorization: \"Bearer \" + to_string(client.token)",
+      "Authorization: \"Bearer \" + _client_token(client)",
       _harn_dict_entry("Content-Type", "\"application/json\""),
     ],
     )
@@ -823,7 +1245,8 @@ fn _render_auth_helper(scheme_name, def) {
   }
   if kind == "basic" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let encoded = base64_encode(to_string(client.basic_user) + \":\" + to_string(client.basic_password))\n"
+      + "  let basic = _client_basic(client)\n"
+      + "  let encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
       + "  var hs = "
       + _render_binding_dict(
       ["Authorization: \"Basic \" + encoded", _harn_dict_entry("Content-Type", "\"application/json\"")],
@@ -843,9 +1266,9 @@ fn _render_auth_helper(scheme_name, def) {
       [
       _harn_dict_entry(
       header_name,
-      "to_string(client.api_keys.get(\""
+      "_client_api_key(client, \""
       + _escape_string(scheme_name)
-      + "\") ?? \"\")",
+      + "\")",
     ),
       _harn_dict_entry("Content-Type", "\"application/json\""),
     ],
@@ -865,9 +1288,9 @@ fn _render_auth_helper(scheme_name, def) {
       [
       "Cookie: \""
       + _escape_string(cookie_name)
-      + "=\" + to_string(client.api_keys.get(\""
+      + "=\" + _client_api_key(client, \""
       + _escape_string(scheme_name)
-      + "\") ?? \"\")",
+      + "\")",
       _harn_dict_entry("Content-Type", "\"application/json\""),
     ],
     )
@@ -897,10 +1320,10 @@ fn _render_auth_helper(scheme_name, def) {
       + "fn "
       + query_fn_name
       + "(client: dict) -> dict {\n"
-      + "  let v = client.api_keys.get(\""
+      + "  let v = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  if v == nil {\n"
+      + "  if v == \"\" {\n"
       + "    return {}\n"
       + "  }\n"
       + "  return {"
@@ -1364,6 +1787,59 @@ fn _render_literal(value) {
   return json_stringify(value)
 }
 
+fn _render_data_literal(value) {
+  if value == nil {
+    return "nil"
+  }
+  if type_of(value) == "string" {
+    return "\"" + _escape_string(value) + "\""
+  }
+  if type_of(value) == "bool" || type_of(value) == "int" || type_of(value) == "float" {
+    return to_string(value)
+  }
+  if type_of(value) == "list" {
+    if len(value) == 0 {
+      return "[]"
+    }
+    var out = "[\n"
+    for item in value {
+      out = out + "    " + _indent_after_first(_render_data_literal(item), "    ") + ",\n"
+    }
+    out = out + "  ]"
+    return out
+  }
+  if type_of(value) == "dict" {
+    var parts = []
+    for entry in value {
+      if entry.value != nil {
+        parts = parts + [_harn_dict_entry(entry.key, _render_data_literal(entry.value))]
+      }
+    }
+    if len(parts) == 0 {
+      return "{}"
+    }
+    var out = "{\n"
+    for part in parts {
+      out = out + "    " + _indent_after_first(part, "    ") + ",\n"
+    }
+    out = out + "  }"
+    return out
+  }
+  return "\"" + _escape_string(to_string(value)) + "\""
+}
+
+fn _indent_after_first(src, indent) {
+  return replace(src, "\n", "\n" + indent)
+}
+
+fn _render_json_parse_expr(value) {
+  let encoded = _escape_string(json_stringify(value))
+  if len(encoded) <= 80 {
+    return "json_parse(\"" + encoded + "\")"
+  }
+  return "json_parse(\n    \"" + encoded + "\",\n  )"
+}
+
 // -----------------------------------------------------------------------------
 // Response type resolution
 // -----------------------------------------------------------------------------
@@ -1821,6 +2297,37 @@ fn _is_plain_identifier(s) {
 
 fn _escape_string(s) {
   return replace(replace(s, "\\", "\\\\"), "\"", "\\\"")
+}
+
+fn _escape_toml_string(s) {
+  return _escape_string(to_string(s))
+}
+
+fn _toml_key(key) {
+  if regex_match("^[A-Za-z0-9_-]+$", key) != nil {
+    return key
+  }
+  return "\"" + _escape_toml_string(key) + "\""
+}
+
+fn _render_manifest_dependency(name, spec) {
+  if type_of(spec) == "string" {
+    return _toml_key(name) + " = \"" + _escape_toml_string(spec) + "\"\n"
+  }
+  if type_of(spec) != "dict" {
+    return _toml_key(name) + " = \"*\"\n"
+  }
+  var parts = []
+  for key in ["path", "git", "rev", "branch", "tag", "version"] {
+    let value = spec.get(key)
+    if value != nil {
+      parts = parts + [_toml_key(key) + " = \"" + _escape_toml_string(value) + "\""]
+    }
+  }
+  if len(parts) == 0 {
+    return _toml_key(name) + " = {}\n"
+  }
+  return _toml_key(name) + " = { " + join(parts, ", ") + " }\n"
 }
 
 fn _render_dict_literal(d) {

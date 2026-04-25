@@ -17,7 +17,8 @@ schema walking, security handling, or typed SDK generation independently. This
 repo keeps that shared logic in one pure-Harn package:
 
 - parse OpenAPI 3.1 JSON into normalized Harn records;
-- walk paths, webhooks, components, schemas, enums, and security metadata;
+- walk paths, webhooks, components, schemas, enums, security metadata,
+  pagination patterns, and rate-limit response conventions;
 - generate typed Harn SDK source for downstream provider repos;
 - keep a pinned real-world Notion OpenAPI fixture for deterministic coverage.
 
@@ -35,6 +36,7 @@ pinned Harn CLI from crates.io using `.harn-version`.
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
+| `tests/fixtures/connector_helpers.openapi.json` | Small synthetic OpenAPI fixture covering auth alternatives, pagination, and rate-limit metadata. |
 | `scripts/regen_demo.harn` | End-to-end parse to codegen demo that writes generated SDK source to `/tmp`. |
 | `scripts/refresh_fixtures.harn` | Refreshes the pinned Notion fixture and metadata intentionally. |
 | `scripts/fixture_diff.harn` | Prints a structured operation/schema diff between two fixture captures. |
@@ -69,7 +71,11 @@ import {
   operations,
   webhook_operations,
   component_path_items,
+  auth_helpers,
+  pagination_plans,
+  rate_limit_metadata,
   codegen_module,
+  codegen_harn_toml,
 } from "harn-openapi/default"
 
 let raw = read_file("./notion.openapi.json")
@@ -89,12 +95,24 @@ for wop in webhook_operations(doc) {
 // Passthrough accessor for the 3.1-new components.pathItems map
 let shared_path_items = component_path_items(doc)
 
+// Connector-facing helper metadata
+let auth = auth_helpers(doc)
+let pages = pagination_plans(doc)
+let limits = rate_limit_metadata(doc)
+
 // Generate Harn SDK source from the parsed document
 let src = codegen_module(doc, {
   module_name: "notion",
   client_name: "Client",
 })
 write_file("./src/lib.harn", src)
+write_file(
+  "./harn.toml",
+  codegen_harn_toml({
+    package_name: "notion-sdk-harn",
+    dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
+  }),
+)
 ```
 
 When running examples or tests directly from this repository checkout, use the
@@ -130,8 +148,20 @@ import { parse } from "../src/lib"
   or `nil` when the schema is not an enum.
 - `is_openapi_doc(value)`, `is_reference(value)`, `is_schema(value)` — small schema guards
   for common dynamic boundaries.
+- `auth_helpers(doc: OpenApiDoc) -> list<AuthHelper>` — classify each declared
+  security scheme into reusable helper metadata, including generated client
+  fields and OAuth scopes where present.
+- `pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan>` — detect simple
+  cursor, page-number, and next-link list patterns from operation query
+  parameters and success-response schemas.
+- `rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata>` — surface
+  per-operation 429, `Retry-After`, and `X-RateLimit-*` response header
+  conventions for downstream retry/backoff code.
 - `codegen_module(doc: OpenApiDoc, options: dict) -> string` — emit a typed Harn SDK
-  module source string with per-scheme security dispatch (see below).
+  module source string with per-scheme security dispatch, credential-provider
+  hooks, pagination metadata, and rate-limit metadata (see below).
+- `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
+  generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`.
 
 ### Security handling in generated clients
 
@@ -148,9 +178,9 @@ all defaulted so callers only supply what their spec actually needs:
 
 | Scheme kind | Client field added |
 |---|---|
-| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""` |
-| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""` |
-| `apiKey` (header / query / cookie) | `api_keys: dict = {}` (keyed by scheme name) |
+| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""`, `token_provider = nil` |
+| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""`, `basic_provider = nil` |
+| `apiKey` (header / query / cookie) | `api_keys: dict = {}`, `api_key_provider = nil` (keyed by scheme name) |
 | `mutualTLS` | (v0: no-op — op falls through to `_no_auth_headers`) |
 
 So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
@@ -159,11 +189,19 @@ So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
 new_client(
   base_url: string = "https://api.notion.com",
   token: string = "",
+  token_provider = nil,
   basic_user: string = "",
   basic_password: string = "",
+  basic_provider = nil,
   extra_headers: dict = {"Notion-Version": "..."},
 ) -> dict
 ```
+
+For connector packages, prefer provider hooks over static token strings. The
+generated module includes `token_from_secret(secret_id)` and
+`api_key_from_secret(secret_ids)` helpers that call Harn's active
+`secret_get(...)` connector primitive at request time. Callers can also pass
+custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
 
 When an operation declares multiple security requirement alternatives
 (`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
@@ -172,6 +210,22 @@ a human can retarget manually.
 
 Out of scope for v0: full OAuth2 flows (authorization-code, device,
 PKCE) and `mutualTLS` client-certificate plumbing.
+
+### Pagination and rate-limit helpers
+
+`pagination_plans(doc)` and generated SDKs expose the same lightweight metadata
+for list operations. The detector intentionally recognizes only common
+provider-neutral shapes: cursor params such as `start_cursor` with response
+fields such as `next_cursor`, page params such as `page` / `per_page`, and
+response next-link fields such as `next_url`.
+
+Generated SDKs include `pagination_plans()`, `pagination_plan(operation_id)`,
+`pagination_items(response, plan)`, and `pagination_next(response, plan)`.
+`rate_limit_metadata(doc)` and generated SDKs surface declared `429`,
+`Retry-After`, and `X-RateLimit-*` headers. Generated SDKs also include
+`rate_limit_from_response(resp)` and `is_rate_limited_response(resp)` so
+connectors can implement retries/backoff consistently without hardcoding every
+endpoint class.
 
 ### Polymorphic request bodies
 

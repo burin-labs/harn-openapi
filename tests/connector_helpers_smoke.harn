@@ -1,0 +1,149 @@
+// connector_helpers_smoke — issue #23 coverage for connector-facing auth,
+// pagination, rate-limit metadata, and generated helper source.
+import {
+  auth_helpers,
+  codegen_harn_toml,
+  codegen_module,
+  pagination_plans,
+  parse,
+  rate_limit_metadata,
+} from "../src/lib"
+
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
+
+fn assert_contains(haystack: string, needle: string, label: string) {
+  if !contains(haystack, needle) {
+    println("---BEGIN GENERATED SOURCE---")
+    println(haystack)
+    println("---END GENERATED SOURCE---")
+    assert(false, "${label}: expected source to contain \"${needle}\"")
+  }
+}
+
+fn helper_by_name(helpers, name) {
+  for helper in helpers {
+    if helper.scheme_name == name {
+      return helper
+    }
+  }
+  return nil
+}
+
+fn plan_by_id(plans, operation_id) {
+  for plan in plans {
+    if plan.operation_id == operation_id {
+      return plan
+    }
+  }
+  return nil
+}
+
+fn check_generates(src: string) {
+  let tmp_path = "/tmp/harn-openapi-connector-helpers-smoke.harn"
+  write_file(tmp_path, src)
+  let check_result = shell(harn_cmd("check " + tmp_path))
+  if !check_result.success {
+    println("---harn check stderr---")
+    println(check_result.stderr)
+    println("---harn check stdout---")
+    println(check_result.stdout)
+  }
+  assert(check_result.success, "generated SDK must pass `harn check`")
+  let fmt_result = shell(harn_cmd("fmt --check " + tmp_path))
+  if !fmt_result.success {
+    println("---harn fmt --check stderr---")
+    println(fmt_result.stderr)
+    println("---harn fmt --check stdout---")
+    println(fmt_result.stdout)
+  }
+  assert(fmt_result.success, "generated SDK must pass `harn fmt --check`")
+}
+
+@test
+pipeline default() {
+  let raw = read_file(source_dir() + "/fixtures/connector_helpers.openapi.json")
+  let doc = parse(raw)
+  let helpers = auth_helpers(doc)
+  let bearer = helper_by_name(helpers, "bearerAuth")
+  assert(bearer != nil, "bearerAuth helper metadata should exist")
+  assert(bearer.kind == "bearer", "bearerAuth should classify as bearer")
+  assert(
+    bearer.client_fields.contains("token_provider"),
+    "bearerAuth should advertise token_provider",
+  )
+  let oauth = helper_by_name(helpers, "oauth2Auth")
+  assert(oauth != nil, "oauth2Auth helper metadata should exist")
+  assert(oauth.kind == "oauth2", "oauth2Auth should classify as oauth2")
+  assert(oauth.scopes.contains("items:read"), "oauth2Auth should surface scopes")
+  let query_key = helper_by_name(helpers, "queryKey")
+  assert(query_key != nil, "queryKey helper metadata should exist")
+  assert(query_key.kind == "apiKey-query", "queryKey should classify as apiKey-query")
+  assert(query_key.parameter_name == "api_key", "queryKey should preserve parameter name")
+  let plans = pagination_plans(doc)
+  let cursor = plan_by_id(plans, "listItems")
+  assert(cursor != nil, "listItems should have a cursor pagination plan")
+  assert(cursor.kind == "cursor", "listItems should be cursor-pagination")
+  assert(cursor.cursor_param == "start_cursor", "cursor plan should preserve request cursor param")
+  assert(cursor.cursor_response_field == "next_cursor", "cursor plan should preserve response cursor")
+  assert(cursor.items_field == "results", "cursor plan should preserve items field")
+  let page = plan_by_id(plans, "listPageItems")
+  assert(page != nil && page.kind == "page", "listPageItems should have a page plan")
+  let next_link = plan_by_id(plans, "listNextLinkItems")
+  assert(
+    next_link != nil && next_link.kind == "next_link",
+    "listNextLinkItems should have a next-link plan",
+  )
+  let rates = rate_limit_metadata(doc)
+  assert(len(rates) == 1, "synthetic fixture should expose one rate-limit metadata entry")
+  assert(rates[0].operation_id == "listItems", "rate-limit metadata should be tied to listItems")
+  assert(rates[0].retry_after_header == "Retry-After", "Retry-After should be modeled")
+  assert(
+    rates[0].remaining_headers.contains("X-RateLimit-Remaining"),
+    "remaining header should be modeled",
+  )
+  let src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
+  assert_contains(src, "pub fn token_from_secret", "generated token provider helper")
+  assert_contains(src, "token_provider = nil", "generated client token-provider hook")
+  assert_contains(src, "api_key_provider = nil", "generated client api-key-provider hook")
+  assert_contains(src, "_client_token(client)", "generated bearer helpers use token provider hook")
+  assert_contains(
+    src,
+    "_client_api_key(client, \"queryKey\")",
+    "generated apiKey helpers use provider hook",
+  )
+  assert_contains(src, "pub fn pagination_plans() -> list", "generated pagination plans helper")
+  assert_contains(src, "\\\"kind\\\":\\\"cursor\\\"", "generated cursor pagination metadata")
+  assert_contains(src, "pub fn rate_limit_metadata() -> list", "generated rate-limit metadata helper")
+  assert_contains(src, "Retry-After", "generated rate-limit header metadata")
+  check_generates(src)
+  let manifest = codegen_harn_toml(
+    {
+    package_name: "connector-helper-sdk",
+    description: "Synthetic generated SDK.",
+    default_export: "src/lib.harn",
+    dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
+  },
+  )
+  assert_contains(manifest, "name = \"connector-helper-sdk\"", "generated package name")
+  assert_contains(manifest, "default = \"src/lib.harn\"", "generated default export")
+  assert_contains(
+    manifest,
+    "harn-openapi = { path = \"../harn-openapi\" }",
+    "generated dependency declaration",
+  )
+  println("connector_helpers_smoke: ok")
+}

@@ -99,10 +99,11 @@ pipeline default() {
   )
   let src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
   assert_contains(src_a, "_headers_bearerauth(client)", "A/dispatch")
-  assert_contains(src_a, "Authorization: \"Bearer \" + to_string(client.token)", "A/bearer-helper")
+  assert_contains(src_a, "Authorization: \"Bearer \" + _client_token(client)", "A/bearer-helper")
   assert_contains(src_a, "token: string = \"\"", "A/client-has-token")
-  assert_not_contains(src_a, "basic_user", "A/no-basic-field")
-  assert_not_contains(src_a, "api_keys", "A/no-apikey-field")
+  assert_contains(src_a, "token_provider = nil", "A/client-has-token-provider")
+  assert_not_contains(src_a, "basic_user: string", "A/no-basic-field")
+  assert_not_contains(src_a, "api_keys: dict", "A/no-apikey-field")
   check_generates(src_a, "A")
   // ------------------------------------------------------------------
   // Scenario B: explicit security: [] on one op overrides doc default.
@@ -156,7 +157,7 @@ pipeline default() {
   assert_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
   assert_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
   assert_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
-  assert_not_contains(src_c, "token:", "C/no-token-field")
+  assert_not_contains(src_c, "token: string", "C/no-token-field")
   check_generates(src_c, "C")
   // ------------------------------------------------------------------
   // Scenario D: apiKey in header.
@@ -169,9 +170,10 @@ pipeline default() {
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
   assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
   assert_contains(src_d, "[\"X-Api-Key\"]:", "D/header-name-emitted")
-  assert_contains(src_d, "client.api_keys.get(\"xApiKey\")", "D/reads-from-api-keys")
+  assert_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
   assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
-  assert_not_contains(src_d, "token:", "D/no-token-field")
+  assert_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
+  assert_not_contains(src_d, "token: string", "D/no-token-field")
   check_generates(src_d, "D")
   // ------------------------------------------------------------------
   // Scenario E: apiKey in query.
@@ -198,7 +200,7 @@ pipeline default() {
   let src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
   assert_contains(src_f, "_headers_sessid(client)", "F/dispatch")
   assert_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
-  assert_contains(src_f, "client.api_keys.get(\"sessId\")", "F/reads-from-api-keys")
+  assert_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
   check_generates(src_f, "F")
   // ------------------------------------------------------------------
   // Scenario G: oauth2 — treated as bearer for v0 (client already holds token).
@@ -215,8 +217,9 @@ pipeline default() {
   )
   let src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
   assert_contains(src_g, "_headers_oauth2auth(client)", "G/dispatch")
-  assert_contains(src_g, "Authorization: \"Bearer \" + to_string(client.token)", "G/bearer-shape")
+  assert_contains(src_g, "Authorization: \"Bearer \" + _client_token(client)", "G/bearer-shape")
   assert_contains(src_g, "token: string = \"\"", "G/client-has-token")
+  assert_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
   check_generates(src_g, "G")
   // ------------------------------------------------------------------
   // Scenario H: mixed schemes (bearer + basic) with per-op overrides,

@@ -19,5 +19,12 @@ pipeline default() {
   let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
   let values = enum_values(enum_schema)
   require values != nil && len(values) == 2, "enum_values should preserve typed enum lists"
+  let synthetic = parse(read_file(source_dir() + "/fixtures/connector_helpers.openapi.json"))
+  let helpers: list<AuthHelper> = auth_helpers(synthetic)
+  require helpers[0].scheme_name != nil, "AuthHelper should expose scheme_name"
+  let pages: list<PaginationPlan> = pagination_plans(synthetic)
+  require pages[0].operation_id != nil, "PaginationPlan should expose operation_id"
+  let rates: list<RateLimitMetadata> = rate_limit_metadata(synthetic)
+  require rates[0].retry_after_header == "Retry-After", "RateLimitMetadata should expose retry headers"
   println("types_smoke: ok")
 }
