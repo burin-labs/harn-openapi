@@ -1,0 +1,84 @@
+/*
+ * package_install_smoke - verify a clean consumer can install and import this
+ * package.
+ *
+ * By default the smoke installs the current checkout with `@HEAD`, which keeps
+ * PR CI useful before a release tag exists. Set HARN_PACKAGE_REF to test a
+ * published ref such as `github.com/burin-labs/harn-openapi@v0.1.0`.
+ */
+fn _repo_root() -> string {
+  return source_dir() + "/.."
+}
+
+fn _sh_quote(value: string) -> string {
+  return "'" + replace(value, "'", "'\"'\"'") + "'"
+}
+
+fn _harn_bin() -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return bin
+  }
+  return "harn"
+}
+
+fn _package_ref(repo_root: string) -> string {
+  let package_ref = env("HARN_PACKAGE_REF")
+  if package_ref != nil && package_ref != "" {
+    return package_ref
+  }
+  return repo_root + "@HEAD"
+}
+
+fn _run(cwd: string, label: string, cmd: string) {
+  println("running: ${label}")
+  let result = shell_at(cwd, cmd)
+  if result.stdout != "" {
+    println(result.stdout.trim())
+  }
+  if !result.success {
+    if result.stderr != "" {
+      println(result.stderr.trim())
+    }
+    throw "package_install_smoke: " + label + " failed"
+  }
+}
+
+pipeline default() {
+  let repo_root = _repo_root()
+  let smoke_root = temp_dir() + "/harn-openapi-install-smoke-" + uuid()
+  let harn_bin = _harn_bin()
+  let package_ref = _package_ref(repo_root)
+  mkdir(smoke_root)
+  write_file(
+    smoke_root + "/harn.toml",
+    """
+[package]
+name = "harn-openapi-consumer-smoke"
+version = "0.0.0"
+""",
+  )
+  _run(
+    smoke_root,
+    "add harn-openapi dependency",
+    _sh_quote(harn_bin) + " add " + _sh_quote(package_ref),
+  )
+  write_file(
+    smoke_root + "/smoke.harn",
+    """
+import { operations, parse } from "harn-openapi/default"
+
+pipeline default() {
+  let raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
+  let doc = parse(raw)
+  let ops = operations(doc)
+  require len(ops) == 1, "package import should parse and walk one operation"
+  require ops[0].operation_id == "ping", "operation id should round-trip"
+  println("package_install_smoke consumer: ok")
+}
+""",
+  )
+  _run(smoke_root, "check consumer smoke", _sh_quote(harn_bin) + " check smoke.harn")
+  _run(smoke_root, "run consumer smoke", _sh_quote(harn_bin) + " run smoke.harn")
+  println("package_install_smoke: ok")
+}

@@ -77,6 +77,7 @@ jobs:
 
           version = os.environ["VERSION"]
           version_no_v = os.environ["VERSION_NO_V"]
+          Path(".harn-version").write_text(f"{version_no_v}\n", encoding="utf-8")
 
           def replace(path_str: str, pattern: str, replacement: str, count: int = 0) -> None:
               path = Path(path_str)
@@ -86,18 +87,6 @@ jobs:
                   raise SystemExit(f"{path_str}: bump marker not found")
               path.write_text(updated, encoding="utf-8")
 
-          replace(
-              ".github/workflows/ci.yml",
-              r"(^\\s*HARN_CLI_VERSION:\\s+)[0-9]+\\.[0-9]+\\.[0-9]+$",
-              rf"\\g<1>{version_no_v}",
-              count=1,
-          )
-          replace(
-              ".github/workflows/fixture-staleness.yml",
-              r"(^\\s*HARN_CLI_VERSION:\\s+)[0-9]+\\.[0-9]+\\.[0-9]+$",
-              rf"\\g<1>{version_no_v}",
-              count=1,
-          )
           replace(
               "scripts/bump_harn_cli_version.harn",
               r"(harn run scripts/bump_harn_cli_version\\.harn -- )[0-9]+\\.[0-9]+\\.[0-9]+",
@@ -118,7 +107,7 @@ jobs:
           )
           PY
 
-          if git diff --quiet -- .github/workflows/ci.yml .github/workflows/fixture-staleness.yml scripts/bump_harn_cli_version.harn README.md; then
+          if git diff --quiet -- .harn-version scripts/bump_harn_cli_version.harn README.md; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -140,7 +129,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${BRANCH}"
-          git add .github/workflows/ci.yml .github/workflows/fixture-staleness.yml scripts/bump_harn_cli_version.harn README.md
+          git add .harn-version scripts/bump_harn_cli_version.harn README.md
           git commit -m "chore: bump Harn runtime to ${VERSION}"
           git push --force-with-lease origin HEAD:${BRANCH}
 
@@ -157,7 +146,7 @@ jobs:
           BODY_FILE="$(mktemp)"
           cat > "${BODY_FILE}" <<EOF
           ## Summary
-          - bump the pinned \`harn-cli\` version in the GitHub workflows to \`${VERSION}\`
+          - bump the pinned \`harn-cli\` version in \`.harn-version\` to \`${VERSION}\`
           - refresh the checked-in bump-script usage examples to the same version
           - let the normal CI workflow re-run the Harn checks against the published release
 

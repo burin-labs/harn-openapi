@@ -1,7 +1,7 @@
 // Update the pinned harn-cli version used by local and CI gates.
 //
 // Usage:
-//   harn run scripts/bump_harn_cli_version.harn -- 0.7.32
+//   harn run scripts/bump_harn_cli_version.harn -- 0.7.42
 //
 // The default path updates `.harn-version`, installs the requested harn-cli
 // release from crates.io into a temp root, and runs the local gate.
@@ -24,6 +24,7 @@ By default, this also installs harn-cli from crates.io and runs:
   harn fmt --check src scripts tests
   harn run tests/*.harn
   harn run scripts/regen_demo.harn
+  harn run scripts/package_install_smoke.harn
 """
 }
 
@@ -153,6 +154,11 @@ fn _verify_version(repo_root: string, version: string) {
     + " run \"$test\" || exit 1; done",
   )
   _run(repo_root, "run regen demo", env_prefix + _sh_quote(harn_bin) + " run scripts/regen_demo.harn")
+  _run(
+    repo_root,
+    "run package install smoke",
+    env_prefix + _sh_quote(harn_bin) + " run scripts/package_install_smoke.harn",
+  )
 }
 
 pipeline default() {

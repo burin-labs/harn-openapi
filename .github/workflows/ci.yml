@@ -101,17 +101,6 @@ jobs:
         working-directory: harn-openapi
 
       - name: Package install smoke
-        shell: bash
         run: |
-          set -euo pipefail
-          smoke_root="$(mktemp -d)"
-          trap 'rm -rf "$smoke_root"' EXIT
-          cat > "$smoke_root/harn.toml" <<'EOF'
-          [package]
-          name = "harn-openapi-consumer-smoke"
-          version = "0.0.0"
-          EOF
-          cd "$smoke_root"
-          "$HARN_BIN" add "$HARN_ROOT@HEAD"
-          printf 'import "harn-openapi/default"\n' > smoke.harn
-          "$HARN_BIN" check smoke.harn
+          "$HARN_BIN" run scripts/package_install_smoke.harn
+        working-directory: harn-openapi
