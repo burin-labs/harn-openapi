@@ -35,10 +35,10 @@ pipeline default() {
   write_file(fake_root + "/.harn-version", "0.0.1\n")
   let cmd = harn_cmd(
     "run "
-    + sh_quote(repo_root + "/scripts/bump_harn_cli_version.harn")
-    + " -- v9.8.7 --repo-root "
-    + sh_quote(fake_root)
-    + " --no-verify",
+      + sh_quote(repo_root + "/scripts/bump_harn_cli_version.harn")
+      + " -- v9.8.7 --repo-root "
+      + sh_quote(fake_root)
+      + " --no-verify",
   )
   let result = shell(cmd)
   if !result.success {

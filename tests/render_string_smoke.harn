@@ -13,11 +13,11 @@ pipeline default() {
   let out = render_string(
     template,
     {
-    user: {name: "Ada"},
-    show: true,
-    fallback: "yes",
-    items: [{label: "alpha", value: 1}, {label: "beta", value: 2}],
-  },
+      user: {name: "Ada"},
+      show: true,
+      fallback: "yes",
+      items: [{label: "alpha", value: 1}, {label: "beta", value: 2}],
+    },
   )
   assert(contains(out, "Hello Ada"), "dotted lookup should render nested fields")
   assert(contains(out, "shown"), "truthy if branch should render")

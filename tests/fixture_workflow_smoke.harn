@@ -88,11 +88,11 @@ pipeline default() {
   write_file(new_path, new_doc)
   let diff_cmd = harn_cmd(
     "run "
-    + repo_root
-    + "/scripts/fixture_diff.harn -- "
-    + old_path
-    + " "
-    + new_path,
+      + repo_root
+      + "/scripts/fixture_diff.harn -- "
+      + old_path
+      + " "
+      + new_path,
   )
   let diff = shell(diff_cmd)
   if !diff.success {
