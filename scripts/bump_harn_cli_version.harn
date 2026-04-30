@@ -1,7 +1,7 @@
 // Update the pinned harn-cli version used by local and CI gates.
 //
 // Usage:
-//   harn run scripts/bump_harn_cli_version.harn -- 0.7.42
+//   harn run scripts/bump_harn_cli_version.harn -- 0.7.50
 //
 // The default path updates `.harn-version`, installs the requested harn-cli
 // release from crates.io into a temp root, and runs the local gate.
@@ -127,11 +127,11 @@ fn _verify_version(repo_root: string, version: string) {
       repo_root,
       "install harn-cli " + version,
       "CARGO_TARGET_DIR="
-      + _sh_quote(target_dir)
-      + " cargo install harn-cli --version "
-      + _sh_quote(version)
-      + " --locked --root "
-      + _sh_quote(install_root),
+        + _sh_quote(target_dir)
+        + " cargo install harn-cli --version "
+        + _sh_quote(version)
+        + " --locked --root "
+        + _sh_quote(install_root),
     )
   } else {
     println("using cached harn-cli ${version}: ${harn_bin}")
@@ -149,9 +149,9 @@ fn _verify_version(repo_root: string, version: string) {
     repo_root,
     "run smoke tests",
     "for test in tests/*.harn; do "
-    + env_prefix
-    + _sh_quote(harn_bin)
-    + " run \"$test\" || exit 1; done",
+      + env_prefix
+      + _sh_quote(harn_bin)
+      + " run \"$test\" || exit 1; done",
   )
   _run(repo_root, "run regen demo", env_prefix + _sh_quote(harn_bin) + " run scripts/regen_demo.harn")
   _run(

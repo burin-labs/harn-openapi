@@ -178,13 +178,13 @@ type ParseOpenApiDoc = {openapi: string, info: Info, servers?: list, paths?: dic
 let _OPENAPI_DOC_SCHEMA = {
   type: "dict",
   properties: {
-  openapi: {type: "string"},
-  info: {
-  type: "dict",
-  properties: {title: {type: "string"}, version: {type: "string"}},
-  required: ["title", "version"],
-},
-},
+    openapi: {type: "string"},
+    info: {
+      type: "dict",
+      properties: {title: {type: "string"}, version: {type: "string"}},
+      required: ["title", "version"],
+    },
+  },
   required: ["openapi", "info"],
 }
 
@@ -253,35 +253,35 @@ fn _flatten_path_item_map(items, doc, mode) {
           out = out
             + [
             {
-            name: key,
-            method: method,
-            path_item: item,
-            operation: op,
-            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
-            summary: op.get("summary") ?? "",
-            description: op.get("description") ?? "",
-            parameters: raw_params,
-            request_body: op.get("requestBody"),
-            responses: op.get("responses") ?? {},
-            security: op.get("security") ?? doc.get("security") ?? [],
-            tags: op.get("tags") ?? [],
-          },
+              name: key,
+              method: method,
+              path_item: item,
+              operation: op,
+              operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+              summary: op.get("summary") ?? "",
+              description: op.get("description") ?? "",
+              parameters: raw_params,
+              request_body: op.get("requestBody"),
+              responses: op.get("responses") ?? {},
+              security: op.get("security") ?? doc.get("security") ?? [],
+              tags: op.get("tags") ?? [],
+            },
           ]
         } else {
           out = out
             + [
             {
-            method: method,
-            path: key,
-            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
-            summary: op.get("summary") ?? "",
-            description: op.get("description") ?? "",
-            parameters: raw_params,
-            request_body: op.get("requestBody"),
-            responses: op.get("responses") ?? {},
-            security: op.get("security") ?? doc.get("security") ?? [],
-            tags: op.get("tags") ?? [],
-          },
+              method: method,
+              path: key,
+              operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+              summary: op.get("summary") ?? "",
+              description: op.get("description") ?? "",
+              parameters: raw_params,
+              request_body: op.get("requestBody"),
+              responses: op.get("responses") ?? {},
+              security: op.get("security") ?? doc.get("security") ?? [],
+              tags: op.get("tags") ?? [],
+            },
           ]
         }
       }
@@ -1232,9 +1232,9 @@ fn _render_auth_helper(scheme_name, def) {
       + "  var hs = "
       + _render_binding_dict(
       [
-      "Authorization: \"Bearer \" + _client_token(client)",
-      _harn_dict_entry("Content-Type", "\"application/json\""),
-    ],
+        "Authorization: \"Bearer \" + _client_token(client)",
+        _harn_dict_entry("Content-Type", "\"application/json\""),
+      ],
     )
       + "\n"
       + "  for entry in client.extra_headers {\n"
@@ -1264,14 +1264,14 @@ fn _render_auth_helper(scheme_name, def) {
       + "  var hs = "
       + _render_binding_dict(
       [
-      _harn_dict_entry(
-      header_name,
-      "_client_api_key(client, \""
-      + _escape_string(scheme_name)
-      + "\")",
-    ),
-      _harn_dict_entry("Content-Type", "\"application/json\""),
-    ],
+        _harn_dict_entry(
+          header_name,
+          "_client_api_key(client, \""
+            + _escape_string(scheme_name)
+            + "\")",
+        ),
+        _harn_dict_entry("Content-Type", "\"application/json\""),
+      ],
     )
       + "\n"
       + "  for entry in client.extra_headers {\n"
@@ -1286,13 +1286,13 @@ fn _render_auth_helper(scheme_name, def) {
       + "  var hs = "
       + _render_binding_dict(
       [
-      "Cookie: \""
-      + _escape_string(cookie_name)
-      + "=\" + _client_api_key(client, \""
-      + _escape_string(scheme_name)
-      + "\")",
-      _harn_dict_entry("Content-Type", "\"application/json\""),
-    ],
+        "Cookie: \""
+          + _escape_string(cookie_name)
+          + "=\" + _client_api_key(client, \""
+          + _escape_string(scheme_name)
+          + "\")",
+        _harn_dict_entry("Content-Type", "\"application/json\""),
+      ],
     )
       + "\n"
       + "  for entry in client.extra_headers {\n"
@@ -1544,11 +1544,11 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
     variants = variants
       + [
       {
-      name: display_name,
-      tag: tag,
-      fn_name: variant_fn_name,
-      fields: _variant_constructor_fields(doc, resolved),
-    },
+        name: display_name,
+        tag: tag,
+        fn_name: variant_fn_name,
+        fields: _variant_constructor_fields(doc, resolved),
+      },
     ]
   }
   return variants
@@ -1653,13 +1653,13 @@ fn _variant_constructor_fields(doc, resolved) {
     fields = fields
       + [
       {
-      key: key,
-      ident: ident,
-      annotation: ty,
-      required: required.contains(key),
-      const_value: const_value,
-      has_const: const_value != nil,
-    },
+        key: key,
+        ident: ident,
+        annotation: ty,
+        required: required.contains(key),
+        const_value: const_value,
+        has_const: const_value != nil,
+      },
     ]
   }
   return fields
@@ -1744,12 +1744,12 @@ fn _render_body_variant_constructor(variant) {
       optional_lines = optional_lines
         + [
         "  if "
-        + field.ident
-        + " != nil {\n"
-        + "    body = {...body, "
-        + _harn_dict_entry(field.key, field.ident)
-        + "}\n"
-        + "  }",
+          + field.ident
+          + " != nil {\n"
+          + "    body = {...body, "
+          + _harn_dict_entry(field.key, field.ident)
+          + "}\n"
+          + "  }",
       ]
     }
   }

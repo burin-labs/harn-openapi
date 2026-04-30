@@ -132,11 +132,11 @@ pipeline default() {
   check_generates(src)
   let manifest = codegen_harn_toml(
     {
-    package_name: "connector-helper-sdk",
-    description: "Synthetic generated SDK.",
-    default_export: "src/lib.harn",
-    dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
-  },
+      package_name: "connector-helper-sdk",
+      description: "Synthetic generated SDK.",
+      default_export: "src/lib.harn",
+      dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
+    },
   )
   assert_contains(manifest, "name = \"connector-helper-sdk\"", "generated package name")
   assert_contains(manifest, "default = \"src/lib.harn\"", "generated default export")

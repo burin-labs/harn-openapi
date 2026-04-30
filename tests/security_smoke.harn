@@ -112,9 +112,9 @@ pipeline default() {
     {bearerAuth: {type: "http", scheme: "bearer"}},
     [{bearerAuth: []}],
     [
-    {operation_id: "get-self", method: "get", path: "/v1/users/me"},
-    {operation_id: "public-ping", method: "get", path: "/health", security: []},
-  ],
+      {operation_id: "get-self", method: "get", path: "/v1/users/me"},
+      {operation_id: "public-ping", method: "get", path: "/health", security: []},
+    ],
   )
   let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
   // Authed op still uses the bearer helper.
@@ -207,11 +207,11 @@ pipeline default() {
   // ------------------------------------------------------------------
   let doc_g = build_doc(
     {
-    oauth2Auth: {
-    type: "oauth2",
-    flows: {clientCredentials: {tokenUrl: "https://api.example.com/oauth/token", scopes: {}}},
-  },
-  },
+      oauth2Auth: {
+        type: "oauth2",
+        flows: {clientCredentials: {tokenUrl: "https://api.example.com/oauth/token", scopes: {}}},
+      },
+    },
     [{oauth2Auth: []}],
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
@@ -229,14 +229,14 @@ pipeline default() {
     {bearerAuth: {type: "http", scheme: "bearer"}, basicAuth: {type: "http", scheme: "basic"}},
     [{bearerAuth: []}],
     [
-    {operation_id: "get-me", method: "get", path: "/v1/users/me"},
-    {
-    operation_id: "create-a-token",
-    method: "post",
-    path: "/v1/oauth/token",
-    security: [{basicAuth: []}],
-  },
-  ],
+      {operation_id: "get-me", method: "get", path: "/v1/users/me"},
+      {
+        operation_id: "create-a-token",
+        method: "post",
+        path: "/v1/oauth/token",
+        security: [{basicAuth: []}],
+      },
+    ],
   )
   let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.

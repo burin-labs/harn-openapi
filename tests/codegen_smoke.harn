@@ -25,11 +25,11 @@ pipeline default() {
   let src = codegen_module(
     doc,
     {
-    module_name: "notion",
-    client_name: "NotionClient",
-    default_base_url: "https://api.notion.com",
-    header_overrides: {["Notion-Version"]: "2025-09-03"},
-  },
+      module_name: "notion",
+      client_name: "NotionClient",
+      default_base_url: "https://api.notion.com",
+      header_overrides: {["Notion-Version"]: "2025-09-03"},
+    },
   )
   let out_path = "/tmp/harn-openapi-codegen-smoke.harn"
   write_file(out_path, src)
