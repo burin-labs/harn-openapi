@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   CARGO_TERM_COLOR: always
   HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-bin
   HARN_INSTALL_TARGET: ${{ github.workspace }}/target/harn-install
@@ -39,26 +40,24 @@ jobs:
           version="$(tr -d '[:space:]' < "$HARN_ROOT/.harn-version")"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Cache Harn install
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            harn-bin
-            target/harn-install
-          key: ${{ runner.os }}-harn-cli-${{ steps.harn-version.outputs.version }}
-          restore-keys: |
-            ${{ runner.os }}-harn-cli-
-
       - name: Install harn
+        shell: bash
         run: |
+          set -euo pipefail
+          version="${{ steps.harn-version.outputs.version }}"
+          mkdir -p "$HARN_INSTALL_ROOT/bin"
           if [ ! -x "$HARN_BIN" ]; then
-            CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
-              cargo install harn-cli \
-                --version "${{ steps.harn-version.outputs.version }}" \
-                --locked \
-                --root "$HARN_INSTALL_ROOT"
+            if curl -fsSL \
+              -o "${RUNNER_TEMP}/harn.tar.gz" \
+              "https://github.com/burin-labs/harn/releases/download/v${version}/harn-x86_64-unknown-linux-gnu.tar.gz"; then
+              tar -xzf "${RUNNER_TEMP}/harn.tar.gz" -C "$HARN_INSTALL_ROOT/bin"
+            else
+              CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
+                cargo install harn-cli \
+                  --version "${version}" \
+                  --locked \
+                  --root "$HARN_INSTALL_ROOT"
+            fi
           fi
           "$HARN_BIN" version
 
