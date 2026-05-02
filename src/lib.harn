@@ -78,9 +78,9 @@
 // fixture.
 import "./types"
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Types
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 type JsonSchemaType = "null" | "boolean" | "object" | "array" | "number" | "string" | "integer"
 
@@ -96,7 +96,15 @@ type Contact = {name?: string, url?: string, email?: string}
 
 type License = {name: string, identifier?: string, url?: string}
 
-type Info = {title: string, summary?: string, description?: string, termsOfService?: string, contact?: Contact, license?: License, version: string}
+type Info = {
+  title: string,
+  summary?: string,
+  description?: string,
+  termsOfService?: string,
+  contact?: Contact,
+  license?: License,
+  version: string,
+}
 
 type ServerVariable = {enum?: list<string>, default: string, description?: string}
 
@@ -117,63 +125,279 @@ type Discriminator = {propertyName: string, mapping?: dict<string, string>}
  * exclusiveMinimum / exclusiveMaximum are numeric in OAS 3.1, and oneOf /
  * anyOf are first-class so polymorphic request bodies remain representable.
  */
-type Schema = {title?: string, multipleOf?: float, maximum?: float, exclusiveMaximum?: float, minimum?: float, exclusiveMinimum?: float, maxLength?: int, minLength?: int, pattern?: string, maxItems?: int, minItems?: int, uniqueItems?: bool, maxProperties?: int, minProperties?: int, required?: list<string>, enum?: list, const?: any, type?: JsonSchemaType | list<JsonSchemaType>, allOf?: list<dict>, oneOf?: list<dict>, anyOf?: list<dict>, not?: dict, items?: dict | list<dict>, properties?: dict<string, dict>, additionalProperties?: bool | dict, description?: string, format?: string, default?: any, nullable?: bool, discriminator?: Discriminator, readOnly?: bool, writeOnly?: bool, xml?: dict, externalDocs?: ExternalDocumentation, example?: any, examples?: list<any>, deprecated?: bool}
+type Schema = {
+  title?: string,
+  multipleOf?: float,
+  maximum?: float,
+  exclusiveMaximum?: float,
+  minimum?: float,
+  exclusiveMinimum?: float,
+  maxLength?: int,
+  minLength?: int,
+  pattern?: string,
+  maxItems?: int,
+  minItems?: int,
+  uniqueItems?: bool,
+  maxProperties?: int,
+  minProperties?: int,
+  required?: list<string>,
+  enum?: list,
+  const?: any,
+  type?: JsonSchemaType | list<JsonSchemaType>,
+  allOf?: list<dict>,
+  oneOf?: list<dict>,
+  anyOf?: list<dict>,
+  not?: dict,
+  items?: dict | list<dict>,
+  properties?: dict<string, dict>,
+  additionalProperties?: bool | dict,
+  description?: string,
+  format?: string,
+  default?: any,
+  nullable?: bool,
+  discriminator?: Discriminator,
+  readOnly?: bool,
+  writeOnly?: bool,
+  xml?: dict,
+  externalDocs?: ExternalDocumentation,
+  example?: any,
+  examples?: list<any>,
+  deprecated?: bool,
+}
 
 type Example = {summary?: string, description?: string, value?: any, externalValue?: string}
 
-type Encoding = {contentType?: string, headers?: dict, style?: string, explode?: bool, allowReserved?: bool}
+type Encoding = {
+  contentType?: string,
+  headers?: dict,
+  style?: string,
+  explode?: bool,
+  allowReserved?: bool,
+}
 
-type MediaType = {schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, encoding?: dict<string, Encoding>}
+type MediaType = {
+  schema?: Schema,
+  example?: any,
+  examples?: dict<string, RefOr<Example>>,
+  encoding?: dict<string, Encoding>,
+}
 
 type ParameterLocation = "query" | "header" | "path" | "cookie"
 
-type Parameter = {name: string, in: ParameterLocation, description?: string, required?: bool, deprecated?: bool, allowEmptyValue?: bool, style?: string, explode?: bool, allowReserved?: bool, schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, content?: dict<string, MediaType>}
+type Parameter = {
+  name: string,
+  in: ParameterLocation,
+  description?: string,
+  required?: bool,
+  deprecated?: bool,
+  allowEmptyValue?: bool,
+  style?: string,
+  explode?: bool,
+  allowReserved?: bool,
+  schema?: Schema,
+  example?: any,
+  examples?: dict<string, RefOr<Example>>,
+  content?: dict<string, MediaType>,
+}
 
-type Header = {description?: string, required?: bool, deprecated?: bool, allowEmptyValue?: bool, style?: string, explode?: bool, allowReserved?: bool, schema?: Schema, example?: any, examples?: dict<string, RefOr<Example>>, content?: dict<string, MediaType>}
+type Header = {
+  description?: string,
+  required?: bool,
+  deprecated?: bool,
+  allowEmptyValue?: bool,
+  style?: string,
+  explode?: bool,
+  allowReserved?: bool,
+  schema?: Schema,
+  example?: any,
+  examples?: dict<string, RefOr<Example>>,
+  content?: dict<string, MediaType>,
+}
 
 type RequestBody = {description?: string, content: dict<string, MediaType>, required?: bool}
 
-type Link = {operationRef?: string, operationId?: string, parameters?: dict<string, any>, requestBody?: any, description?: string, server?: Server}
+type Link = {
+  operationRef?: string,
+  operationId?: string,
+  parameters?: dict<string, any>,
+  requestBody?: any,
+  description?: string,
+  server?: Server,
+}
 
-type Response = {description: string, headers?: dict<string, RefOr<Header>>, content?: dict<string, MediaType>, links?: dict<string, RefOr<Link>>}
+type Response = {
+  description: string,
+  headers?: dict<string, RefOr<Header>>,
+  content?: dict<string, MediaType>,
+  links?: dict<string, RefOr<Link>>,
+}
 
 type Responses = dict<string, RefOr<Response>>
 
 type Callback = dict<string, dict>
 
-type Operation = {method?: string, path?: string, operation_id?: string, tags?: list<string>, summary?: string, description?: string, externalDocs?: ExternalDocumentation, operationId?: string, parameters?: list<RefOr<Parameter>>, requestBody?: RefOr<RequestBody>, request_body?: RefOr<RequestBody>, responses?: Responses, callbacks?: dict<string, RefOr<Callback>>, deprecated?: bool, security?: list<SecurityRequirement>, servers?: list<Server>}
+type Operation = {
+  method?: string,
+  path?: string,
+  operation_id?: string,
+  tags?: list<string>,
+  summary?: string,
+  description?: string,
+  externalDocs?: ExternalDocumentation,
+  operationId?: string,
+  parameters?: list<RefOr<Parameter>>,
+  requestBody?: RefOr<RequestBody>,
+  request_body?: RefOr<RequestBody>,
+  responses?: Responses,
+  callbacks?: dict<string, RefOr<Callback>>,
+  deprecated?: bool,
+  security?: list<SecurityRequirement>,
+  servers?: list<Server>,
+}
 
-type PathItem = {summary?: string, description?: string, get?: Operation, put?: Operation, post?: Operation, delete?: Operation, options?: Operation, head?: Operation, patch?: Operation, trace?: Operation, servers?: list<Server>, parameters?: list<RefOr<Parameter>>}
+type PathItem = {
+  summary?: string,
+  description?: string,
+  get?: Operation,
+  put?: Operation,
+  post?: Operation,
+  delete?: Operation,
+  options?: Operation,
+  head?: Operation,
+  patch?: Operation,
+  trace?: Operation,
+  servers?: list<Server>,
+  parameters?: list<RefOr<Parameter>>,
+}
 
-type ApiKeySecurityScheme = {type: "apiKey", description?: string, name: string, in: "query" | "header" | "cookie"}
+type ApiKeySecurityScheme = {
+  type: "apiKey",
+  description?: string,
+  name: string,
+  in: "query" | "header" | "cookie",
+}
 
-type HttpSecurityScheme = {type: "http", description?: string, scheme: string, bearerFormat?: string}
+type HttpSecurityScheme = {
+  type: "http",
+  description?: string,
+  scheme: string,
+  bearerFormat?: string,
+}
 
-type OAuthFlow = {authorizationUrl?: string, tokenUrl?: string, refreshUrl?: string, scopes: dict<string, string>}
+type OAuthFlow = {
+  authorizationUrl?: string,
+  tokenUrl?: string,
+  refreshUrl?: string,
+  scopes: dict<string, string>,
+}
 
-type OAuthFlows = {implicit?: OAuthFlow, password?: OAuthFlow, clientCredentials?: OAuthFlow, authorizationCode?: OAuthFlow}
+type OAuthFlows = {
+  implicit?: OAuthFlow,
+  password?: OAuthFlow,
+  clientCredentials?: OAuthFlow,
+  authorizationCode?: OAuthFlow,
+}
 
 type OAuth2SecurityScheme = {type: "oauth2", description?: string, flows: OAuthFlows}
 
-type OpenIdConnectSecurityScheme = {type: "openIdConnect", description?: string, openIdConnectUrl: string}
+type OpenIdConnectSecurityScheme = {
+  type: "openIdConnect",
+  description?: string,
+  openIdConnectUrl: string,
+}
 
 type MutualTLSSecurityScheme = {type: "mutualTLS", description?: string}
 
 type SecurityScheme = ApiKeySecurityScheme | HttpSecurityScheme | OAuth2SecurityScheme | OpenIdConnectSecurityScheme | MutualTLSSecurityScheme
 
-type Components = {schemas?: dict<string, Schema>, responses?: dict<string, RefOr<Response>>, parameters?: dict<string, RefOr<Parameter>>, examples?: dict<string, RefOr<Example>>, requestBodies?: dict<string, RefOr<RequestBody>>, headers?: dict<string, RefOr<Header>>, securitySchemes?: dict<string, RefOr<SecurityScheme>>, links?: dict<string, RefOr<Link>>, callbacks?: dict<string, RefOr<Callback>>, pathItems?: dict<string, RefOr<PathItem>>}
+type Components = {
+  schemas?: dict<string, Schema>,
+  responses?: dict<string, RefOr<Response>>,
+  parameters?: dict<string, RefOr<Parameter>>,
+  examples?: dict<string, RefOr<Example>>,
+  requestBodies?: dict<string, RefOr<RequestBody>>,
+  headers?: dict<string, RefOr<Header>>,
+  securitySchemes?: dict<string, RefOr<SecurityScheme>>,
+  links?: dict<string, RefOr<Link>>,
+  callbacks?: dict<string, RefOr<Callback>>,
+  pathItems?: dict<string, RefOr<PathItem>>,
+}
 
-type OpenApiDoc = {openapi: string, info: Info, jsonSchemaDialect?: string, servers?: list<Server>, paths?: dict<string, PathItem>, webhooks?: dict<string, RefOr<PathItem>>, components?: Components, security?: list<SecurityRequirement>, tags?: list<Tag>, externalDocs?: ExternalDocumentation, security_schemes?: dict<string, RefOr<SecurityScheme>>}
+type OpenApiDoc = {
+  openapi: string,
+  info: Info,
+  jsonSchemaDialect?: string,
+  servers?: list<Server>,
+  paths?: dict<string, PathItem>,
+  webhooks?: dict<string, RefOr<PathItem>>,
+  components?: Components,
+  security?: list<SecurityRequirement>,
+  tags?: list<Tag>,
+  externalDocs?: ExternalDocumentation,
+  security_schemes?: dict<string, RefOr<SecurityScheme>>,
+}
 
-type WebhookOperation = {name: string, method: string, path_item: PathItem, operation: Operation, operation_id: string, summary?: string, description?: string, parameters?: list<RefOr<Parameter>>, request_body?: RefOr<RequestBody>, responses?: Responses, security?: list<SecurityRequirement>, tags?: list<string>}
+type WebhookOperation = {
+  name: string,
+  method: string,
+  path_item: PathItem,
+  operation: Operation,
+  operation_id: string,
+  summary?: string,
+  description?: string,
+  parameters?: list<RefOr<Parameter>>,
+  request_body?: RefOr<RequestBody>,
+  responses?: Responses,
+  security?: list<SecurityRequirement>,
+  tags?: list<string>,
+}
 
-type AuthHelper = {scheme_name: string, kind: string, client_fields: list<string>, location?: string, parameter_name?: string, scopes?: list<string>}
+type AuthHelper = {
+  scheme_name: string,
+  kind: string,
+  client_fields: list<string>,
+  location?: string,
+  parameter_name?: string,
+  scopes?: list<string>,
+}
 
-type PaginationPlan = {operation_id: string, method: string, path: string, kind: string, items_field?: string, cursor_param?: string, cursor_response_field?: string, has_more_field?: string, page_param?: string, page_size_param?: string, next_link_field?: string, link_header?: string}
+type PaginationPlan = {
+  operation_id: string,
+  method: string,
+  path: string,
+  kind: string,
+  items_field?: string,
+  cursor_param?: string,
+  cursor_response_field?: string,
+  has_more_field?: string,
+  page_param?: string,
+  page_size_param?: string,
+  next_link_field?: string,
+  link_header?: string,
+}
 
-type RateLimitMetadata = {operation_id: string, method: string, path: string, status?: string, retry_after_header?: string, limit_headers: list<string>, remaining_headers: list<string>, reset_headers: list<string>}
+type RateLimitMetadata = {
+  operation_id: string,
+  method: string,
+  path: string,
+  status?: string,
+  retry_after_header?: string,
+  limit_headers: list<string>,
+  remaining_headers: list<string>,
+  reset_headers: list<string>,
+}
 
-type ParseOpenApiDoc = {openapi: string, info: Info, servers?: list, paths?: dict, webhooks?: dict, components?: dict, security_schemes?: dict, security?: list, tags?: list}
+type ParseOpenApiDoc = {
+  openapi: string,
+  info: Info,
+  servers?: list,
+  paths?: dict,
+  webhooks?: dict,
+  components?: dict,
+  security_schemes?: dict,
+  security?: list,
+  tags?: list,
+}
 
 let _OPENAPI_DOC_SCHEMA = {
   type: "dict",
@@ -188,9 +412,9 @@ let _OPENAPI_DOC_SCHEMA = {
   required: ["openapi", "info"],
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Parsing
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 /** Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc. */
 pub fn parse(json_string: string) -> OpenApiDoc {
@@ -218,9 +442,9 @@ pub fn parse(json_string: string) -> OpenApiDoc {
   return schema_expect(doc, _OPENAPI_DOC_SCHEMA)
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Walking helpers
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 let _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]
 
@@ -447,7 +671,7 @@ fn _dedupe(xs) {
 }
 
 /** Return the enum variant list on a schema, or nil. */
-pub fn enum_values(sch: Schema) -> list<string> | nil {
+pub fn enum_values(sch: Schema) -> list<string>? {
   if type_of(sch) != "dict" {
     return nil
   }
@@ -707,9 +931,9 @@ fn _rate_limit_metadata_for_op(op) {
   }
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Codegen
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 let _MODULE_TEMPLATE = """
   /*
@@ -1840,9 +2064,9 @@ fn _render_json_parse_expr(value) {
   return "json_parse(\n    \"" + encoded + "\",\n  )"
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Response type resolution
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 //   For each operation we pick the first 2xx response whose
 //   application/json body carries a JSON schema, classify that schema,
@@ -1850,7 +2074,7 @@ fn _render_json_parse_expr(value) {
 //   Aliases keyed by component `$ref` are deduplicated across
 //   operations; inline schemas get an alias named after their op.
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 fn _resolve_response_type(doc, op, cache) {
   let picked = _pick_success_response(op)
@@ -2344,7 +2568,7 @@ fn _render_dict_literal(d) {
   return "{" + join(parts, ", ") + "}"
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 // Minimal template engine — the stdlib `render` helper reads from files
 // on disk, but we want the codegen template inline so the library stays
@@ -2352,7 +2576,7 @@ fn _render_dict_literal(d) {
 // {{ ident }}, {{ dotted.lookup }}, {{ for x in xs }}..{{ end }}, and
 // {{ if cond }}..{{ else if cond }}..{{ else }}..{{ end }}.
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 /** Render a triple-quoted template string against a bindings dict. */
 pub fn render_string(template: string, bindings: dict) -> string {
