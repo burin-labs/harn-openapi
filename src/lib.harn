@@ -1017,7 +1017,7 @@ let _MODULE_TEMPLATE = """
     return {{ pagination_plan_literal }}
   }
 
-  pub fn pagination_plan(operation_id: string) -> dict | nil {
+  pub fn pagination_plan(operation_id: string) -> dict? {
     for plan in pagination_plans() {
       if plan.operation_id == operation_id {
         return plan
@@ -2285,7 +2285,14 @@ fn _emit_struct_alias(doc, alias_name, resolved) {
     let field_type = _harn_type_for_property(doc, prop_schema, 1)
     fields = fields + [_harn_struct_field(key, field_type.annotation)]
   }
-  return "type " + alias_name + " = {" + join(fields, ", ") + "}"
+  if len(fields) <= 4 {
+    return "type " + alias_name + " = {" + join(fields, ", ") + "}"
+  }
+  var out = "type " + alias_name + " = {\n"
+  for field in fields {
+    out = out + "  " + field + ",\n"
+  }
+  return out + "}"
 }
 
 fn _harn_type_for_property(doc, prop_schema, depth) {
