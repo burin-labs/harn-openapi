@@ -3,11 +3,6 @@
 // asserts the generated Harn source contains the correct auth-dispatch
 // wiring and that the corresponding helper functions produce the
 // expected Authorization / header / query bindings at runtime.
-//
-// Note: `http_mock_calls()` upstream records method/url/body but not
-// request headers (see burin-labs/harn#TBD). Until that lands, we
-// assert on generated source text plus runtime evaluation of helper
-// fns whose shape is deterministic.
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_root() -> string {
@@ -87,6 +82,26 @@ fn check_generates(src: string, label: string) {
   assert(fmt_result.success, "${label}: generated SDK must pass \\`harn fmt --check\\`")
 }
 
+fn run_generated(src: string, label: string, imports: string, body: string) {
+  let module_stem = "/tmp/harn-openapi-security-smoke-${label}"
+  let module_path = module_stem + ".harn"
+  let runner_path = "/tmp/harn-openapi-security-runtime-${label}.harn"
+  write_file(module_path, src)
+  write_file(
+    runner_path,
+    "import { " + imports + " } from \"" + module_stem + "\"\n\npipeline default() {\n" + body
+      + "\n}\n",
+  )
+  let result = shell(harn_cmd("run " + runner_path))
+  if !result.success {
+    println("---${label} runtime stderr---")
+    println(result.stderr)
+    println("---${label} runtime stdout---")
+    println(result.stdout)
+  }
+  assert(result.success, "${label}: generated SDK runtime auth assertions must pass")
+}
+
 @test
 pipeline default() {
   // ------------------------------------------------------------------
@@ -105,6 +120,19 @@ pipeline default() {
   assert_not_contains(src_a, "basic_user: string", "A/no-basic-field")
   assert_not_contains(src_a, "api_keys: dict", "A/no-apikey-field")
   check_generates(src_a, "A")
+  run_generated(
+    src_a,
+    "A",
+    "new_client, get_self",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", "bearer-token")
+      get_self(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.authorization, "Bearer bearer-token")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario B: explicit security: [] on one op overrides doc default.
   // ------------------------------------------------------------------
@@ -143,6 +171,22 @@ pipeline default() {
     "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
   )
   check_generates(src_b, "B")
+  run_generated(
+    src_b,
+    "B",
+    "new_client, get_self, public_ping",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      http_mock("GET", "https://api.example.com/health", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", "bearer-token")
+      get_self(client)
+      public_ping(client)
+      let calls = http_mock_calls({include_sensitive: true})
+      assert_eq(calls[0].headers.authorization, "Bearer bearer-token")
+      assert_eq(calls[1].headers.get("authorization"), nil)
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario C: http basic only.
   // ------------------------------------------------------------------
@@ -159,6 +203,19 @@ pipeline default() {
   assert_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
   assert_not_contains(src_c, "token: string", "C/no-token-field")
   check_generates(src_c, "C")
+  run_generated(
+    src_c,
+    "C",
+    "new_client, login",
+    """
+      http_mock_clear()
+      http_mock("POST", "https://api.example.com/login", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", "basic-user", "basic-pass")
+      login(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario D: apiKey in header.
   // ------------------------------------------------------------------
@@ -175,6 +232,19 @@ pipeline default() {
   assert_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
   assert_not_contains(src_d, "token: string", "D/no-token-field")
   check_generates(src_d, "D")
+  run_generated(
+    src_d,
+    "D",
+    "new_client, get_thing",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {xApiKey: "header-key"})
+      get_thing(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers["x-api-key"], "header-key")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario E: apiKey in query.
   // ------------------------------------------------------------------
@@ -189,6 +259,19 @@ pipeline default() {
   assert_contains(src_e, "api_key: v", "E/query-name-emitted")
   assert_contains(src_e, "_query_string", "E/op-has-query-string-call")
   check_generates(src_e, "E")
+  run_generated(
+    src_e,
+    "E",
+    "new_client, list_things",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/things?api_key=query-key", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {qKey: "query-key"})
+      list_things(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.url, "https://api.example.com/things?api_key=query-key")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario F: apiKey in cookie.
   // ------------------------------------------------------------------
@@ -202,6 +285,19 @@ pipeline default() {
   assert_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
   assert_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
   check_generates(src_f, "F")
+  run_generated(
+    src_f,
+    "F",
+    "new_client, me",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {sessId: "cookie-key"})
+      me(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.cookie, "sid=cookie-key")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario G: oauth2 — treated as bearer for v0 (client already holds token).
   // ------------------------------------------------------------------
@@ -221,6 +317,19 @@ pipeline default() {
   assert_contains(src_g, "token: string = \"\"", "G/client-has-token")
   assert_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
   check_generates(src_g, "G")
+  run_generated(
+    src_g,
+    "G",
+    "new_client, do_thing",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", "oauth-token")
+      do_thing(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.authorization, "Bearer oauth-token")
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario H: mixed schemes (bearer + basic) with per-op overrides,
   // mirroring the real-world Notion shape.
