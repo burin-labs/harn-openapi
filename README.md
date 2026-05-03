@@ -351,10 +351,10 @@ GitHub Actions pins `harn-cli` from crates.io via `.harn-version`. When a new
 Harn release is published, update that pin and run the local gate with:
 
 ```sh
-harn run scripts/bump_harn_cli_version.harn -- 0.7.55
+harn run scripts/bump_harn_cli_version.harn -- 0.7.56
 ```
 
-The script accepts a leading `v` (`v0.7.55` is normalized to `0.7.55`),
+The script accepts a leading `v` (`v0.7.56` is normalized to `0.7.56`),
 installs that `harn-cli` release into a temp directory, then runs check, lint,
 formatting, all smoke tests, `scripts/regen_demo.harn`, and
 `scripts/package_install_smoke.harn`. Use `--no-verify` only when you
