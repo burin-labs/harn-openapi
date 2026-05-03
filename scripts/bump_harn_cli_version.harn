@@ -1,7 +1,7 @@
 // Update the pinned harn-cli version used by local and CI gates.
 //
 // Usage:
-//   harn run scripts/bump_harn_cli_version.harn -- 0.7.55
+//   harn run scripts/bump_harn_cli_version.harn -- 0.7.56
 //
 // The default path updates `.harn-version`, installs the requested harn-cli
 // release from crates.io into a temp root, and runs the local gate.
