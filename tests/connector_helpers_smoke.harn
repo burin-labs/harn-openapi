@@ -135,7 +135,7 @@ pipeline default() {
       package_name: "connector-helper-sdk",
       description: "Synthetic generated SDK.",
       default_export: "src/lib.harn",
-      dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
+      dependencies: {"harn-openapi": {path: "../harn-openapi"}},
     },
   )
   assert_contains(manifest, "name = \"connector-helper-sdk\"", "generated package name")

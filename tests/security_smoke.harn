@@ -24,7 +24,7 @@ fn harn_cmd(args: string) -> string {
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   var paths = {}
   for op in ops {
-    var method_entry = {operationId: op.operation_id, responses: {["200"]: {description: "ok"}}}
+    var method_entry = {operationId: op.operation_id, responses: {"200": {description: "ok"}}}
     if op.get("security") != nil {
       method_entry = {...method_entry, security: op.security}
     }
@@ -226,7 +226,7 @@ pipeline default() {
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
   assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
-  assert_contains(src_d, "[\"X-Api-Key\"]:", "D/header-name-emitted")
+  assert_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
   assert_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
   assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
   assert_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
