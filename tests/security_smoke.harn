@@ -24,7 +24,7 @@ fn harn_cmd(args: string) -> string {
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   var paths = {}
   for op in ops {
-    var method_entry = {operationId: op.operation_id, responses: {["200"]: {description: "ok"}}}
+    var method_entry = {operationId: op.operation_id, responses: {"200": {description: "ok"}}}
     if op.get("security") != nil {
       method_entry = {...method_entry, security: op.security}
     }

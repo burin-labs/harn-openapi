@@ -55,7 +55,7 @@ pipeline default() {
   println("fetching ${_NOTION_OPENAPI_URL}")
   let response = http_get(
     _NOTION_OPENAPI_URL,
-    {timeout_ms: 60000, headers: {["User-Agent"]: "harn-openapi-fixture-refresh"}},
+    {timeout_ms: 60000, headers: {"User-Agent": "harn-openapi-fixture-refresh"}},
   )
   if !response.ok {
     throw "refresh_fixtures: upstream returned HTTP " + to_string(response.status)

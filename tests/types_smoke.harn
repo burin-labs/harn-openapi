@@ -11,7 +11,7 @@ pipeline default() {
   require ops[0].method != nil, "typed operation should expose method"
   require ops[0].path != nil, "typed operation should expose path"
   require ops[0].operation_id != nil, "typed operation should expose operation_id"
-  let ref_with_sibling = {["$ref"]: "#/components/schemas/annotationResponse", description: "sibling description"}
+  let ref_with_sibling = {"$ref": "#/components/schemas/annotationResponse", description: "sibling description"}
   require is_reference(ref_with_sibling), "is_reference should detect $ref dicts"
   let resolved: Schema = schema(doc, ref_with_sibling)
   require resolved.get("$ref") == nil, "schema() should resolve the control $ref keyword away"
