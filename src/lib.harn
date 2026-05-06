@@ -439,7 +439,8 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
   }
-  return schema_expect(doc, _OPENAPI_DOC_SCHEMA)
+  schema_expect(doc, _OPENAPI_DOC_SCHEMA)
+  return doc
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -952,7 +953,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _no_auth_headers(client: dict) -> dict {
-    var hs = {["Content-Type"]: "application/json"}
+    var hs = {"Content-Type": "application/json"}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
@@ -2512,7 +2513,7 @@ fn _harn_dict_entry(key, value_expr) {
   if _is_plain_identifier(key) {
     return key + ": " + value_expr
   }
-  return "[\"" + _escape_string(key) + "\"]: " + value_expr
+  return "\"" + _escape_string(key) + "\": " + value_expr
 }
 
 fn _is_plain_identifier(s) {

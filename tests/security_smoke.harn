@@ -226,7 +226,7 @@ pipeline default() {
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
   assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
-  assert_contains(src_d, "[\"X-Api-Key\"]:", "D/header-name-emitted")
+  assert_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
   assert_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
   assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
   assert_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
