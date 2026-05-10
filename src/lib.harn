@@ -1018,6 +1018,7 @@ let _MODULE_TEMPLATE = """
     return {{ pagination_plan_literal }}
   }
 
+  /** Look up the pagination plan for a given operation id, or nil if none. */
   pub fn pagination_plan(operation_id: string) -> dict? {
     for plan in pagination_plans() {
       if plan.operation_id == operation_id {
@@ -1027,6 +1028,7 @@ let _MODULE_TEMPLATE = """
     return nil
   }
 
+  /** Extract the items list from `response` according to `plan`. */
   pub fn pagination_items(response: dict, plan: dict) -> list {
     let field = plan.get("items_field")
     if field == nil {
@@ -1039,6 +1041,11 @@ let _MODULE_TEMPLATE = """
     return []
   }
 
+  /**
+   * Compute the next-page directive from `response` according to `plan`.
+   * Returns a dict with `done: bool` plus either a `query` dict to merge
+   * into the next call, or a `url` to follow (next-link style).
+   */
   pub fn pagination_next(response: dict, plan: dict) -> dict {
     let kind = plan.get("kind")
     if kind == "cursor" {
@@ -1054,7 +1061,7 @@ let _MODULE_TEMPLATE = """
       } else {
         response.get(has_more_field)
       }
-      return {done: cursor == nil || has_more == false, query: {[plan.cursor_param]: cursor}}
+      return {done: cursor == nil || !has_more, query: {[plan.cursor_param]: cursor}}
     }
     if kind == "page" {
       return {done: false, query: {}}
@@ -1085,6 +1092,7 @@ let _MODULE_TEMPLATE = """
     return nil
   }
 
+  /** Extract status + standard rate-limit headers from a raw HTTP response. */
   pub fn rate_limit_from_response(resp: dict) -> dict {
     let headers = resp.get("headers") ?? {}
     return {
@@ -1096,6 +1104,7 @@ let _MODULE_TEMPLATE = """
     }
   }
 
+  /** True if the response looks rate-limited (HTTP 429 or Retry-After set). */
   pub fn is_rate_limited_response(resp: dict) -> bool {
     let headers = resp.get("headers") ?? {}
     return resp.get("status") == 429 || _header_ci(headers, "Retry-After") != nil
@@ -2002,9 +2011,12 @@ fn _render_body_variant_constructor(variant) {
       ]
     }
   }
+  let doc_comment = "/** Build a `" + _escape_string(variant.tag)
+    + "` variant of the polymorphic request body. */\n"
   let sig_parts = required_sig + optional_sig
   if len(sig_parts) == 0 && len(literal_entries) == 0 {
-    return "pub fn "
+    return doc_comment
+      + "pub fn "
       + variant.fn_name
       + "(payload: dict) -> dict {\n"
       + "  return {...payload, _variant: \""
@@ -2013,7 +2025,12 @@ fn _render_body_variant_constructor(variant) {
       + "}"
   }
   literal_entries = literal_entries + [_harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\"")]
-  var body = "pub fn " + variant.fn_name + "(" + join(sig_parts, ", ") + ") -> dict {\n"
+  var body = doc_comment
+    + "pub fn "
+    + variant.fn_name
+    + "("
+    + join(sig_parts, ", ")
+    + ") -> dict {\n"
   body = body + "  var body = " + _render_binding_dict(literal_entries) + "\n"
   for line in optional_lines {
     body = body + line + "\n"

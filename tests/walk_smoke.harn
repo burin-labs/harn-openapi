@@ -3,7 +3,7 @@
 // exercise enum_values() on a known enum schema.
 import { enum_values, operations, parse, schema } from "../src/lib"
 
-pipeline default() {
+pipeline test_main() {
   let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   let ops = operations(doc)

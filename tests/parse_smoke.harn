@@ -5,7 +5,7 @@
 // Keep it pinned — do not auto-refresh.
 import { operations, parse } from "../src/lib"
 
-pipeline default() {
+pipeline test_main() {
   let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   assert(starts_with(doc.openapi, "3.1"), "openapi version must be 3.1.x")

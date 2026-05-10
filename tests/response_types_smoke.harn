@@ -151,7 +151,7 @@ fn _count_occurrences(haystack: string, needle: string) -> int {
   return count
 }
 
-pipeline default() {
+pipeline test_main() {
   let doc = parse(_TINY_DOC)
   let src = codegen_module(
     doc,
