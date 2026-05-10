@@ -1147,7 +1147,7 @@ let _MODULE_TEMPLATE = """
     {{ if op.has_body }}{{ op.body_prepare }}
     let resp = http_{{ op.method }}(url, body_str, {headers: {{ op.headers_call }}}){{ else }}let resp = http_{{ op.method }}(url, {headers: {{ op.headers_call }}}){{ end }}
     if resp.status >= 400 {
-      throw "{{ op.fn_name }}: HTTP " + to_string(resp.status) + " " + resp.body
+      {{ op.error_throw }}
     }
     {{ if op.returns_nil }}return nil{{ else }}let raw = json_parse(resp.body)
     if type_of(raw) != "dict" {
@@ -1678,7 +1678,31 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
     security_note: security_note,
     return_type: ret.type_name,
     returns_nil: ret.returns_nil,
+    error_throw: _render_error_throw(fn_name),
   }
+}
+
+/**
+ * Build the `throw { ... }` statement for non-2xx responses, matching
+ * `harn fmt` width logic so the generated source is already canonical.
+ * The dict literal alone wraps when `1 + inline.len() + 1 > 100`
+ * (see crates/harn-fmt/src/formatter/mod.rs::format_comma_sequence).
+ */
+fn _render_error_throw(fn_name) {
+  let dict_inline = "operation: \""
+    + fn_name
+    + "\", status: resp.status, body: resp.body, headers: resp.headers"
+  if 2 + len(dict_inline) <= 100 {
+    return "throw {" + dict_inline + "}"
+  }
+  return "throw {\n"
+    + "      operation: \""
+    + fn_name
+    + "\",\n"
+    + "      status: resp.status,\n"
+    + "      body: resp.body,\n"
+    + "      headers: resp.headers,\n"
+    + "    }"
 }
 
 fn path_bindings_parts_render(parts) {
