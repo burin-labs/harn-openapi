@@ -43,21 +43,21 @@ fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   return json_stringify(root)
 }
 
-fn assert_contains(haystack: string, needle: string, label: string) {
+fn require_contains(haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
     println("---BEGIN GENERATED SOURCE---")
     println(haystack)
     println("---END GENERATED SOURCE---")
-    assert(false, "${label}: expected source to contain \"${needle}\"")
+    require false, "${label}: expected source to contain \"${needle}\""
   }
 }
 
-fn assert_not_contains(haystack: string, needle: string, label: string) {
+fn require_not_contains(haystack: string, needle: string, label: string) {
   if contains(haystack, needle) {
     println("---BEGIN GENERATED SOURCE---")
     println(haystack)
     println("---END GENERATED SOURCE---")
-    assert(false, "${label}: expected source NOT to contain \"${needle}\"")
+    require false, "${label}: expected source NOT to contain \"${needle}\""
   }
 }
 
@@ -71,7 +71,7 @@ fn check_generates(src: string, label: string) {
     println("---harn check stdout---")
     println(result.stdout)
   }
-  assert(result.success, "${label}: generated SDK must pass \\`harn check\\`")
+  require result.success, "${label}: generated SDK must pass \\`harn check\\`"
   let fmt_result = shell(harn_cmd("fmt --check " + tmp_path))
   if !fmt_result.success {
     println("---harn fmt --check stderr---")
@@ -79,7 +79,7 @@ fn check_generates(src: string, label: string) {
     println("---harn fmt --check stdout---")
     println(fmt_result.stdout)
   }
-  assert(fmt_result.success, "${label}: generated SDK must pass \\`harn fmt --check\\`")
+  require fmt_result.success, "${label}: generated SDK must pass \\`harn fmt --check\\`"
 }
 
 fn run_generated(src: string, label: string, imports: string, body: string) {
@@ -99,11 +99,11 @@ fn run_generated(src: string, label: string, imports: string, body: string) {
     println("---${label} runtime stdout---")
     println(result.stdout)
   }
-  assert(result.success, "${label}: generated SDK runtime auth assertions must pass")
+  require result.success, "${label}: generated SDK runtime auth assertions must pass"
 }
 
 @test
-pipeline default() {
+pipeline test_main() {
   // ------------------------------------------------------------------
   // Scenario A: http bearer at the doc level, inherited by all ops.
   // ------------------------------------------------------------------
@@ -113,12 +113,12 @@ pipeline default() {
     [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
   )
   let src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
-  assert_contains(src_a, "_headers_bearerauth(client)", "A/dispatch")
-  assert_contains(src_a, "Authorization: \"Bearer \" + _client_token(client)", "A/bearer-helper")
-  assert_contains(src_a, "token: string = \"\"", "A/client-has-token")
-  assert_contains(src_a, "token_provider = nil", "A/client-has-token-provider")
-  assert_not_contains(src_a, "basic_user: string", "A/no-basic-field")
-  assert_not_contains(src_a, "api_keys: dict", "A/no-apikey-field")
+  require_contains(src_a, "_headers_bearerauth(client)", "A/dispatch")
+  require_contains(src_a, "Authorization: \"Bearer \" + _client_token(client)", "A/bearer-helper")
+  require_contains(src_a, "token: string = \"\"", "A/client-has-token")
+  require_contains(src_a, "token_provider = nil", "A/client-has-token-provider")
+  require_not_contains(src_a, "basic_user: string", "A/no-basic-field")
+  require_not_contains(src_a, "api_keys: dict", "A/no-apikey-field")
   check_generates(src_a, "A")
   run_generated(
     src_a,
@@ -146,7 +146,7 @@ pipeline default() {
   )
   let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
   // Authed op still uses the bearer helper.
-  assert_contains(src_b, "_headers_bearerauth(client)", "B/authed-dispatch")
+  require_contains(src_b, "_headers_bearerauth(client)", "B/authed-dispatch")
   // The no-auth op must route through _no_auth_headers.
   let b_lines = split(src_b, "\n")
   var b_public_line = ""
@@ -196,12 +196,12 @@ pipeline default() {
     [{operation_id: "login", method: "post", path: "/login"}],
   )
   let src_c = codegen_module(parse(doc_c), {module_name: "c", client_name: "C"})
-  assert_contains(src_c, "_headers_basicauth(client)", "C/dispatch")
-  assert_contains(src_c, "base64_encode", "C/basic-uses-base64")
-  assert_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
-  assert_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
-  assert_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
-  assert_not_contains(src_c, "token: string", "C/no-token-field")
+  require_contains(src_c, "_headers_basicauth(client)", "C/dispatch")
+  require_contains(src_c, "base64_encode", "C/basic-uses-base64")
+  require_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
+  require_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
+  require_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
+  require_not_contains(src_c, "token: string", "C/no-token-field")
   check_generates(src_c, "C")
   run_generated(
     src_c,
@@ -225,12 +225,12 @@ pipeline default() {
     [{operation_id: "get-thing", method: "get", path: "/thing"}],
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
-  assert_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
-  assert_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
-  assert_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
-  assert_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
-  assert_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
-  assert_not_contains(src_d, "token: string", "D/no-token-field")
+  require_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
+  require_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
+  require_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
+  require_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
+  require_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
+  require_not_contains(src_d, "token: string", "D/no-token-field")
   check_generates(src_d, "D")
   run_generated(
     src_d,
@@ -254,10 +254,10 @@ pipeline default() {
     [{operation_id: "list-things", method: "get", path: "/things"}],
   )
   let src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
-  assert_contains(src_e, "_headers_qkey(client)", "E/headers-dispatch")
-  assert_contains(src_e, "_query_qkey_dict(client)", "E/query-spread-in-op")
-  assert_contains(src_e, "api_key: v", "E/query-name-emitted")
-  assert_contains(src_e, "_query_string", "E/op-has-query-string-call")
+  require_contains(src_e, "_headers_qkey(client)", "E/headers-dispatch")
+  require_contains(src_e, "_query_qkey_dict(client)", "E/query-spread-in-op")
+  require_contains(src_e, "api_key: v", "E/query-name-emitted")
+  require_contains(src_e, "_query_string", "E/op-has-query-string-call")
   check_generates(src_e, "E")
   run_generated(
     src_e,
@@ -281,9 +281,9 @@ pipeline default() {
     [{operation_id: "me", method: "get", path: "/me"}],
   )
   let src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
-  assert_contains(src_f, "_headers_sessid(client)", "F/dispatch")
-  assert_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
-  assert_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
+  require_contains(src_f, "_headers_sessid(client)", "F/dispatch")
+  require_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
+  require_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
   check_generates(src_f, "F")
   run_generated(
     src_f,
@@ -312,10 +312,10 @@ pipeline default() {
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
   let src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
-  assert_contains(src_g, "_headers_oauth2auth(client)", "G/dispatch")
-  assert_contains(src_g, "Authorization: \"Bearer \" + _client_token(client)", "G/bearer-shape")
-  assert_contains(src_g, "token: string = \"\"", "G/client-has-token")
-  assert_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
+  require_contains(src_g, "_headers_oauth2auth(client)", "G/dispatch")
+  require_contains(src_g, "Authorization: \"Bearer \" + _client_token(client)", "G/bearer-shape")
+  require_contains(src_g, "token: string = \"\"", "G/client-has-token")
+  require_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
   check_generates(src_g, "G")
   run_generated(
     src_g,
@@ -349,8 +349,8 @@ pipeline default() {
   )
   let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
-  assert_contains(src_h, "fn _headers_bearerauth(", "H/bearer-helper-defined")
-  assert_contains(src_h, "fn _headers_basicauth(", "H/basic-helper-defined")
+  require_contains(src_h, "fn _headers_bearerauth(", "H/bearer-helper-defined")
+  require_contains(src_h, "fn _headers_basicauth(", "H/basic-helper-defined")
   // Check per-op dispatch line by line.
   let h_lines = split(src_h, "\n")
   var h_get_me_line = ""
@@ -395,9 +395,9 @@ pipeline default() {
     [{operation_id: "mtls-op", method: "get", path: "/secure"}],
   )
   let src_i = codegen_module(parse(doc_i), {module_name: "i", client_name: "I"})
-  assert_contains(src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
-  assert_contains(src_i, "_headers_mtls(client)", "I/fallback-helper-called")
-  assert_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
+  require_contains(src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
+  require_contains(src_i, "_headers_mtls(client)", "I/fallback-helper-called")
+  require_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
   check_generates(src_i, "I")
   // ------------------------------------------------------------------
   // Scenario J: multiple security alternatives are preserved as a NOTE,
@@ -409,12 +409,12 @@ pipeline default() {
     [{operation_id: "either-auth", method: "get", path: "/either"}],
   )
   let src_j = codegen_module(parse(doc_j), {module_name: "j", client_name: "J"})
-  assert_contains(
+  require_contains(
     src_j,
     "NOTE: security alternatives also accepted: basicAuth",
     "J/security-alternative-note",
   )
-  assert_not_contains(src_j, "TODO", "J/generated-source-has-no-todos")
+  require_not_contains(src_j, "TODO", "J/generated-source-has-no-todos")
   check_generates(src_j, "J")
   println("security_smoke: ok")
 }

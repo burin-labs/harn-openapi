@@ -15,7 +15,7 @@ fn harn_cmd(args: string) -> string {
   return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
 }
 
-pipeline default() {
+pipeline test_main() {
   let repo_root = source_dir() + "/.."
   let unique = to_string(to_int(timestamp())) + "-" + uuid()
   let old_path = temp_dir() + "/harn-openapi-old-" + unique + ".json"
@@ -99,23 +99,26 @@ pipeline default() {
     println(diff.stderr)
     println(diff.stdout)
   }
-  require diff.success, "fixture_diff.harn must run"
-  require contains(diff.stdout, "added operations:"), "diff output must include added operations"
-  require contains(diff.stdout, "POST /widgets (create-widget)"), "diff output must include added op"
-  require contains(diff.stdout, "removed operations:"), "diff output must include removed operations"
-  require contains(diff.stdout, "PATCH /legacy (patch-legacy)"), "diff output must include removed op"
-  require contains(diff.stdout, "added schemas:"), "diff output must include added schemas"
-  require contains(diff.stdout, "NewThing"), "diff output must include added schema"
-  require contains(diff.stdout, "removed schemas:"), "diff output must include removed schemas"
-  require contains(diff.stdout, "Legacy"), "diff output must include removed schema"
-  require contains(diff.stdout, "Widget (+1 fields, -1 fields)"), "diff output must summarize schema field changes"
+  assert(diff.success, "fixture_diff.harn must run")
+  assert(contains(diff.stdout, "added operations:"), "diff output must include added operations")
+  assert(contains(diff.stdout, "POST /widgets (create-widget)"), "diff output must include added op")
+  assert(contains(diff.stdout, "removed operations:"), "diff output must include removed operations")
+  assert(contains(diff.stdout, "PATCH /legacy (patch-legacy)"), "diff output must include removed op")
+  assert(contains(diff.stdout, "added schemas:"), "diff output must include added schemas")
+  assert(contains(diff.stdout, "NewThing"), "diff output must include added schema")
+  assert(contains(diff.stdout, "removed schemas:"), "diff output must include removed schemas")
+  assert(contains(diff.stdout, "Legacy"), "diff output must include removed schema")
+  assert(
+    contains(diff.stdout, "Widget (+1 fields, -1 fields)"),
+    "diff output must summarize schema field changes",
+  )
   let stale_cmd = harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn")
   let stale = shell(stale_cmd)
   if !stale.success {
     println(stale.stderr)
     println(stale.stdout)
   }
-  require stale.success, "check_fixture_staleness.harn must pass for committed metadata"
-  require contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet"
+  assert(stale.success, "check_fixture_staleness.harn must pass for committed metadata")
+  assert(contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet")
   println("fixture_workflow_smoke: ok")
 }

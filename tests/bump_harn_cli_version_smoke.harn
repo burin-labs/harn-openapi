@@ -28,7 +28,7 @@ fn cat_file(path: string) -> string {
   return result.stdout
 }
 
-pipeline default() {
+pipeline test_main() {
   let repo_root = source_dir() + "/.."
   let fake_root = temp_dir() + "/harn-openapi-bump-smoke-" + uuid()
   mkdir(fake_root)
@@ -45,10 +45,10 @@ pipeline default() {
     println(result.stderr)
     println(result.stdout)
   }
-  require result.success, "bump_harn_cli_version.harn must run"
-  require contains(result.stdout, "0.0.1 -> 9.8.7"), "script should report version update"
-  require contains(result.stdout, "skipped verification"), "test path should skip the full gate"
+  assert(result.success, "bump_harn_cli_version.harn must run")
+  assert(contains(result.stdout, "0.0.1 -> 9.8.7"), "script should report version update")
+  assert(contains(result.stdout, "skipped verification"), "test path should skip the full gate")
   let version = cat_file(fake_root + "/.harn-version")
-  require version == "9.8.7\n", ".harn-version must update"
+  assert_eq(version, "9.8.7\n")
   println("bump_harn_cli_version_smoke: ok")
 }

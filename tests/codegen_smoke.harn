@@ -19,7 +19,7 @@ fn harn_cmd(args: string) -> string {
   return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
 }
 
-pipeline default() {
+pipeline test_main() {
   let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   let src = codegen_module(

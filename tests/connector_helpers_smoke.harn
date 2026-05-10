@@ -25,12 +25,12 @@ fn harn_cmd(args: string) -> string {
   return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
 }
 
-fn assert_contains(haystack: string, needle: string, label: string) {
+fn require_contains(haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
     println("---BEGIN GENERATED SOURCE---")
     println(haystack)
     println("---END GENERATED SOURCE---")
-    assert(false, "${label}: expected source to contain \"${needle}\"")
+    require false, "${label}: expected source to contain \"${needle}\""
   }
 }
 
@@ -62,7 +62,7 @@ fn check_generates(src: string) {
     println("---harn check stdout---")
     println(check_result.stdout)
   }
-  assert(check_result.success, "generated SDK must pass `harn check`")
+  require check_result.success, "generated SDK must pass `harn check`"
   let fmt_result = shell(harn_cmd("fmt --check " + tmp_path))
   if !fmt_result.success {
     println("---harn fmt --check stderr---")
@@ -70,11 +70,11 @@ fn check_generates(src: string) {
     println("---harn fmt --check stdout---")
     println(fmt_result.stdout)
   }
-  assert(fmt_result.success, "generated SDK must pass `harn fmt --check`")
+  require fmt_result.success, "generated SDK must pass `harn fmt --check`"
 }
 
 @test
-pipeline default() {
+pipeline test_main() {
   let raw = read_file(source_dir() + "/fixtures/connector_helpers.openapi.json")
   let doc = parse(raw)
   let helpers = auth_helpers(doc)
@@ -116,19 +116,23 @@ pipeline default() {
     "remaining header should be modeled",
   )
   let src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
-  assert_contains(src, "pub fn token_from_secret", "generated token provider helper")
-  assert_contains(src, "token_provider = nil", "generated client token-provider hook")
-  assert_contains(src, "api_key_provider = nil", "generated client api-key-provider hook")
-  assert_contains(src, "_client_token(client)", "generated bearer helpers use token provider hook")
-  assert_contains(
+  require_contains(src, "pub fn token_from_secret", "generated token provider helper")
+  require_contains(src, "token_provider = nil", "generated client token-provider hook")
+  require_contains(src, "api_key_provider = nil", "generated client api-key-provider hook")
+  require_contains(src, "_client_token(client)", "generated bearer helpers use token provider hook")
+  require_contains(
     src,
     "_client_api_key(client, \"queryKey\")",
     "generated apiKey helpers use provider hook",
   )
-  assert_contains(src, "pub fn pagination_plans() -> list", "generated pagination plans helper")
-  assert_contains(src, "\\\"kind\\\":\\\"cursor\\\"", "generated cursor pagination metadata")
-  assert_contains(src, "pub fn rate_limit_metadata() -> list", "generated rate-limit metadata helper")
-  assert_contains(src, "Retry-After", "generated rate-limit header metadata")
+  require_contains(src, "pub fn pagination_plans() -> list", "generated pagination plans helper")
+  require_contains(src, "\\\"kind\\\":\\\"cursor\\\"", "generated cursor pagination metadata")
+  require_contains(
+    src,
+    "pub fn rate_limit_metadata() -> list",
+    "generated rate-limit metadata helper",
+  )
+  require_contains(src, "Retry-After", "generated rate-limit header metadata")
   check_generates(src)
   let manifest = codegen_harn_toml(
     {
@@ -138,9 +142,9 @@ pipeline default() {
       dependencies: {"harn-openapi": {path: "../harn-openapi"}},
     },
   )
-  assert_contains(manifest, "name = \"connector-helper-sdk\"", "generated package name")
-  assert_contains(manifest, "default = \"src/lib.harn\"", "generated default export")
-  assert_contains(
+  require_contains(manifest, "name = \"connector-helper-sdk\"", "generated package name")
+  require_contains(manifest, "default = \"src/lib.harn\"", "generated default export")
+  require_contains(
     manifest,
     "harn-openapi = { path = \"../harn-openapi\" }",
     "generated dependency declaration",

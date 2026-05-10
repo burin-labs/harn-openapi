@@ -3,7 +3,7 @@
 // keeps the public helper covered on its own.
 import { render_string } from "../src/lib"
 
-pipeline default() {
+pipeline test_main() {
   let template = """
     Hello {{ user.name }}
     {{ if show }}shown{{ else }}hidden{{ end }}
