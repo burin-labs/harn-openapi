@@ -1,0 +1,92 @@
+// error_throw_smoke — verify that generated SDK functions throw a
+// structured dict (not a string) on non-2xx HTTP responses, so callers
+// can pattern-match on `status` / `body` / `headers` / `operation`
+// without parsing strings.
+import { codegen_module, parse } from "../src/lib"
+
+fn harn_root() -> string {
+  let root = env("HARN_ROOT")
+  if root != nil && root != "" {
+    return root
+  }
+  return "/Users/ksinder/projects/harn"
+}
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return "cd " + harn_root() + " && " + bin + " " + args
+  }
+  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+}
+
+fn build_doc() -> string {
+  return json_stringify(
+    {
+      openapi: "3.1.0",
+      info: {title: "Throw Test", version: "0.0.1"},
+      servers: [{url: "https://api.example.com"}],
+      paths: {"/v1/thing": {get: {operationId: "get-thing", responses: {"200": {description: "ok"}}}}},
+      components: {securitySchemes: {bearerAuth: {type: "http", scheme: "bearer"}}},
+      security: [{bearerAuth: []}],
+    },
+  )
+}
+
+@test
+pipeline default() {
+  let src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
+  // The throw site must emit a dict literal carrying operation, status,
+  // body, and headers — and must NOT emit the legacy string format.
+  assert(
+    contains(src, "throw {operation: \"get_thing\""),
+    "generated source must throw a dict, not a string",
+  )
+  assert(
+    contains(src, "headers: resp.headers"),
+    "generated dict must carry resp.headers for downstream request_id parsing",
+  )
+  assert(
+    !contains(src, "throw \"get_thing: HTTP \""),
+    "legacy string-throw format must be gone for non-2xx responses",
+  )
+  // Drive the generated function against a mocked 404 and assert the
+  // thrown payload's shape.
+  let module_stem = "/tmp/harn-openapi-error-throw-smoke"
+  let module_path = module_stem + ".harn"
+  let runner_path = "/tmp/harn-openapi-error-throw-runtime.harn"
+  write_file(module_path, src)
+  let body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
+  let runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
+    + "\n"
+    + "@test\n"
+    + "pipeline default() {\n"
+    + "  http_mock_clear()\n"
+    + "  http_mock(\"GET\", \"https://api.example.com/v1/thing\", "
+    + "{status: 404, body: "
+    + json_stringify(body_lit)
+    + ", "
+    + "headers: {\"x-request-id\": \"req-123\", \"content-type\": \"application/json\"}})\n"
+    + "  let client = new_client(\"https://api.example.com\", \"tok\")\n"
+    + "  let caught = try { get_thing(client); nil } catch (e) { e }\n"
+    + "  assert(type_of(caught) == \"dict\", \"expected dict throw\")\n"
+    + "  assert_eq(caught.operation, \"get_thing\")\n"
+    + "  assert_eq(caught.status, 404)\n"
+    + "  assert_eq(caught.body, "
+    + json_stringify(body_lit)
+    + ")\n"
+    + "  assert_eq(type_of(caught.headers), \"dict\")\n"
+    + "  assert_eq(caught.headers[\"x-request-id\"], \"req-123\")\n"
+    + "  println(\"error_throw runtime: ok\")\n"
+    + "}\n"
+  write_file(runner_path, runner)
+  let result = shell(harn_cmd("run " + runner_path))
+  if !result.success {
+    println("---runtime stderr---")
+    println(result.stderr)
+    println("---runtime stdout---")
+    println(result.stdout)
+  }
+  assert(result.success, "generated SDK must throw a dict on 404")
+  println("error_throw_smoke: ok")
+}
