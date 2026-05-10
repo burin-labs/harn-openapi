@@ -34,7 +34,7 @@ fn build_doc() -> string {
 }
 
 @test
-pipeline default() {
+pipeline test_main() {
   let src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
   // The throw site must emit a dict literal carrying operation, status,
   // body, and headers — and must NOT emit the legacy string format.

@@ -39,7 +39,7 @@ let _TINY_DOC = """
   }
   """
 
-pipeline default() {
+pipeline test_main() {
   let doc = parse(_TINY_DOC)
   let bare = schema(doc, {"$ref": "#/components/schemas/BaseObject"})
   assert(bare.get("$ref") == nil, "bare $ref should resolve to the target schema")
