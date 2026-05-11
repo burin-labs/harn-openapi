@@ -419,12 +419,13 @@ let _OPENAPI_DOC_SCHEMA = {
 /** Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc. */
 pub fn parse(json_string: string) -> OpenApiDoc {
   let raw = json_parse(json_string)
-  let version = raw.get("openapi")
-  if version == nil {
+  let raw_version = raw.get("openapi")
+  if raw_version == nil {
     throw "harn-openapi.parse: missing top-level 'openapi' field"
   }
+  let version = to_string(raw_version)
   if !starts_with(version, "3.1") {
-    throw "harn-openapi.parse: expected openapi 3.1.x, got " + to_string(version)
+    throw "harn-openapi.parse: expected openapi 3.1.x, got " + version
   }
   let components = raw.get("components") ?? {}
   let components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
