@@ -18,7 +18,7 @@ pipeline test_main() {
   assert(resolved.description == "sibling description", "schema() should preserve non-$ref siblings")
   let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
   let values = enum_values(enum_schema)
-  assert(values != nil && len(values) == 2, "enum_values should preserve typed enum lists")
+  assert(values != nil && len(values ?? []) == 2, "enum_values should preserve typed enum lists")
   let synthetic = parse(read_file(source_dir() + "/fixtures/connector_helpers.openapi.json"))
   let helpers: list<AuthHelper> = auth_helpers(synthetic)
   assert(helpers[0].scheme_name != nil, "AuthHelper should expose scheme_name")

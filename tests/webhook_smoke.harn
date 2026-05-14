@@ -9,12 +9,14 @@ pipeline test_main() {
   let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   // parse() must surface the webhooks map.
-  assert(type_of(doc.webhooks) == "dict", "doc.webhooks must be a dict")
-  let webhook_count = len(doc.webhooks)
+  let webhooks = doc.webhooks ?? {}
+  assert(type_of(webhooks) == "dict", "doc.webhooks must be a dict")
+  let webhook_count = len(webhooks)
   println("webhooks (raw): ${webhook_count}")
   assert(webhook_count >= 10, "expected >=10 webhooks in the Notion fixture, got ${webhook_count}")
   // parse() must surface components.pathItems as a dict, even if empty.
-  assert(type_of(doc.components.pathItems) == "dict", "doc.components.pathItems must be a dict")
+  let path_items = doc.components?.pathItems ?? {}
+  assert(type_of(path_items) == "dict", "doc.components.pathItems must be a dict")
   // component_path_items(doc) is the passthrough accessor.
   let comp_path_items = component_path_items(doc)
   assert(type_of(comp_path_items) == "dict", "component_path_items(doc) must return a dict")

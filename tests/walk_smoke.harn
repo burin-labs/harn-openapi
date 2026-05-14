@@ -31,10 +31,11 @@ pipeline test_main() {
   // Find any schema with an enum and verify enum_values returns a list.
   var enum_name = ""
   var enum_size = 0
-  for entry in doc.components.schemas {
+  let component_schemas = doc.components?.schemas ?? {}
+  for entry in component_schemas {
     if enum_name == "" {
-      let vs = enum_values(entry.value)
-      if vs != nil && len(vs) > 0 {
+      let vs = enum_values(entry.value) ?? []
+      if len(vs) > 0 {
         enum_name = entry.key
         enum_size = len(vs)
       }
