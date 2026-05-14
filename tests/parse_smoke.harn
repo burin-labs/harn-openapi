@@ -14,7 +14,12 @@ pipeline test_main() {
   let op_count = len(ops)
   println("operations: ${op_count}")
   assert(op_count > 40, "expected >40 operations in the Notion fixture, got ${op_count}")
-  println("schemas: ${len(doc.components.schemas)}")
-  assert(len(doc.components.schemas) > 100, "expected >100 component schemas")
+  let components = doc.components
+  assert(components != nil, "doc.components must be present")
+  let schemas = components.schemas
+  assert(schemas != nil, "doc.components.schemas must be present")
+  let schema_count = len(schemas)
+  println("schemas: ${schema_count}")
+  assert(schema_count > 100, "expected >100 component schemas")
   println("parse_smoke: ok")
 }
