@@ -3,20 +3,12 @@
 // to assert the emitted source parses cleanly.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 pipeline test_main() {
@@ -31,7 +23,7 @@ pipeline test_main() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out_path = "/tmp/harn-openapi-codegen-smoke.harn"
+  let out_path = temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
   write_file(out_path, src)
   println("wrote generated module: ${out_path} (${len(src)} bytes)")
   let cmd = harn_cmd("check " + out_path)

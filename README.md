@@ -196,7 +196,9 @@ referenced by at least one operation. Each operation dispatches through
 the helper matching its *effective* security (`op.security ?? doc.security
 ?? []`) — explicit `security: []` at either level routes through
 `_no_auth_headers(client)` so the call goes out without an `Authorization`
-header.
+header. A single OpenAPI security requirement object is treated as an AND:
+`security: [{bearerAuth: [], apiKeyAuth: []}]` sends both schemes, while
+separate objects remain alternatives.
 
 `new_client` takes only the client fields implied by the schemes in use,
 all defaulted so callers only supply what their spec actually needs:
@@ -232,6 +234,12 @@ When an operation declares multiple security requirement alternatives
 (`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
 `NOTE` comment above the generated function listing the alternatives so
 a human can retarget manually.
+
+Generated operation functions include OpenAPI `path`, `query`, `header`, and
+`cookie` parameters in their signatures. Path values are URL-encoded during
+interpolation, query values are encoded in the query string, header parameters
+are merged into the request headers, and cookie parameters are appended to the
+`Cookie` header.
 
 Out of scope for v0: full OAuth2 flows (authorization-code, device,
 PKCE) and `mutualTLS` client-certificate plumbing.
@@ -291,12 +299,12 @@ can use either a released `harn` binary or the upstream checkout. With a
 released binary:
 
 ```sh
-HARN_ROOT="$PWD" harn check src scripts
-HARN_ROOT="$PWD" harn lint src scripts
-HARN_ROOT="$PWD" harn fmt --check src scripts tests
-for test in tests/*.harn; do HARN_ROOT="$PWD" harn run "$test" || exit 1; done
-HARN_ROOT="$PWD" harn run scripts/regen_demo.harn
-HARN_ROOT="$PWD" HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
+harn check src scripts
+harn lint src scripts
+harn fmt --check src scripts tests
+for test in tests/*.harn; do HARN_BIN="$(command -v harn)" harn run "$test" || exit 1; done
+harn run scripts/regen_demo.harn
+HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
 ```
 
 When using the sibling upstream checkout instead:
@@ -306,8 +314,8 @@ cd ../harn
 cargo run --quiet --bin harn -- check ../harn-openapi/src ../harn-openapi/scripts
 cargo run --quiet --bin harn -- lint ../harn-openapi/src ../harn-openapi/scripts
 cargo run --quiet --bin harn -- fmt --check ../harn-openapi/src ../harn-openapi/scripts ../harn-openapi/tests
-for test in ../harn-openapi/tests/*.harn; do cargo run --quiet --bin harn -- run "$test" || exit 1; done
-cargo run --quiet --bin harn -- run ../harn-openapi/scripts/regen_demo.harn
+for test in ../harn-openapi/tests/*.harn; do HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$test" || exit 1; done
+HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/regen_demo.harn
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/package_install_smoke.harn
 ```
 
@@ -330,18 +338,18 @@ save the current fixture, run the refresh script, then review the diff report:
 
 ```sh
 cp tests/fixtures/notion.openapi.json /tmp/notion.openapi.old.json
-cd ../harn
-cargo run --quiet --bin harn -- run ../harn-openapi/scripts/refresh_fixtures.harn
-cargo run --quiet --bin harn -- run ../harn-openapi/scripts/fixture_diff.harn -- \
+harn run scripts/refresh_fixtures.harn
+harn run scripts/fixture_diff.harn -- \
   /tmp/notion.openapi.old.json \
-  ../harn-openapi/tests/fixtures/notion.openapi.json
+  tests/fixtures/notion.openapi.json
 ```
 
 `scripts/refresh_fixtures.harn` writes both
 `tests/fixtures/notion.openapi.json` and
 `tests/fixtures/notion.openapi.json.meta.toml`, including the upstream URL,
 capture timestamp, byte size, and SHA-256. CI runs
-`scripts/check_fixture_staleness.harn`; it is quiet under 90 days old, warns
+`scripts/check_fixture_staleness.harn`; it verifies the committed byte size and
+SHA-256 before checking age, is quiet under 90 days old, warns
 between 90 and 180 days, and fails non-`main` branches once the fixture is over
 180 days old.
 

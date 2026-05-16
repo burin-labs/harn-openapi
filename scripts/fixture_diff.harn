@@ -1,7 +1,7 @@
 // Print a structured diff between two OpenAPI fixture captures.
 //
 // Usage:
-//   cargo run --quiet --bin harn -- run scripts/fixture_diff.harn -- old.json new.json
+//   harn run scripts/fixture_diff.harn -- old.json new.json
 import { operations, parse, schema } from "../src/lib"
 
 fn _sorted_keys(d) {
@@ -16,6 +16,19 @@ fn _operation_key(op) -> string {
 
 fn _operation_label(op) -> string {
   return _operation_key(op) + " (" + op.operation_id + ")"
+}
+
+fn _operation_fingerprint(op) -> string {
+  return json_stringify(
+    {
+      operation_id: op.operation_id,
+      parameters: op.get("parameters") ?? [],
+      request_body: op.get("request_body"),
+      responses: op.get("responses") ?? {},
+      security: op.get("security") ?? [],
+      tags: op.get("tags") ?? [],
+    },
+  )
 }
 
 fn _operation_index(doc) -> dict {
@@ -40,6 +53,15 @@ fn _schema_fields(doc, name: string) -> list<string> {
   let resolved = schema(doc, raw)
   let props = resolved.get("properties") ?? {}
   return _sorted_keys(props)
+}
+
+fn _schema_fingerprint(doc, name: string) -> string {
+  let schemas = (doc.components ?? {}).get("schemas") ?? {}
+  let raw = schemas.get(name)
+  if raw == nil {
+    return ""
+  }
+  return json_stringify(schema(doc, raw))
 }
 
 fn _diff_list(old_items: list<string>, new_items: list<string>) -> dict {
@@ -69,6 +91,22 @@ fn _print_operation_section(title: string, keys: list<string>, index: dict) {
   }
 }
 
+fn _print_changed_operations(old_ops: dict, new_ops: dict, shared_keys: list<string>) {
+  println("changed operations:")
+  var count = 0
+  for key in shared_keys {
+    let old_op = old_ops[key]
+    let new_op = new_ops[key]
+    if _operation_fingerprint(old_op) != _operation_fingerprint(new_op) {
+      count = count + 1
+      println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
+    }
+  }
+  if count == 0 {
+    println("  (none)")
+  }
+}
+
 fn _print_schema_name_section(title: string, names: list<string>) {
   println(title + ":")
   if len(names) == 0 {
@@ -87,13 +125,15 @@ fn _print_changed_schemas(old_doc, new_doc, shared_names: list<string>) {
     let old_fields = _schema_fields(old_doc, name)
     let new_fields = _schema_fields(new_doc, name)
     let diff = _diff_list(old_fields, new_fields)
-    if len(diff.added) > 0 || len(diff.removed) > 0 {
+    let schema_changed = _schema_fingerprint(old_doc, name) != _schema_fingerprint(new_doc, name)
+    if len(diff.added) > 0 || len(diff.removed) > 0 || schema_changed {
       count = count + 1
-      println(
-        "  " + name + " (+" + to_string(len(diff.added)) + " fields, -"
-          + to_string(len(diff.removed))
-          + " fields)",
-      )
+      let suffix = if len(diff.added) > 0 || len(diff.removed) > 0 {
+        "(+" + to_string(len(diff.added)) + " fields, -" + to_string(len(diff.removed)) + " fields)"
+      } else {
+        "(schema changed)"
+      }
+      println("  " + name + " " + suffix)
       if len(diff.added) > 0 {
         println("    added: " + join(diff.added, ", "))
       }
@@ -118,6 +158,13 @@ pipeline default() {
   let op_diff = _diff_list(_sorted_keys(old_ops), _sorted_keys(new_ops))
   _print_operation_section("added operations", op_diff.added, new_ops)
   _print_operation_section("removed operations", op_diff.removed, old_ops)
+  var shared_ops = []
+  for key in _sorted_keys(new_ops) {
+    if _sorted_keys(old_ops).contains(key) {
+      shared_ops = shared_ops + [key]
+    }
+  }
+  _print_changed_operations(old_ops, new_ops, shared_ops)
   let schema_diff = _diff_list(_schema_names(old_doc), _schema_names(new_doc))
   _print_schema_name_section("added schemas", schema_diff.added)
   _print_schema_name_section("removed schemas", schema_diff.removed)

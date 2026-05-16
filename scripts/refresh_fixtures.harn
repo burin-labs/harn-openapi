@@ -1,8 +1,7 @@
 // Refresh the pinned Notion OpenAPI fixture and write capture metadata.
 //
-// Run from the upstream Harn checkout:
-//   cargo run --quiet --bin harn -- run \
-//     /path/to/harn-openapi/scripts/refresh_fixtures.harn
+// Run from this checkout:
+//   harn run scripts/refresh_fixtures.harn
 let _NOTION_OPENAPI_URL = "https://developers.notion.com/openapi.json"
 
 let _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"

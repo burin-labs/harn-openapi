@@ -1,18 +1,10 @@
 /* Smoke coverage for issue #7 fixture refresh support scripts. */
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 pipeline test_main() {
@@ -47,6 +39,7 @@ pipeline test_main() {
               "old_name": {"type": "string"}
             }
           },
+          "Stable": {"type": "object", "properties": {"id": {"type": "string"}}},
           "Legacy": {"type": "object", "properties": {"id": {"type": "string"}}}
         }
       }
@@ -59,7 +52,7 @@ pipeline test_main() {
       "paths": {
         "/widgets/{id}": {
           "get": {
-            "operationId": "get-widget",
+            "operationId": "retrieve-widget",
             "responses": {"200": {"description": "ok"}}
           }
         },
@@ -79,6 +72,7 @@ pipeline test_main() {
               "name": {"type": "string"}
             }
           },
+          "Stable": {"type": "object", "properties": {"id": {"type": "integer"}}},
           "NewThing": {"type": "object", "properties": {"id": {"type": "string"}}}
         }
       }
@@ -104,6 +98,11 @@ pipeline test_main() {
   assert(contains(diff.stdout, "POST /widgets (create-widget)"), "diff output must include added op")
   assert(contains(diff.stdout, "removed operations:"), "diff output must include removed operations")
   assert(contains(diff.stdout, "PATCH /legacy (patch-legacy)"), "diff output must include removed op")
+  assert(contains(diff.stdout, "changed operations:"), "diff output must include changed operations")
+  assert(
+    contains(diff.stdout, "GET /widgets/{id} (get-widget -> retrieve-widget)"),
+    "diff output must include operationId changes",
+  )
   assert(contains(diff.stdout, "added schemas:"), "diff output must include added schemas")
   assert(contains(diff.stdout, "NewThing"), "diff output must include added schema")
   assert(contains(diff.stdout, "removed schemas:"), "diff output must include removed schemas")
@@ -111,6 +110,10 @@ pipeline test_main() {
   assert(
     contains(diff.stdout, "Widget (+1 fields, -1 fields)"),
     "diff output must summarize schema field changes",
+  )
+  assert(
+    contains(diff.stdout, "Stable (schema changed)"),
+    "diff output must include schema changes that keep the same field names",
   )
   let stale_cmd = harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn")
   let stale = shell(stale_cmd)
@@ -120,5 +123,24 @@ pipeline test_main() {
   }
   assert(stale.success, "check_fixture_staleness.harn must pass for committed metadata")
   assert(contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet")
+  let fixture_path = temp_dir() + "/harn-openapi-integrity-" + unique + ".json"
+  let meta_path = fixture_path + ".meta.toml"
+  write_file(fixture_path, "{\"ok\":true}\n")
+  write_file(
+    meta_path,
+    "upstream_url = \"https://example.com/openapi.json\"\n"
+      + "captured_at = \""
+      + date_iso()
+      + "\"\n"
+      + "sha256 = \"definitely-wrong\"\n"
+      + "byte_size = 1\n",
+  )
+  let bad_integrity = shell(harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path))
+  assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")
+  assert(
+    contains(bad_integrity.stderr, "sha256 mismatch")
+      || contains(bad_integrity.stdout, "sha256 mismatch"),
+    "integrity failure should mention sha256 mismatch",
+  )
   println("fixture_workflow_smoke: ok")
 }
