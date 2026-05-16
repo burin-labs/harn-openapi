@@ -4,20 +4,12 @@
 // without parsing strings.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 fn build_doc() -> string {
@@ -52,9 +44,9 @@ pipeline test_main() {
   )
   // Drive the generated function against a mocked 404 and assert the
   // thrown payload's shape.
-  let module_stem = "/tmp/harn-openapi-error-throw-smoke"
+  let module_stem = temp_dir() + "/harn-openapi-error-throw-smoke-" + uuid()
   let module_path = module_stem + ".harn"
-  let runner_path = "/tmp/harn-openapi-error-throw-runtime.harn"
+  let runner_path = temp_dir() + "/harn-openapi-error-throw-runtime-" + uuid() + ".harn"
   write_file(module_path, src)
   let body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
   let runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"

@@ -1,18 +1,10 @@
 /* Smoke coverage for the harn-cli workflow version bump helper. */
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 fn sh_quote(value: string) -> string {

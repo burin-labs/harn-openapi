@@ -36,7 +36,7 @@
 //       `$ref` siblings, merges one level of `allOf`, and leaves
 //       `oneOf`/`anyOf` un-merged.
 //
-//   enum_values(schema)          -> list<string> | nil
+//   enum_values(schema)          -> list | nil
 //       Return the enum variant list on a schema, or nil if absent.
 //
 //   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
@@ -390,6 +390,7 @@ type RateLimitMetadata = {
 type ParseOpenApiDoc = {
   openapi: string,
   info: Info,
+  jsonSchemaDialect?: string,
   servers?: list,
   paths?: dict,
   webhooks?: dict,
@@ -397,6 +398,7 @@ type ParseOpenApiDoc = {
   security_schemes?: dict,
   security?: list,
   tags?: list,
+  externalDocs?: ExternalDocumentation,
 }
 
 let _OPENAPI_DOC_SCHEMA = {
@@ -423,8 +425,11 @@ pub fn parse(json_string: string) -> OpenApiDoc {
   if raw_version == nil {
     throw "harn-openapi.parse: missing top-level 'openapi' field"
   }
-  let version = to_string(raw_version)
-  if !starts_with(version, "3.1") {
+  if type_of(raw_version) != "string" {
+    throw "harn-openapi.parse: expected openapi to be a string, got " + type_of(raw_version)
+  }
+  let version = raw_version
+  if regex_match("^3\\.1\\.[0-9]+$", version) == nil {
     throw "harn-openapi.parse: expected openapi 3.1.x, got " + version
   }
   let components = raw.get("components") ?? {}
@@ -432,6 +437,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
   let doc = {
     openapi: version,
     info: raw.get("info") ?? {},
+    jsonSchemaDialect: raw.get("jsonSchemaDialect"),
     servers: raw.get("servers") ?? [],
     paths: raw.get("paths") ?? {},
     webhooks: raw.get("webhooks") ?? {},
@@ -439,6 +445,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     security_schemes: components.get("securitySchemes") ?? {},
     security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
+    externalDocs: raw.get("externalDocs"),
   }
   schema_expect(doc, _OPENAPI_DOC_SCHEMA)
   return doc
@@ -470,45 +477,45 @@ fn _flatten_path_item_map(items, doc, mode) {
   var out = []
   for entry in items {
     let key = entry.key
-    let item = entry.value
+    let item = _resolve_ref(doc, entry.value)
     for method in _HTTP_METHODS {
       let op = item.get(method)
       if op != nil {
         let raw_params = _merge_parameters(item.get("parameters") ?? [], op.get("parameters") ?? [], doc)
+        let effective_security = op.get("security") ?? doc.get("security") ?? []
+        let effective_servers = op.get("servers") ?? item.get("servers") ?? doc.get("servers") ?? []
         if mode == "webhook" {
-          out = out
-            + [
-            {
-              name: key,
-              method: method,
-              path_item: item,
-              operation: op,
-              operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
-              summary: op.get("summary") ?? "",
-              description: op.get("description") ?? "",
-              parameters: raw_params,
-              request_body: op.get("requestBody"),
-              responses: op.get("responses") ?? {},
-              security: op.get("security") ?? doc.get("security") ?? [],
-              tags: op.get("tags") ?? [],
-            },
-          ]
+          let normalized = {
+            name: key,
+            method: method,
+            path_item: item,
+            operation: op,
+            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+            summary: op.get("summary") ?? "",
+            description: op.get("description") ?? "",
+            parameters: raw_params,
+            request_body: op.get("requestBody"),
+            responses: op.get("responses") ?? {},
+            security: effective_security,
+            servers: effective_servers,
+            tags: op.get("tags") ?? [],
+          }
+          out = out + [_merge_shallow(op, normalized)]
         } else {
-          out = out
-            + [
-            {
-              method: method,
-              path: key,
-              operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
-              summary: op.get("summary") ?? "",
-              description: op.get("description") ?? "",
-              parameters: raw_params,
-              request_body: op.get("requestBody"),
-              responses: op.get("responses") ?? {},
-              security: op.get("security") ?? doc.get("security") ?? [],
-              tags: op.get("tags") ?? [],
-            },
-          ]
+          let normalized = {
+            method: method,
+            path: key,
+            operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
+            summary: op.get("summary") ?? "",
+            description: op.get("description") ?? "",
+            parameters: raw_params,
+            request_body: op.get("requestBody"),
+            responses: op.get("responses") ?? {},
+            security: effective_security,
+            servers: effective_servers,
+            tags: op.get("tags") ?? [],
+          }
+          out = out + [_merge_shallow(op, normalized)]
         }
       }
     }
@@ -545,7 +552,7 @@ fn _resolve_param_list(params, doc) {
   var out = []
   for p in params {
     if type_of(p) == "dict" && p.get("$ref") != nil {
-      out = out + [_lookup_ref(doc, p.get("$ref"))]
+      out = out + [_resolve_ref(doc, p)]
     } else {
       out = out + [p]
     }
@@ -576,6 +583,10 @@ pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
 }
 
 fn _resolve_ref(doc, node) {
+  return _resolve_ref_inner(doc, node, [])
+}
+
+fn _resolve_ref_inner(doc, node, seen_refs) {
   if type_of(node) != "dict" {
     return {}
   }
@@ -583,9 +594,16 @@ fn _resolve_ref(doc, node) {
   if ref == nil {
     return node
   }
+  if type_of(ref) != "string" {
+    throw "harn-openapi.schema: expected string $ref, got " + type_of(ref)
+  }
+  if seen_refs.contains(ref) {
+    throw "harn-openapi.schema: circular ref " + ref
+  }
   let target = _lookup_ref(doc, ref)
+  let resolved_target = _resolve_ref_inner(doc, target, seen_refs + [ref])
   let siblings = _omit_key(node, "$ref")
-  return _merge_shallow(target, siblings)
+  return _merge_schema(resolved_target, siblings)
 }
 
 fn _lookup_ref(doc, ref) {
@@ -629,6 +647,9 @@ fn _merge_schema(base, overlay) {
     } else if k == "required" {
       let existing = merged.get("required") ?? []
       merged = {...merged, required: _dedupe(existing + v)}
+    } else if k == "allOf" {
+      let existing = merged.get("allOf") ?? []
+      merged = {...merged, allOf: existing + v}
     } else {
       merged = {...merged, [k]: v}
     }
@@ -673,7 +694,7 @@ fn _dedupe(xs) {
 }
 
 /** Return the enum variant list on a schema, or nil. */
-pub fn enum_values(sch: Schema) -> list<string>? {
+pub fn enum_values(sch: Schema) -> list? {
   if type_of(sch) != "dict" {
     return nil
   }
@@ -697,7 +718,7 @@ pub fn is_reference(value: unknown) -> bool {
   if type_of(value) != "dict" {
     return false
   }
-  return value.get("$ref") != nil
+  return type_of(value.get("$ref")) == "string"
 }
 
 /** True when a value is object-like enough to be used as an OAS Schema. */
@@ -773,7 +794,7 @@ fn _pagination_plan_for_op(doc, op) {
   let cursor_param = _first_param_named(params, ["start_cursor", "cursor", "after", "page_token", "next_page_token"])
   let page_param = _first_param_named(params, ["page", "page_number", "page_index", "offset"])
   let page_size_param = _first_param_named(params, ["page_size", "per_page", "limit", "size"])
-  let picked = _pick_success_response(op)
+  let picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" {
     return nil
   }
@@ -783,7 +804,7 @@ fn _pagination_plan_for_op(doc, op) {
   let next_cursor = _first_present_key(props, ["next_cursor", "next_page_token", "cursor", "after"])
   let has_more = _first_present_key(props, ["has_more", "hasMore", "more"])
   let next_link = _first_present_key(props, ["next", "next_url", "next_link", "nextPageUrl"])
-  let link_header = _success_response_header(op, "Link")
+  let link_header = _success_response_header(doc, op, "Link")
   if cursor_param != nil && next_cursor != nil {
     return {
       operation_id: op.operation_id,
@@ -845,10 +866,11 @@ fn _first_present_key(d, names) {
   return nil
 }
 
-fn _success_response_header(op, header_name) {
+fn _success_response_header(doc, op, header_name) {
   for entry in op.responses {
     if _is_success_code(entry.key) {
-      let headers = entry.value.get("headers") ?? {}
+      let response = _resolve_ref(doc, entry.value)
+      let headers = response.get("headers") ?? {}
       let found = _header_name_case_insensitive(headers, header_name)
       if found != nil {
         return found
@@ -874,7 +896,7 @@ fn _header_name_case_insensitive(headers, wanted) {
 pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
   var out = []
   for op in operations(doc) {
-    let meta = _rate_limit_metadata_for_op(op)
+    let meta = _rate_limit_metadata_for_op(doc, op)
     if meta != nil {
       out = out + [meta]
     }
@@ -882,7 +904,7 @@ pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
   return out
 }
 
-fn _rate_limit_metadata_for_op(op) {
+fn _rate_limit_metadata_for_op(doc, op) {
   var status = nil
   var retry_after = nil
   var limit_headers = []
@@ -890,7 +912,8 @@ fn _rate_limit_metadata_for_op(op) {
   var reset_headers = []
   for response_entry in op.responses {
     let code = response_entry.key
-    let headers = response_entry.value.get("headers") ?? {}
+    let response = _resolve_ref(doc, response_entry.value)
+    let headers = response.get("headers") ?? {}
     if code == "429" {
       status = "429"
     }
@@ -959,6 +982,28 @@ let _MODULE_TEMPLATE = """
       hs = {...hs, [entry.key]: entry.value}
     }
     return hs
+  }
+
+  fn _merge_header_dicts(header_sets: list) -> dict {
+    var out = {}
+    for hs in header_sets {
+      for entry in hs {
+        out = {...out, [entry.key]: entry.value}
+      }
+    }
+    return out
+  }
+
+  fn _append_cookie_header(headers: dict, name: string, value) -> dict {
+    if value == nil {
+      return headers
+    }
+    let pair = url_encode(name) + "=" + url_encode(to_string(value))
+    let existing = headers.get("Cookie") ?? headers.get("cookie")
+    if existing == nil || existing == "" {
+      return {...headers, Cookie: pair}
+    }
+    return {...headers, Cookie: to_string(existing) + "; " + pair}
   }
 
   /** Build a token-provider hook backed by the active connector SecretProvider. */
@@ -1114,9 +1159,27 @@ let _MODULE_TEMPLATE = """
   fn _interpolate(template: string, bindings: dict) -> string {
     var out = template
     for entry in bindings {
-      out = replace(out, "{" + entry.key + "}", to_string(entry.value))
+      out = replace(out, "{" + entry.key + "}", url_encode(to_string(entry.value)))
     }
     return out
+  }
+
+  fn _join_url(base_url: string, path: string) -> string {
+    if base_url == "" {
+      return path
+    }
+    if path == "" {
+      return base_url
+    }
+    let base_has_slash = substring(base_url, len(base_url) - 1, 1) == "/"
+    let path_has_slash = starts_with(path, "/")
+    if base_has_slash && path_has_slash {
+      return substring(base_url, 0, len(base_url) - 1) + path
+    }
+    if !base_has_slash && !path_has_slash {
+      return base_url + "/" + path
+    }
+    return base_url + path
   }
 
   fn _query_string(params: dict) -> string {
@@ -1152,18 +1215,15 @@ let _MODULE_TEMPLATE = """
     let path_bindings = {{ op.path_bindings }}
     let path = _interpolate("{{ op.path }}", path_bindings)
     {{ if op.has_query }}let query_bindings = {{ op.query_bindings }}
-    var url = client.base_url + path
-    url = url + _query_string(query_bindings){{ else }}let url = client.base_url + path{{ end }}
-    {{ if op.has_body }}{{ op.body_prepare }}
-    let resp = http_{{ op.method }}(url, body_str, {headers: {{ op.headers_call }}}){{ else }}let resp = http_{{ op.method }}(url, {headers: {{ op.headers_call }}}){{ end }}
+    var url = _join_url(client.base_url, path)
+    url = url + _query_string(query_bindings){{ else }}let url = _join_url(client.base_url, path){{ end }}
+    var request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
+    {{ op.header_cookie_lines }}{{ end }}
+    {{ op.request_lines }}
     if resp.status >= 400 {
       {{ op.error_throw }}
     }
-    {{ if op.returns_nil }}return nil{{ else }}let raw = json_parse(resp.body)
-    if type_of(raw) != "dict" {
-      throw "{{ op.fn_name }}: expected dict response, got " + type_of(raw)
-    }
-    return raw{{ end }}
+    {{ op.return_lines }}
   }
   {{ op.body_variant_constructors }}
   {{ end }}
@@ -1185,19 +1245,32 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   var used_schemes = []
   for op in ops_raw {
     let choice = _resolve_security(op.security, doc_security)
-    if choice.scheme_name != nil && !used_schemes.contains(choice.scheme_name) {
-      used_schemes = used_schemes + [choice.scheme_name]
+    for scheme_name in choice.scheme_names {
+      if !used_schemes.contains(scheme_name) {
+        used_schemes = used_schemes + [scheme_name]
+      }
     }
   }
   // Derive which client fields are needed from the used schemes.
   let client_fields = _derive_client_fields(used_schemes, schemes)
   let new_client_decl = _render_new_client_decl(client_fields, default_base_url, header_overrides)
+  let helper_names = _allocate_auth_helper_names(used_schemes, schemes)
   // Emit per-scheme header/query helpers.
   var auth_helpers = []
   for scheme_name in used_schemes {
     let def = schemes.get(scheme_name)
     if def != nil {
-      auth_helpers = auth_helpers + [{body: _render_auth_helper(scheme_name, def)}]
+      auth_helpers = auth_helpers
+        + [
+        {
+          body: _render_auth_helper(
+            scheme_name,
+            def,
+            helper_names.headers.get(scheme_name),
+            helper_names.queries.get(scheme_name),
+          ),
+        },
+      ]
     }
   }
   // Second pass (response types): collect response-type aliases, keyed so
@@ -1218,7 +1291,7 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     let op = entry.value
     let ret = op_return_types[entry.index]
     let choice = _resolve_security(op.security, doc_security)
-    let model = _build_op_model(doc, op, seen_names, choice, schemes, ret)
+    let model = _build_op_model(doc, op, seen_names, choice, schemes, ret, helper_names, header_overrides)
     seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
   }
@@ -1272,8 +1345,9 @@ pub fn codegen_harn_toml(options: dict) -> string {
  * Resolve which security requirement applies to a given operation.
  *
  * Returns a dict with:
- *   scheme_name:   string | nil  — nil means "no auth"
- *   alternatives:  list<string>  — other scheme names from requirements we dropped
+ *   scheme_name:   string | nil  — first selected scheme, nil means "no auth"
+ *   scheme_names:  list<string>  — every scheme in the selected AND requirement
+ *   alternatives:  list<string>  — alternate requirement sets we dropped
  *   explicit_none: bool          — true when the spec said `security: []`
  */
 fn _resolve_security(op_security, doc_security) {
@@ -1284,36 +1358,64 @@ fn _resolve_security(op_security, doc_security) {
     doc_security
   }
   if type_of(reqs) != "list" || len(reqs) == 0 {
-    return {scheme_name: nil, alternatives: [], explicit_none: true}
+    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
   let first = reqs[0]
   if type_of(first) != "dict" {
-    return {scheme_name: nil, alternatives: [], explicit_none: true}
+    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
-  // Pick the first scheme key in the first requirement.
+  // The first requirement object is an AND: every scheme key in it applies.
+  var picked_names = []
   var picked = nil
   for entry in first {
     if picked == nil {
       picked = entry.key
     }
+    if !picked_names.contains(entry.key) {
+      picked_names = picked_names + [entry.key]
+    }
   }
   if picked == nil {
-    return {scheme_name: nil, alternatives: [], explicit_none: true}
+    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
   var alternatives = []
   var i = 1
   while i < len(reqs) {
     let alt = reqs[i]
     if type_of(alt) == "dict" {
+      var alt_names = []
       for entry in alt {
-        if !alternatives.contains(entry.key) && entry.key != picked {
-          alternatives = alternatives + [entry.key]
+        if !picked_names.contains(entry.key) && !alt_names.contains(entry.key) {
+          alt_names = alt_names + [entry.key]
         }
+      }
+      if len(alt_names) > 0 {
+        alternatives = alternatives + [join(alt_names, "+")]
       }
     }
     i = i + 1
   }
-  return {scheme_name: picked, alternatives: alternatives, explicit_none: false}
+  return {scheme_name: picked, scheme_names: picked_names, alternatives: alternatives, explicit_none: false}
+}
+
+fn _allocate_auth_helper_names(used_schemes, schemes) {
+  var header_names = {}
+  var query_names = {}
+  var taken = []
+  for scheme_name in used_schemes {
+    let header_base = "_headers_" + _sanitize_ident(scheme_name)
+    let header_name = _unique_fn_name(header_base, taken)
+    taken = taken + [header_name]
+    header_names = {...header_names, [scheme_name]: header_name}
+    let def = schemes.get(scheme_name)
+    if def != nil && _scheme_kind(def) == "apiKey-query" {
+      let query_base = "_query_" + _sanitize_ident(scheme_name) + "_dict"
+      let query_name = _unique_fn_name(query_base, taken)
+      taken = taken + [query_name]
+      query_names = {...query_names, [scheme_name]: query_name}
+    }
+  }
+  return {headers: header_names, queries: query_names}
 }
 
 /** Which client-struct fields are needed given the schemes actually used? */
@@ -1459,9 +1561,8 @@ fn _normalize_generated_source(src, module_name) {
   return out.trim() + "\n"
 }
 
-fn _render_auth_helper(scheme_name, def) {
+fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   let kind = _scheme_kind(def)
-  let fn_name = "_headers_" + _sanitize_ident(scheme_name)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  var hs = "
@@ -1541,7 +1642,6 @@ fn _render_auth_helper(scheme_name, def) {
     // _query_<scheme>_dict helper contributes the auth parameter dict
     // which is spread into each operation's query bindings.
     let query_name = def.get("name") ?? scheme_name
-    let query_fn_name = "_query_" + _sanitize_ident(scheme_name) + "_dict"
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  var hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
@@ -1586,34 +1686,54 @@ fn _default_server_url(doc) {
   return servers[0].get("url") ?? ""
 }
 
-fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
-  let fn_name = _unique_fn_name(_sanitize_fn_name(op.operation_id), taken_names)
-  let params = op.parameters
+fn _operation_param_models(params) {
   var path_params = []
   var query_params = []
+  var header_params = []
+  var cookie_params = []
+  var taken_param_idents = []
   for p in params {
     if p.get("name") != nil {
+      let ident = _unique_fn_name(_sanitize_ident(p.get("name")), taken_param_idents)
+      taken_param_idents = taken_param_idents + [ident]
+      let modeled = _merge_shallow(p, {ident: ident})
       let loc = p.get("in") ?? "query"
       if loc == "path" {
-        path_params = path_params + [p]
+        path_params = path_params + [modeled]
       } else if loc == "query" {
-        query_params = query_params + [p]
+        query_params = query_params + [modeled]
+      } else if loc == "header" {
+        header_params = header_params + [modeled]
+      } else if loc == "cookie" {
+        cookie_params = cookie_params + [modeled]
       }
     }
   }
+  return {path: path_params, query: query_params, header: header_params, cookie: cookie_params}
+}
+
+fn _signature_model(
+  doc,
+  op,
+  path_params,
+  query_params,
+  header_params,
+  cookie_params,
+  header_overrides,
+) {
   var required_sig = ["client: dict"]
   var optional_sig = []
   var path_bindings_parts = []
   for p in path_params {
     let name = p.get("name")
-    let nm = _sanitize_ident(name)
+    let nm = p.ident
     required_sig = required_sig + [nm]
     path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   var query_bindings_parts = []
   for p in query_params {
     let name = p.get("name")
-    let nm = _sanitize_ident(name)
+    let nm = p.ident
     if p.get("required") {
       required_sig = required_sig + [nm]
     } else {
@@ -1621,34 +1741,65 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
     }
     query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
   }
+  for p in header_params {
+    let nm = p.ident
+    if p.get("required") && header_overrides.get(p.name) == nil {
+      required_sig = required_sig + [nm]
+    } else {
+      optional_sig = optional_sig + [nm + " = nil"]
+    }
+  }
+  for p in cookie_params {
+    let nm = p.ident
+    if p.get("required") {
+      required_sig = required_sig + [nm]
+    } else {
+      optional_sig = optional_sig + [nm + " = nil"]
+    }
+  }
   let has_body = op.request_body != nil
+  let body_required = has_body && _request_body_required(doc, op.request_body)
   if has_body {
-    required_sig = required_sig + ["body"]
+    if body_required {
+      required_sig = required_sig + ["body"]
+    } else {
+      optional_sig = optional_sig + ["body = nil"]
+    }
   }
-  let sig_parts = required_sig + optional_sig
-  // Figure out which headers helper this op calls. A nil scheme_name means
-  // "no auth" (either explicit security: [] or a doc with no declared
-  // default security).
-  let scheme_name = choice.scheme_name
-  let headers_call = if scheme_name == nil {
-    "_no_auth_headers(client)"
-  } else {
-    "_headers_" + _sanitize_ident(scheme_name) + "(client)"
+  return {
+    required: required_sig,
+    optional: optional_sig,
+    path_bindings_parts: path_bindings_parts,
+    query_bindings_parts: query_bindings_parts,
+    has_body: has_body,
+    body_required: body_required,
   }
-  // apiKey-in-query schemes contribute an extra entry to the query string,
-  // spliced into the query bindings literal via a spread.
-  var extra_query_spread = ""
-  if scheme_name != nil {
+}
+
+fn _build_op_model(doc, op, taken_names, choice, schemes, ret, helper_names, header_overrides) {
+  let fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
+  let param_model = _operation_param_models(op.parameters)
+  let path_params = param_model.path
+  let query_params = param_model.query
+  let header_params = param_model.header
+  let cookie_params = param_model.cookie
+  let sig = _signature_model(doc, op, path_params, query_params, header_params, cookie_params, header_overrides)
+  let sig_parts = sig.required + sig.optional
+  let has_body = sig.has_body
+  let body_required = sig.body_required
+  let path_bindings_parts = sig.path_bindings_parts
+  let query_bindings_parts = sig.query_bindings_parts
+  let scheme_names = choice.scheme_names
+  let headers_call = _render_headers_call(scheme_names, helper_names)
+  var query_scheme_names = []
+  for scheme_name in scheme_names {
     let def = schemes.get(scheme_name)
     if def != nil && _scheme_kind(def) == "apiKey-query" {
-      // `_query_<scheme>(client)` returns a string "k=v" (already URL-encoded)
-      // or "" if no key is configured; it is appended to the query string
-      // via _apikey_suffix below.
-      extra_query_spread = "apikey-query"
+      query_scheme_names = query_scheme_names + [scheme_name]
     }
   }
   let has_query_params = len(query_params) > 0
-  let has_apikey_query = extra_query_spread == "apikey-query"
+  let has_apikey_query = len(query_scheme_names) > 0
   let has_query = has_query_params || has_apikey_query
   let doc_lines = split(op.summary, "\n")
   let first = if len(doc_lines) > 0 {
@@ -1671,16 +1822,19 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
     ""
   }
   let body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
+  let body_prepare = _render_body_prepare(fn_name, body_variants)
   return {
     fn_name: fn_name,
     method: op.method,
     path: op.path,
     fn_decl: _render_pub_fn_decl(fn_name, sig_parts, ret.type_name),
     path_bindings: path_bindings_parts_render(path_bindings_parts),
-    query_bindings: _render_query_bindings(query_bindings_parts, has_apikey_query, scheme_name),
+    query_bindings: _render_query_bindings(query_bindings_parts, query_scheme_names, helper_names),
     has_query: has_query,
     has_body: has_body,
-    body_prepare: _render_body_prepare(fn_name, body_variants),
+    body_prepare: body_prepare,
+    header_cookie_lines: _render_header_cookie_lines(header_params, cookie_params),
+    request_lines: _render_request_lines(op.method, has_body, body_required, body_prepare),
     body_variant_constructors: _render_body_variant_constructors(body_variants),
     body_variant_fn_names: _body_variant_fn_names(body_variants),
     doc_comment: doc_comment,
@@ -1688,6 +1842,7 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret) {
     security_note: security_note,
     return_type: ret.type_name,
     returns_nil: ret.returns_nil,
+    return_lines: _render_return_lines(fn_name, ret),
     error_throw: _render_error_throw(fn_name),
   }
 }
@@ -1719,22 +1874,103 @@ fn path_bindings_parts_render(parts) {
   return _render_binding_dict(parts)
 }
 
-fn _render_query_bindings(parts, has_apikey_query, scheme_name) {
-  // The emitted call reaches into `_query_<scheme>(client)` for apiKey-query
-  // schemes. We emit `_query_string({k: v, ...})` normally; apiKey-query
-  // schemes splice a "&<encoded>" suffix onto the query string via a
-  // post-concat. To keep the template uniform, we render a dict literal
-  // here and the caller wraps _query_string(...) for the base params,
-  // then appends _query_<scheme>(client) via a + concat in the template.
-  // For simplicity, we bake the apiKey-query param directly into the
-  // dict literal using a spread from a helper dict.
+fn _render_headers_call(scheme_names, helper_names) {
+  if len(scheme_names) == 0 {
+    return "_no_auth_headers(client)"
+  }
+  var calls = []
+  for scheme_name in scheme_names {
+    let helper = helper_names.headers.get(scheme_name)
+    if helper != nil {
+      calls = calls + [helper + "(client)"]
+    }
+  }
+  if len(calls) == 0 {
+    return "_no_auth_headers(client)"
+  }
+  if len(calls) == 1 {
+    return calls[0]
+  }
+  return "_merge_header_dicts([" + join(calls, ", ") + "])"
+}
+
+fn _render_query_bindings(parts, query_scheme_names, helper_names) {
   var all_parts = parts
-  if has_apikey_query && scheme_name != nil {
-    let sanitized = _sanitize_ident(scheme_name)
-    let extra = "..._query_" + sanitized + "_dict(client)"
-    all_parts = all_parts + [extra]
+  for scheme_name in query_scheme_names {
+    let helper = helper_names.queries.get(scheme_name)
+    if helper != nil {
+      all_parts = all_parts + ["..." + helper + "(client)"]
+    }
   }
   return _render_binding_dict(all_parts)
+}
+
+fn _render_header_cookie_lines(header_params, cookie_params) {
+  var lines = []
+  for p in header_params {
+    lines = lines
+      + [
+      "if "
+        + p.ident
+        + " != nil {\n"
+        + "    request_headers = {...request_headers, "
+        + _harn_dict_entry(p.name, "to_string(" + p.ident + ")")
+        + "}\n"
+        + "  }",
+    ]
+  }
+  for p in cookie_params {
+    lines = lines
+      + [
+      "request_headers = _append_cookie_header(request_headers, \""
+        + _escape_string(p.name)
+        + "\", "
+        + p.ident
+        + ")",
+    ]
+  }
+  return join(lines, "\n  ")
+}
+
+fn _render_request_lines(method, has_body, body_required, body_prepare) {
+  if !has_body {
+    return "let resp = http_" + method + "(url, {headers: request_headers})"
+  }
+  if body_required {
+    return body_prepare + "\n  let resp = http_" + method + "(url, body_str, {headers: request_headers})"
+  }
+  return "var resp = nil\n"
+    + "  if body == nil {\n"
+    + "    resp = http_"
+    + method
+    + "(url, {headers: request_headers})\n"
+    + "  } else {\n"
+    + "    "
+    + _indent_after_first(body_prepare, "    ")
+    + "\n"
+    + "    resp = http_"
+    + method
+    + "(url, body_str, {headers: request_headers})\n"
+    + "  }"
+}
+
+fn _render_return_lines(fn_name, ret) {
+  if ret.returns_nil {
+    return "return nil"
+  }
+  if ret.response_mode == "opaque" {
+    return "return {status: resp.status, headers: resp.headers, body: resp.body}"
+  }
+  if ret.response_mode == "json_any" {
+    return "return json_parse(resp.body)"
+  }
+  return "let raw = json_parse(resp.body)\n"
+    + "  if type_of(raw) != \"dict\" {\n"
+    + "    throw \""
+    + fn_name
+    + ": expected dict response, got \" + type_of(raw)\n"
+    + "  }\n"
+    + "  return raw"
 }
 
 fn _render_binding_dict(parts) {
@@ -1759,11 +1995,23 @@ fn _request_json_schema(doc, request_body) {
   if content == nil {
     return nil
   }
-  let app_json = content.get("application/json")
+  let app_json = _json_media_type(content)
   if app_json == nil {
     return nil
   }
   return app_json.get("schema")
+}
+
+fn _request_body_required(doc, request_body) {
+  if request_body == nil {
+    return false
+  }
+  let rb = _resolve_ref(doc, request_body)
+  let required = rb.get("required")
+  if type_of(required) == "bool" {
+    return required
+  }
+  return false
 }
 
 fn _body_variants_for_op(doc, op, fn_name, taken_names) {
@@ -2120,24 +2368,30 @@ fn _render_json_parse_expr(value) {
 // -------------------------------------------------------------------------------------------------
 
 fn _resolve_response_type(doc, op, cache) {
-  let picked = _pick_success_response(op)
+  let picked = _pick_success_response(doc, op)
   if picked == nil {
     // No 2xx declared at all — legacy `dict` with empty-body fallback.
-    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    return {
+      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+      cache: cache,
+    }
   }
   if picked.kind == "nil" {
-    return {info: {type_name: "nil", returns_nil: true, alias_name: nil}, cache: cache}
+    return {info: {type_name: "nil", returns_nil: true, alias_name: nil, response_mode: "nil"}, cache: cache}
   }
   if picked.kind == "opaque" {
-    // 2xx with a non-JSON body (e.g. application/octet-stream). Keep
-    // the legacy untyped surface; a future ticket can add typed
-    // byte/stream returns.
-    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    return {
+      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "opaque"},
+      cache: cache,
+    }
   }
   let schema_raw = picked.schema
   if schema_raw == nil {
     // JSON content entry with no declared schema — fall back to dict.
-    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    return {
+      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+      cache: cache,
+    }
   }
   let ref = schema_raw.get("$ref")
   // For classification we always work off the fully-resolved (allOf-
@@ -2146,22 +2400,41 @@ fn _resolve_response_type(doc, op, cache) {
   let full = schema(doc, schema_raw)
   let shape = _schema_shape_kind(full)
   if shape == "nil" {
-    return {info: {type_name: "nil", returns_nil: true, alias_name: nil}, cache: cache}
+    return {info: {type_name: "nil", returns_nil: true, alias_name: nil, response_mode: "nil"}, cache: cache}
+  }
+  let untyped_json_type = _untyped_json_return_type(full)
+  if shape == "dict" && untyped_json_type != "dict" {
+    return {
+      info: {type_name: untyped_json_type, returns_nil: false, alias_name: nil, response_mode: "json_any"},
+      cache: cache,
+    }
   }
   if ref != nil {
     let cached = cache.by_ref.get(ref)
     if cached != nil {
       if shape == "dict" {
-        return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+        return {
+          info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+          cache: cache,
+        }
       }
-      return {info: {type_name: cached, returns_nil: false, alias_name: cached}, cache: cache}
+      return {
+        info: {type_name: cached, returns_nil: false, alias_name: cached, response_mode: "json_dict"},
+        cache: cache,
+      }
     }
     if shape == "dict" {
       // oneOf/anyOf/primitive/etc. — no struct alias for v0.
-      return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+      return {
+        info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+        cache: cache,
+      }
     }
     if !_struct_has_renderable_keys(full) {
-      return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+      return {
+        info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+        cache: cache,
+      }
     }
     let base_alias = _alias_name_from_ref(ref)
     let alias_name = _unique_type_name(base_alias, cache)
@@ -2171,15 +2444,24 @@ fn _resolve_response_type(doc, op, cache) {
       by_name: {...cache.by_name, [alias_name]: source},
       order: cache.order + [alias_name],
     }
-    return {info: {type_name: alias_name, returns_nil: false, alias_name: alias_name}, cache: new_cache}
+    return {
+      info: {type_name: alias_name, returns_nil: false, alias_name: alias_name, response_mode: "json_dict"},
+      cache: new_cache,
+    }
   }
   // Inline schema — classify, and if struct-shaped emit an alias named
   // after the operation id.
   if shape == "dict" {
-    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    return {
+      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+      cache: cache,
+    }
   }
   if !_struct_has_renderable_keys(full) {
-    return {info: {type_name: "dict", returns_nil: false, alias_name: nil}, cache: cache}
+    return {
+      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
+      cache: cache,
+    }
   }
   let base = _alias_name_from_operation(op.operation_id)
   let alias_name = _unique_type_name(base, cache)
@@ -2189,10 +2471,13 @@ fn _resolve_response_type(doc, op, cache) {
     by_name: {...cache.by_name, [alias_name]: source},
     order: cache.order + [alias_name],
   }
-  return {info: {type_name: alias_name, returns_nil: false, alias_name: alias_name}, cache: new_cache}
+  return {
+    info: {type_name: alias_name, returns_nil: false, alias_name: alias_name, response_mode: "json_dict"},
+    cache: new_cache,
+  }
 }
 
-fn _pick_success_response(op) {
+fn _pick_success_response(doc, op) {
   // Walk responses in spec order. First entry whose status code starts
   // with "2" wins. Returns one of:
   //   {kind: "json", schema}   — JSON body we can try to type.
@@ -2205,12 +2490,12 @@ fn _pick_success_response(op) {
   for entry in op.responses {
     let code = entry.key
     if _is_success_code(code) {
-      let resp = entry.value
+      let resp = _resolve_ref(doc, entry.value)
       let content = resp.get("content")
       if content == nil {
         return {kind: "nil"}
       }
-      let app_json = content.get("application/json")
+      let app_json = _json_media_type(content)
       if app_json != nil {
         return {kind: "json", schema: app_json.get("schema")}
       }
@@ -2221,6 +2506,32 @@ fn _pick_success_response(op) {
     return {kind: "opaque"}
   }
   return nil
+}
+
+fn _json_media_type(content) {
+  if type_of(content) != "dict" {
+    return nil
+  }
+  let exact = content.get("application/json")
+  if exact != nil {
+    return exact
+  }
+  for entry in content {
+    let normalized = _media_type_without_parameters(entry.key)
+    if normalized == "application/json" || regex_match("\\+json$", normalized) != nil {
+      return entry.value
+    }
+  }
+  return nil
+}
+
+fn _media_type_without_parameters(raw) {
+  let lowered = to_string(raw).lower()
+  let semi = _index_of(lowered, ";")
+  if semi >= 0 {
+    return trim(substring(lowered, 0, semi))
+  }
+  return trim(lowered)
 }
 
 fn _is_success_code(code) {
@@ -2261,10 +2572,28 @@ fn _schema_shape_kind(sch) {
   return "dict"
 }
 
+fn _untyped_json_return_type(sch) {
+  if type_of(sch) != "dict" {
+    return "any"
+  }
+  if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
+    return "any"
+  }
+  let ty = sch.get("type")
+  if ty == "array" {
+    return "list"
+  }
+  let prim = _primitive_harn_type(ty)
+  if prim != nil {
+    return prim
+  }
+  return "dict"
+}
+
 fn _alias_name_from_ref(ref) {
   // "#/components/schemas/pageObjectResponse" -> "PageObjectResponse"
   let parts = split(ref, "/")
-  let tail = parts[len(parts) - 1]
+  let tail = _unescape_pointer(parts[len(parts) - 1])
   return _pascal_case(tail)
 }
 
@@ -2317,6 +2646,7 @@ fn _unique_type_name(base, cache) {
 
 fn _emit_struct_alias(doc, alias_name, resolved) {
   let props = resolved.get("properties") ?? {}
+  let required = resolved.get("required") ?? []
   var keys = []
   for entry in props {
     keys = keys + [entry.key]
@@ -2326,7 +2656,7 @@ fn _emit_struct_alias(doc, alias_name, resolved) {
   for key in keys {
     let prop_schema = props.get(key)
     let field_type = _harn_type_for_property(doc, prop_schema, 1)
-    fields = fields + [_harn_struct_field(key, field_type.annotation)]
+    fields = fields + [_harn_struct_field(key, field_type.annotation, required.contains(key))]
   }
   if len(fields) <= 4 {
     return "type " + alias_name + " = {" + join(fields, ", ") + "}"
@@ -2403,11 +2733,14 @@ fn _primitive_harn_type(ty) {
   return nil
 }
 
-fn _harn_struct_field(key, annotation) {
+fn _harn_struct_field(key, annotation, required) {
   // Type-alias field names accept bare identifiers even when the name
   // collides with a keyword (e.g. `type`, `object`). Callers guarantee
   // the key is a plain identifier via `_struct_has_renderable_keys`.
-  return key + ": " + annotation
+  if required {
+    return key + ": " + annotation
+  }
+  return key + "?: " + annotation
 }
 
 fn _struct_has_renderable_keys(resolved) {
@@ -2526,6 +2859,7 @@ let _RESERVED = [
   "not",
   "skill",
   "tool",
+  "ask_user",
   "body",
   "client",
 ]
@@ -2570,7 +2904,12 @@ fn _is_plain_identifier(s) {
 }
 
 fn _escape_string(s) {
-  return replace(replace(s, "\\", "\\\\"), "\"", "\\\"")
+  var out = replace(to_string(s), "\\", "\\\\")
+  out = replace(out, "\"", "\\\"")
+  out = replace(out, "\n", "\\n")
+  out = replace(out, "\r", "\\r")
+  out = replace(out, "\t", "\\t")
+  return out
 }
 
 fn _escape_toml_string(s) {

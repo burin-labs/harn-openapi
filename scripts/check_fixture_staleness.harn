@@ -4,6 +4,8 @@
 //   tests/fixtures/notion.openapi.json.meta.toml
 //
 // Optional argv[0] overrides the metadata path for tests or one-off checks.
+// Optional argv[1] overrides the fixture path; otherwise it is derived from
+// the metadata path by stripping ".meta.toml".
 let _DEFAULT_META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
 
 let _WARN_AFTER_DAYS = 90
@@ -36,6 +38,50 @@ fn _fixture_age_days(captured_at: string) -> int {
   return floor((now_ts - captured_ts) / 86400.0)
 }
 
+fn _fixture_path_for_meta(meta_path: string) -> string {
+  let suffix = ".meta.toml"
+  if len(meta_path) > len(suffix) {
+    let tail = substring(meta_path, len(meta_path) - len(suffix), len(suffix))
+    if tail == suffix {
+      return substring(meta_path, 0, len(meta_path) - len(suffix))
+    }
+  }
+  return meta_path + ".json"
+}
+
+fn _require_fixture_integrity(meta_path: string, fixture_path: string, meta: dict) {
+  if !file_exists(fixture_path) {
+    throw "check_fixture_staleness: missing fixture file " + fixture_path
+  }
+  let expected_hash = meta.get("sha256")
+  if expected_hash == nil || expected_hash == "" {
+    throw "check_fixture_staleness: metadata missing sha256"
+  }
+  let expected_size = meta.get("byte_size")
+  if expected_size == nil {
+    throw "check_fixture_staleness: metadata missing byte_size"
+  }
+  let body = read_file(fixture_path)
+  let actual_hash = sha256(body)
+  if actual_hash != expected_hash {
+    throw "check_fixture_staleness: sha256 mismatch for "
+      + fixture_path
+      + " (metadata "
+      + meta_path
+      + ")"
+  }
+  let actual_size = stat(fixture_path).size
+  if actual_size != expected_size {
+    throw "check_fixture_staleness: byte_size mismatch for "
+      + fixture_path
+      + " (expected "
+      + to_string(expected_size)
+      + ", got "
+      + to_string(actual_size)
+      + ")"
+  }
+}
+
 pipeline default() {
   let meta_path = if len(argv) > 0 {
     argv[0]
@@ -45,7 +91,13 @@ pipeline default() {
   if !file_exists(meta_path) {
     throw "check_fixture_staleness: missing metadata file " + meta_path
   }
+  let fixture_path = if len(argv) > 1 {
+    argv[1]
+  } else {
+    _fixture_path_for_meta(meta_path)
+  }
   let meta = toml_parse(read_file(meta_path))
+  _require_fixture_integrity(meta_path, fixture_path, meta)
   let captured_at = meta.get("captured_at")
   if captured_at == nil || captured_at == "" {
     throw "check_fixture_staleness: metadata missing captured_at"

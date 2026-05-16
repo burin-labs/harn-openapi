@@ -4,20 +4,12 @@
 // mapping values as tags.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 let _POLY_DOC = """
@@ -175,7 +167,8 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let out_path = "/tmp/harn-openapi-polymorphic-generated.harn"
+  let module_stem = temp_dir() + "/harn-openapi-polymorphic-generated-" + uuid()
+  let out_path = module_stem + ".harn"
   write_file(out_path, src)
   require_contains(src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
   require_contains(src, "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict", "cat ctor")
@@ -186,11 +179,13 @@ pipeline test_main() {
   require_contains(src, "pub fn submit_shape_circle_shape(radius: float) -> dict", "anyOf ctor")
   require_contains(src, "pub fn submit_shape_square_shape(side: float) -> dict", "anyOf ctor")
   check_file(out_path, "poly")
-  let runner_path = "/tmp/harn-openapi-polymorphic-runner.harn"
+  let runner_path = temp_dir() + "/harn-openapi-polymorphic-runner-" + uuid() + ".harn"
   write_file(
     runner_path,
-    """
-    import { new_client, update_pet, update_pet_cat_update } from "/tmp/harn-openapi-polymorphic-generated"
+    "import { new_client, update_pet, update_pet_cat_update } from \""
+      + module_stem
+      + "\"\n"
+      + """
 
     pipeline default() {
       http_mock_clear()
@@ -226,7 +221,7 @@ pipeline test_main() {
   )
   require_contains(
     notion_src,
-    "pub fn update_page_markdown(client: dict, page_id, body) -> PageMarkdownResponse",
+    "pub fn update_page_markdown(client: dict, page_id, body, notion_version = nil) -> PageMarkdownResponse",
     "notion umbrella",
   )
   require_contains(

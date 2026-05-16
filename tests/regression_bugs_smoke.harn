@@ -1,0 +1,321 @@
+// regression_bugs_smoke — focused coverage for edge-case bugs found
+// during the v0.1 polish pass. Each assertion guards behavior that is
+// valid OpenAPI 3.1 or required for generated clients to be usable.
+import {
+  codegen_module,
+  enum_values,
+  is_reference,
+  operations,
+  pagination_plans,
+  parse,
+  rate_limit_metadata,
+  schema,
+  webhook_operations,
+} from "../src/lib"
+
+fn harn_cmd(args: string) -> string {
+  let bin = env("HARN_BIN")
+  if bin != nil && bin != "" {
+    return bin + " " + args
+  }
+  return "harn " + args
+}
+
+fn require_contains(haystack: string, needle: string, label: string) {
+  if !contains(haystack, needle) {
+    println("---BEGIN GENERATED SOURCE---")
+    println(haystack)
+    println("---END GENERATED SOURCE---")
+    require false, "${label}: expected generated source to contain \"${needle}\""
+  }
+}
+
+fn check_generated(src: string, label: string) -> string {
+  let module_stem = temp_dir() + "/harn-openapi-regression-" + label + "-" + uuid()
+  let module_path = module_stem + ".harn"
+  write_file(module_path, src)
+  let result = shell(harn_cmd("check " + module_path))
+  if !result.success {
+    println("---${label} harn check stderr---")
+    println(result.stderr)
+    println("---${label} harn check stdout---")
+    println(result.stdout)
+  }
+  require result.success, "${label}: generated module must pass harn check"
+  return module_stem
+}
+
+fn run_generated(module_stem: string, label: string, imports: string, body: string) {
+  let runner_path = temp_dir() + "/harn-openapi-regression-runner-" + label + "-" + uuid() + ".harn"
+  write_file(
+    runner_path,
+    "import { " + imports + " } from \"" + module_stem + "\"\n\npipeline default() {\n" + body
+      + "\n}\n",
+  )
+  let result = shell(harn_cmd("run " + runner_path))
+  if !result.success {
+    println("---${label} runtime stderr---")
+    println(result.stderr)
+    println("---${label} runtime stdout---")
+    println(result.stdout)
+  }
+  require result.success, "${label}: generated runtime smoke must pass"
+}
+
+let _REF_DOC = """
+  {
+    "openapi": "3.1.0",
+    "info": {"title": "Regression API", "version": "1.0.0"},
+    "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+    "externalDocs": {"url": "https://docs.example.com"},
+    "servers": [{"url": "https://root.example.com"}],
+    "paths": {
+      "/widgets/{widget_id}": {"$ref": "#/components/pathItems/WidgetPath"}
+    },
+    "webhooks": {
+      "widgetCreated": {"$ref": "#/components/pathItems/WidgetWebhook"}
+    },
+    "components": {
+      "pathItems": {
+        "WidgetPath": {
+          "servers": [{"url": "https://path.example.com"}],
+          "parameters": [
+            {"name": "cursor", "in": "query", "schema": {"type": "string"}}
+          ],
+          "get": {
+            "operationId": "get-widget",
+            "deprecated": true,
+            "externalDocs": {"url": "https://docs.example.com/get"},
+            "parameters": [
+              {"name": "widget_id", "in": "path", "required": true, "schema": {"type": "string"}}
+            ],
+            "responses": {
+              "200": {"$ref": "#/components/responses/WidgetResponse"},
+              "429": {"$ref": "#/components/responses/RateLimited"}
+            }
+          }
+        },
+        "WidgetWebhook": {
+          "post": {
+            "operationId": "widget-created",
+            "responses": {"204": {"description": "ok"}}
+          }
+        }
+      },
+      "responses": {
+        "WidgetResponse": {
+          "description": "ok",
+          "headers": {"Link": {"schema": {"type": "string"}}},
+          "content": {
+            "application/vnd.example.widget+json": {
+              "schema": {"$ref": "#/components/schemas/WidgetResponse"}
+            }
+          }
+        },
+        "RateLimited": {
+          "description": "slow down",
+          "headers": {
+            "Retry-After": {"schema": {"type": "string"}},
+            "X-RateLimit-Remaining": {"schema": {"type": "integer"}}
+          }
+        }
+      },
+      "schemas": {
+        "WidgetBase": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {"id": {"type": "string"}}
+        },
+        "WidgetAlias": {"$ref": "#/components/schemas/WidgetBase"},
+        "WidgetResponse": {
+          "$ref": "#/components/schemas/WidgetAlias",
+          "required": ["name"],
+          "properties": {
+            "name": {"type": "string"},
+            "next_cursor": {"type": "string"},
+            "results": {"type": "array"},
+            "nickname": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+  """
+
+let _GENERATED_DOC = """
+  {
+    "openapi": "3.1.0",
+    "info": {"title": "Generated Regression API", "version": "1.0.0"},
+    "servers": [{"url": "https://api.example.com/"}],
+    "paths": {
+      "/things/{thing_id}": {
+        "get": {
+          "operationId": "return",
+          "parameters": [
+            {"name": "thing_id", "in": "path", "required": true, "schema": {"type": "string"}},
+            {"name": "X-Request-Id", "in": "header", "required": true, "schema": {"type": "string"}},
+            {"name": "session", "in": "cookie", "schema": {"type": "string"}}
+          ],
+          "responses": {
+            "200": {
+              "description": "ok",
+              "content": {"application/json": {"schema": {"type": "array"}}}
+            }
+          }
+        }
+      },
+      "/upload": {
+        "post": {
+          "operationId": "upload-file",
+          "requestBody": {
+            "required": false,
+            "content": {"application/json": {"schema": {"type": "object"}}}
+          },
+          "responses": {
+            "200": {
+              "description": "plain text",
+              "content": {"text/plain": {"schema": {"type": "string"}}}
+            }
+          }
+        }
+      },
+      "/secure": {
+        "get": {
+          "operationId": "secure-op",
+          "security": [{"bearerAuth": [], "query-key": []}],
+          "responses": {"204": {"description": "ok"}}
+        }
+      },
+      "/collide-a": {
+        "get": {
+          "operationId": "collide-a",
+          "security": [{"api-key": []}],
+          "responses": {"204": {"description": "ok"}}
+        }
+      },
+      "/collide-b": {
+        "get": {
+          "operationId": "collide-b",
+          "security": [{"api_key": []}],
+          "responses": {"204": {"description": "ok"}}
+        }
+      }
+    },
+    "components": {
+      "securitySchemes": {
+        "bearerAuth": {"type": "http", "scheme": "bearer"},
+        "query-key": {"type": "apiKey", "in": "query", "name": "api_key"},
+        "api-key": {"type": "apiKey", "in": "header", "name": "X-A"},
+        "api_key": {"type": "apiKey", "in": "header", "name": "X-B"}
+      }
+    }
+  }
+  """
+
+pipeline test_main() {
+  let bad_numeric = try {
+    parse(json_stringify({openapi: 3.1, info: {title: "bad", version: "0"}, paths: {}}))
+    nil
+  } catch (e) {
+    e
+  }
+  assert(bad_numeric != nil, "numeric openapi version must be rejected")
+  let bad_minor = try {
+    parse(json_stringify({openapi: "3.10.0", info: {title: "bad", version: "0"}, paths: {}}))
+    nil
+  } catch (e) {
+    e
+  }
+  assert(bad_minor != nil, "openapi 3.10.0 must not be accepted as 3.1.x")
+  let doc = parse(_REF_DOC)
+  assert(
+    doc.jsonSchemaDialect == "https://json-schema.org/draft/2020-12/schema",
+    "dialect must survive parse",
+  )
+  assert(
+    doc.externalDocs?.url == "https://docs.example.com",
+    "top-level externalDocs must survive parse",
+  )
+  assert(!is_reference({"$ref": 123}), "is_reference must reject non-string refs")
+  let nums = enum_values({type: "integer", enum: [1, 2]}) ?? []
+  assert(nums[0] == 1 && nums[1] == 2, "enum_values must preserve non-string enum values")
+  let ops = operations(doc)
+  assert(len(ops) == 1, "referenced path item should flatten to one operation")
+  let op = ops[0]
+  assert(op.operation_id == "get-widget", "path item $ref operation id should survive")
+  assert(op.deprecated, "operation metadata should not be dropped")
+  assert(op.externalDocs?.url == "https://docs.example.com/get", "externalDocs should not be dropped")
+  assert(
+    op.servers[0].url == "https://path.example.com",
+    "path-level servers should become effective servers",
+  )
+  assert(len(op.parameters) == 2, "path-level and operation parameters should merge")
+  let webhooks = webhook_operations(doc)
+  assert(len(webhooks) == 1, "referenced webhook path item should flatten")
+  assert(webhooks[0].operation_id == "widget-created", "webhook operation id should survive")
+  let resolved = schema(doc, {"$ref": "#/components/schemas/WidgetResponse"})
+  assert(resolved.properties.get("id") != nil, "chained $ref should keep base properties")
+  assert(resolved.properties.get("name") != nil, "$ref sibling properties should be additive")
+  assert(resolved.required.contains("id"), "chained $ref should keep base required fields")
+  assert(resolved.required.contains("name"), "$ref sibling required fields should be additive")
+  let pages = pagination_plans(doc)
+  assert(
+    len(pages) == 1 && pages[0].kind == "cursor",
+    "pagination should resolve response refs and +json",
+  )
+  let rates = rate_limit_metadata(doc)
+  assert(len(rates) == 1, "rate-limit metadata should resolve response refs")
+  assert(
+    rates[0].retry_after_header == "Retry-After",
+    "Retry-After should be found through response ref",
+  )
+  let ref_src = codegen_module(doc, {module_name: "ref_regression", client_name: "RefRegressionClient"})
+  require_contains(ref_src, "nickname?: string", "optional response fields should remain optional")
+  let src = codegen_module(
+    parse(_GENERATED_DOC),
+    {
+      module_name: "regression",
+      client_name: "RegressionClient",
+      header_overrides: {"X-Escaped": "line\nnext\tend"},
+    },
+  )
+  require_contains(src, "pub fn return_", "reserved operation ids should be sanitized")
+  require_contains(src, "_merge_header_dicts", "AND security should merge multiple auth helpers")
+  require_contains(src, "fn _headers_api_key_2", "colliding auth helper names should be unique")
+  require_contains(src, "body = nil", "optional request bodies should be optional in signatures")
+  let module_stem = check_generated(src, "generated")
+  run_generated(
+    module_stem,
+    "generated",
+    "new_client, return_, upload_file, secure_op",
+    """
+      http_mock_clear()
+      let client = new_client("https://api.example.com/", "token", nil, {["query-key"]: "query-secret"}, nil, {})
+      http_mock(
+        "GET",
+        "https://api.example.com/things/a%20b%2Fc",
+        {status: 200, body: "[]", headers: {}},
+      )
+      let list_value = return_(client, "a b/c", "req-123", "cookie value")
+      assert(type_of(list_value) == "list", "array JSON responses should return a list")
+      let first_call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(first_call.headers["x-request-id"], "req-123")
+      assert_eq(first_call.headers.cookie, "session=cookie%20value")
+
+      http_mock("POST", "https://api.example.com/upload", {status: 200, body: "plain", headers: {}})
+      let opaque = upload_file(client)
+      assert_eq(opaque.body, "plain")
+
+      http_mock(
+        "GET",
+        "https://api.example.com/secure?api_key=query-secret",
+        {status: 204, body: "", headers: {}},
+      )
+      secure_op(client)
+      let secure_call = http_mock_calls({include_sensitive: true})[2]
+      assert_eq(secure_call.headers.authorization, "Bearer token")
+      assert_eq(secure_call.url, "https://api.example.com/secure?api_key=query-secret")
+    """,
+  )
+  println("regression_bugs_smoke: ok")
+}

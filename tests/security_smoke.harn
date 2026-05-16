@@ -5,20 +5,12 @@
 // expected Authorization / header / query bindings at runtime.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_root() -> string {
-  let root = env("HARN_ROOT")
-  if root != nil && root != "" {
-    return root
-  }
-  return "/Users/ksinder/projects/harn"
-}
-
 fn harn_cmd(args: string) -> string {
   let bin = env("HARN_BIN")
   if bin != nil && bin != "" {
-    return "cd " + harn_root() + " && " + bin + " " + args
+    return bin + " " + args
   }
-  return "cd " + harn_root() + " && cargo run --quiet --bin harn -- " + args
+  return "harn " + args
 }
 
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
@@ -62,7 +54,7 @@ fn require_not_contains(haystack: string, needle: string, label: string) {
 }
 
 fn check_generates(src: string, label: string) {
-  let tmp_path = "/tmp/harn-openapi-security-smoke-${label}.harn"
+  let tmp_path = temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid() + ".harn"
   write_file(tmp_path, src)
   let result = shell(harn_cmd("check " + tmp_path))
   if !result.success {
@@ -83,9 +75,9 @@ fn check_generates(src: string, label: string) {
 }
 
 fn run_generated(src: string, label: string, imports: string, body: string) {
-  let module_stem = "/tmp/harn-openapi-security-smoke-${label}"
+  let module_stem = temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid()
   let module_path = module_stem + ".harn"
-  let runner_path = "/tmp/harn-openapi-security-runtime-${label}.harn"
+  let runner_path = temp_dir() + "/harn-openapi-security-runtime-${label}-" + uuid() + ".harn"
   write_file(module_path, src)
   write_file(
     runner_path,
@@ -156,7 +148,7 @@ pipeline test_main() {
       b_collect_public = true
     }
     if b_collect_public {
-      if contains(line, "let resp = ") {
+      if contains(line, "var request_headers = ") {
         b_public_line = line
         b_collect_public = false
       }
@@ -364,11 +356,11 @@ pipeline test_main() {
     if contains(line, "pub fn create_a_token") {
       h_collect_token = true
     }
-    if h_collect_me && contains(line, "let resp = ") {
+    if h_collect_me && contains(line, "var request_headers = ") {
       h_get_me_line = line
       h_collect_me = false
     }
-    if h_collect_token && contains(line, "let resp = ") {
+    if h_collect_token && contains(line, "var request_headers = ") {
       h_token_line = line
       h_collect_token = false
     }
