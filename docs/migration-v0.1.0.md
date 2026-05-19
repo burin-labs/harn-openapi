@@ -19,9 +19,26 @@ Then import through the package export path:
 import { codegen_module, operations, parse } from "harn-openapi/default"
 ```
 
+The `types` export is intended for side-effect import when consumers want type
+aliases in scope:
+
+```harn
+import "harn-openapi/types"
+```
+
 Do not require a sibling `../harn-openapi` checkout in CI or in fresh-clone
 bootstrap docs. CI should install the pinned `harn-cli` from crates.io and let
 Harn resolve package dependencies from `harn.toml`.
+
+## Generated SDK names
+
+Generated operation functions use `snake_case` identifiers. OpenAPI ids such
+as `getPage`, `get-page`, and `get page` all map to `get_page` with numeric
+suffixes added only when two operations collide after normalization.
+
+If a pre-release generated SDK committed lowercased camelCase names such as
+`getpage`, regenerate it with the v0.1.0 codegen output and update callers to
+the `snake_case` names.
 
 ## Local override
 

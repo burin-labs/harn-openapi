@@ -1,14 +1,12 @@
-// render_string_smoke — direct coverage for the inline template engine
-// used by codegen_module. codegen_smoke exercises it indirectly; this
-// keeps the public helper covered on its own.
-import { render_string } from "../src/lib"
-
+// render_string_smoke — direct coverage for the stdlib inline template
+// engine used by codegen_module. codegen_smoke exercises it indirectly;
+// this keeps the package pinned to the runtime feature it depends on.
 pipeline test_main() {
   let template = """
     Hello {{ user.name }}
     {{ if show }}shown{{ else }}hidden{{ end }}
     {{ for item in items }}[{{ item.label }}={{ item.value }}]{{ end }}
-    {{ if missing }}bad{{ else if fallback }}fallback{{ else }}none{{ end }}
+    {{ if missing }}bad{{ elif fallback }}fallback{{ else }}none{{ end }}
     """
   let out = render_string(
     template,

@@ -180,37 +180,35 @@ pipeline test_main() {
   assert(contains(src, "tags?: list"), "PageObject.tags must be optional list")
   assert(contains(src, "meta?: dict"), "PageObject.meta must be optional dict")
   // --- Acceptance 3: both operations sharing PageObject return the
-  // same typed alias. Existing codegen lowercases operation_id when it
-  // has no word separators (see `_sanitize_fn_name`), so
-  // `getPage` -> `getpage` etc. ---
+  // same typed alias and use idiomatic snake_case function names. ---
   assert(
-    contains(src, "pub fn getpage(client: dict, id) -> PageObject"),
-    "getpage must return PageObject",
+    contains(src, "pub fn get_page(client: dict, id) -> PageObject"),
+    "get_page must return PageObject",
   )
   assert(
-    contains(src, "pub fn getpagebyslug(client: dict, slug) -> PageObject"),
-    "getpagebyslug must return PageObject",
+    contains(src, "pub fn get_page_by_slug(client: dict, slug) -> PageObject"),
+    "get_page_by_slug must return PageObject",
   )
   // --- Acceptance 4: inline search response gets a synthesized alias
   // named after its operation. ---
   assert(
-    contains(src, "pub fn searchitems(client: dict) -> SearchItemsResponse"),
-    "searchitems must return SearchItemsResponse",
+    contains(src, "pub fn search_items(client: dict) -> SearchItemsResponse"),
+    "search_items must return SearchItemsResponse",
   )
   assert(contains(src, "has_more?: bool"), "inline alias must type optional has_more")
   assert(contains(src, "next_cursor?: string"), "inline alias must type optional next_cursor")
   assert(contains(src, "results?: list"), "inline alias must type optional results")
   // --- Acceptance 5: 204 No Content -> nil return type, no json_parse. ---
   assert(
-    contains(src, "pub fn deletepage(client: dict, id) -> nil"),
-    "deletepage (204) must return nil",
+    contains(src, "pub fn delete_page(client: dict, id) -> nil"),
+    "delete_page (204) must return nil",
   )
-  let delete_block_start = _count_occurrences(src, "pub fn deletepage")
-  assert(delete_block_start == 1, "deletepage must be emitted once")
+  let delete_block_start = _count_occurrences(src, "pub fn delete_page")
+  assert(delete_block_start == 1, "delete_page must be emitted once")
   // --- Acceptance 6: non-JSON success body -> untyped fallback dict,
   // no bogus alias emission. ---
   assert(
-    contains(src, "pub fn getrawbytes(client: dict) -> dict"),
+    contains(src, "pub fn get_raw_bytes(client: dict) -> dict"),
     "non-JSON response body must fall back to dict",
   )
   let raw_alias = _count_occurrences(src, "type GetRawBytesResponse")

@@ -105,8 +105,8 @@ pipeline test_main() {
     [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
   )
   let src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
-  require_contains(src_a, "_headers_bearerauth(client)", "A/dispatch")
-  require_contains(src_a, "Authorization: \"Bearer \" + _client_token(client)", "A/bearer-helper")
+  require_contains(src_a, "_headers_bearer_auth(client)", "A/dispatch")
+  require_contains(src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
   require_contains(src_a, "token: string = \"\"", "A/client-has-token")
   require_contains(src_a, "token_provider = nil", "A/client-has-token-provider")
   require_not_contains(src_a, "basic_user: string", "A/no-basic-field")
@@ -125,6 +125,19 @@ pipeline test_main() {
       assert_eq(call.headers.authorization, "Bearer bearer-token")
     """,
   )
+  run_generated(
+    src_a,
+    "A-empty-token",
+    "new_client, get_self",
+    """
+      http_mock_clear()
+      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com")
+      get_self(client)
+      let call = http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.get("authorization"), nil)
+    """,
+  )
   // ------------------------------------------------------------------
   // Scenario B: explicit security: [] on one op overrides doc default.
   // ------------------------------------------------------------------
@@ -138,7 +151,7 @@ pipeline test_main() {
   )
   let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
   // Authed op still uses the bearer helper.
-  require_contains(src_b, "_headers_bearerauth(client)", "B/authed-dispatch")
+  require_contains(src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
   // The no-auth op must route through _no_auth_headers.
   let b_lines = split(src_b, "\n")
   var b_public_line = ""
@@ -159,7 +172,7 @@ pipeline test_main() {
     "B/public-op-must-use-no-auth-headers: got \"${b_public_line}\"",
   )
   assert(
-    !contains(b_public_line, "_headers_bearerauth"),
+    !contains(b_public_line, "_headers_bearer_auth"),
     "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
   )
   check_generates(src_b, "B")
@@ -188,7 +201,7 @@ pipeline test_main() {
     [{operation_id: "login", method: "post", path: "/login"}],
   )
   let src_c = codegen_module(parse(doc_c), {module_name: "c", client_name: "C"})
-  require_contains(src_c, "_headers_basicauth(client)", "C/dispatch")
+  require_contains(src_c, "_headers_basic_auth(client)", "C/dispatch")
   require_contains(src_c, "base64_encode", "C/basic-uses-base64")
   require_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
   require_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
@@ -217,7 +230,7 @@ pipeline test_main() {
     [{operation_id: "get-thing", method: "get", path: "/thing"}],
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
-  require_contains(src_d, "_headers_xapikey(client)", "D/dispatch")
+  require_contains(src_d, "_headers_x_api_key(client)", "D/dispatch")
   require_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
   require_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
   require_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
@@ -246,8 +259,8 @@ pipeline test_main() {
     [{operation_id: "list-things", method: "get", path: "/things"}],
   )
   let src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
-  require_contains(src_e, "_headers_qkey(client)", "E/headers-dispatch")
-  require_contains(src_e, "_query_qkey_dict(client)", "E/query-spread-in-op")
+  require_contains(src_e, "_headers_q_key(client)", "E/headers-dispatch")
+  require_contains(src_e, "_query_q_key_dict(client)", "E/query-spread-in-op")
   require_contains(src_e, "api_key: v", "E/query-name-emitted")
   require_contains(src_e, "_query_string", "E/op-has-query-string-call")
   check_generates(src_e, "E")
@@ -273,8 +286,8 @@ pipeline test_main() {
     [{operation_id: "me", method: "get", path: "/me"}],
   )
   let src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
-  require_contains(src_f, "_headers_sessid(client)", "F/dispatch")
-  require_contains(src_f, "Cookie: \"sid=\" +", "F/cookie-header")
+  require_contains(src_f, "_headers_sess_id(client)", "F/dispatch")
+  require_contains(src_f, "_append_cookie_header(hs, \"sid\", api_key)", "F/cookie-header")
   require_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
   check_generates(src_f, "F")
   run_generated(
@@ -284,10 +297,10 @@ pipeline test_main() {
     """
       http_mock_clear()
       http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", {sessId: "cookie-key"})
+      let client = new_client("https://api.example.com", {sessId: "cookie key;admin=true"})
       me(client)
       let call = http_mock_calls({include_sensitive: true})[0]
-      assert_eq(call.headers.cookie, "sid=cookie-key")
+      assert_eq(call.headers.cookie, "sid=cookie%20key%3Badmin%3Dtrue")
     """,
   )
   // ------------------------------------------------------------------
@@ -304,8 +317,8 @@ pipeline test_main() {
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
   let src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
-  require_contains(src_g, "_headers_oauth2auth(client)", "G/dispatch")
-  require_contains(src_g, "Authorization: \"Bearer \" + _client_token(client)", "G/bearer-shape")
+  require_contains(src_g, "_headers_oauth2_auth(client)", "G/dispatch")
+  require_contains(src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
   require_contains(src_g, "token: string = \"\"", "G/client-has-token")
   require_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
   check_generates(src_g, "G")
@@ -341,8 +354,8 @@ pipeline test_main() {
   )
   let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
-  require_contains(src_h, "fn _headers_bearerauth(", "H/bearer-helper-defined")
-  require_contains(src_h, "fn _headers_basicauth(", "H/basic-helper-defined")
+  require_contains(src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
+  require_contains(src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
   // Check per-op dispatch line by line.
   let h_lines = split(src_h, "\n")
   var h_get_me_line = ""
@@ -366,15 +379,15 @@ pipeline test_main() {
     }
   }
   assert(
-    contains(h_get_me_line, "_headers_bearerauth(client)"),
+    contains(h_get_me_line, "_headers_bearer_auth(client)"),
     "H/get_me-uses-bearer: got \"${h_get_me_line}\"",
   )
   assert(
-    contains(h_token_line, "_headers_basicauth(client)"),
+    contains(h_token_line, "_headers_basic_auth(client)"),
     "H/create_a_token-uses-basic: got \"${h_token_line}\"",
   )
   assert(
-    !contains(h_token_line, "_headers_bearerauth"),
+    !contains(h_token_line, "_headers_bearer_auth"),
     "H/create_a_token-must-NOT-use-bearer: got \"${h_token_line}\"",
   )
   check_generates(src_h, "H")
