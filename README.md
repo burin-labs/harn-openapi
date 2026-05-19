@@ -200,6 +200,10 @@ header. A single OpenAPI security requirement object is treated as an AND:
 `security: [{bearerAuth: [], apiKeyAuth: []}]` sends both schemes, while
 separate objects remain alternatives.
 
+Generated auth helpers omit missing bearer/basic/header/cookie credentials
+instead of sending malformed empty auth material. Cookie auth values use the
+same URL encoding path as normal cookie parameters.
+
 `new_client` takes only the client fields implied by the schemes in use,
 all defaulted so callers only supply what their spec actually needs:
 
@@ -302,7 +306,7 @@ released binary:
 harn check src scripts
 harn lint src scripts
 harn fmt --check src scripts tests
-for test in tests/*.harn; do HARN_BIN="$(command -v harn)" harn run "$test" || exit 1; done
+HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
 ```
@@ -314,7 +318,7 @@ cd ../harn
 cargo run --quiet --bin harn -- check ../harn-openapi/src ../harn-openapi/scripts
 cargo run --quiet --bin harn -- lint ../harn-openapi/src ../harn-openapi/scripts
 cargo run --quiet --bin harn -- fmt --check ../harn-openapi/src ../harn-openapi/scripts ../harn-openapi/tests
-for test in ../harn-openapi/tests/*.harn; do HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$test" || exit 1; done
+HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- test ../harn-openapi/tests --parallel --timing
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/regen_demo.harn
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/package_install_smoke.harn
 ```

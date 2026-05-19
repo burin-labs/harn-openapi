@@ -63,15 +63,21 @@ version = "0.0.0"
     "add harn-openapi dependency",
     _sh_quote(harn_bin) + " add " + _sh_quote(package_ref),
   )
+  _run(
+    smoke_root,
+    "locked offline install",
+    _sh_quote(harn_bin) + " install --locked --offline --json",
+  )
   write_file(
     smoke_root + "/smoke.harn",
     """
 import { operations, parse } from "harn-openapi/default"
+import "harn-openapi/types"
 
 pipeline default() {
   let raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
-  let doc = parse(raw)
-  let ops = operations(doc)
+  let doc: OpenApiDoc = parse(raw)
+  let ops: list<Operation> = operations(doc)
   require len(ops) == 1, "package import should parse and walk one operation"
   require ops[0].operation_id == "ping", "operation id should round-trip"
   println("package_install_smoke consumer: ok")

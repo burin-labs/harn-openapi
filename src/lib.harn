@@ -57,6 +57,9 @@
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides? }.
+//       Uses Harn's stdlib `render_string` template engine so generated-code
+//       rendering stays aligned with the runtime instead of a local template
+//       parser.
 //       The generated client handles per-operation security: a helper
 //       `_headers_<scheme>(client)` is emitted for each scheme declared
 //       in `components.securitySchemes` and actually referenced by at
@@ -994,6 +997,14 @@ let _MODULE_TEMPLATE = """
     return out
   }
 
+  fn _with_extra_headers(headers: dict, client: dict) -> dict {
+    var hs = headers
+    for entry in client.extra_headers {
+      hs = {...hs, [entry.key]: entry.value}
+    }
+    return hs
+  }
+
   fn _append_cookie_header(headers: dict, name: string, value) -> dict {
     if value == nil {
       return headers
@@ -1051,7 +1062,11 @@ let _MODULE_TEMPLATE = """
   fn _client_basic(client: dict) -> dict {
     let provider = client.get("basic_provider")
     if provider != nil {
-      return provider()
+      let provided = provider()
+      if type_of(provided) == "dict" {
+        return {user: provided.get("user") ?? "", password: provided.get("password") ?? ""}
+      }
+      return {user: "", password: ""}
     }
     return {user: client.get("basic_user") ?? "", password: client.get("basic_password") ?? ""}
   }
@@ -1565,76 +1580,61 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   let kind = _scheme_kind(def)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "  let token = _client_token(client)\n"
       + "  var hs = "
-      + _render_binding_dict(
-      [
-        "Authorization: \"Bearer \" + _client_token(client)",
-        _harn_dict_entry("Content-Type", "\"application/json\""),
-      ],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  for entry in client.extra_headers {\n"
-      + "    hs = {...hs, [entry.key]: entry.value}\n"
+      + "  if token != \"\" {\n"
+      + "    hs = {...hs, Authorization: \"Bearer \" + token}\n"
       + "  }\n"
-      + "  return hs\n"
+      + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
   if kind == "basic" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  let basic = _client_basic(client)\n"
-      + "  let encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
       + "  var hs = "
-      + _render_binding_dict(
-      ["Authorization: \"Basic \" + encoded", _harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  for entry in client.extra_headers {\n"
-      + "    hs = {...hs, [entry.key]: entry.value}\n"
+      + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
+      + "    let encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
+      + "    hs = {...hs, Authorization: \"Basic \" + encoded}\n"
       + "  }\n"
-      + "  return hs\n"
+      + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
   if kind == "apiKey-header" {
     let header_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "  let api_key = _client_api_key(client, \""
+      + _escape_string(scheme_name)
+      + "\")\n"
       + "  var hs = "
-      + _render_binding_dict(
-      [
-        _harn_dict_entry(
-          header_name,
-          "_client_api_key(client, \""
-            + _escape_string(scheme_name)
-            + "\")",
-        ),
-        _harn_dict_entry("Content-Type", "\"application/json\""),
-      ],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  for entry in client.extra_headers {\n"
-      + "    hs = {...hs, [entry.key]: entry.value}\n"
+      + "  if api_key != \"\" {\n"
+      + "    hs = {...hs, "
+      + _harn_dict_entry(header_name, "api_key")
+      + "}\n"
       + "  }\n"
-      + "  return hs\n"
+      + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
   if kind == "apiKey-cookie" {
     let cookie_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
+      + "  let api_key = _client_api_key(client, \""
+      + _escape_string(scheme_name)
+      + "\")\n"
       + "  var hs = "
-      + _render_binding_dict(
-      [
-        "Cookie: \""
-          + _escape_string(cookie_name)
-          + "=\" + _client_api_key(client, \""
-          + _escape_string(scheme_name)
-          + "\")",
-        _harn_dict_entry("Content-Type", "\"application/json\""),
-      ],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  for entry in client.extra_headers {\n"
-      + "    hs = {...hs, [entry.key]: entry.value}\n"
+      + "  if api_key != \"\" {\n"
+      + "    hs = _append_cookie_header(hs, \""
+      + _escape_string(cookie_name)
+      + "\", api_key)\n"
       + "  }\n"
-      + "  return hs\n"
+      + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
   if kind == "apiKey-query" {
@@ -1646,10 +1646,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "  var hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  for entry in client.extra_headers {\n"
-      + "    hs = {...hs, [entry.key]: entry.value}\n"
-      + "  }\n"
-      + "  return hs\n"
+      + "  return _with_extra_headers(hs, client)\n"
       + "}\n"
       + "\n"
       + "fn "
@@ -2534,6 +2531,22 @@ fn _media_type_without_parameters(raw) {
   return trim(lowered)
 }
 
+fn _index_of(hay, needle) {
+  let nh = len(hay)
+  let nn = len(needle)
+  if nn == 0 {
+    return 0
+  }
+  var i = 0
+  while i + nn <= nh {
+    if substring(hay, i, nn) == needle {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
 fn _is_success_code(code) {
   if type_of(code) != "string" {
     return false
@@ -2754,21 +2767,7 @@ fn _struct_has_renderable_keys(resolved) {
 }
 
 fn _sanitize_fn_name(raw) {
-  if raw == nil || raw == "" {
-    return "op"
-  }
-  let s1 = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
-  let s2 = regex_replace_all("^_+|_+$", "", s1)
-  let s3 = regex_replace_all("_+", "_", s2)
-  let lower = s3.lower()
-  if lower == "" {
-    return "op"
-  }
-  let first_char = substring(lower, 0, 1)
-  if _is_digit(first_char) {
-    return "op_" + lower
-  }
-  return lower
+  return _snake_case_base(raw, "op")
 }
 
 fn _sanitize_ident(raw) {
@@ -2780,8 +2779,16 @@ fn _sanitize_ident(raw) {
 }
 
 fn _snake_case_ident(raw) {
+  let out = _snake_case_base(raw, "variant")
+  if _is_reserved(out) {
+    return out + "_"
+  }
+  return out
+}
+
+fn _snake_case_base(raw, fallback) {
   if raw == nil || raw == "" {
-    return "variant"
+    return fallback
   }
   let cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
   var out = ""
@@ -2802,14 +2809,11 @@ fn _snake_case_ident(raw) {
   }
   out = regex_replace_all("^_+|_+$", "", out)
   if out == "" {
-    return "variant"
+    return fallback
   }
   let first_char = substring(out, 0, 1)
   if _is_digit(first_char) {
-    out = "variant_" + out
-  }
-  if _is_reserved(out) {
-    return out + "_"
+    return fallback + "_" + out
   }
   return out
 }
@@ -2955,230 +2959,4 @@ fn _render_dict_literal(d) {
     return "{}"
   }
   return "{" + join(parts, ", ") + "}"
-}
-
-// -------------------------------------------------------------------------------------------------
-
-// Minimal template engine — the stdlib `render` helper reads from files
-// on disk, but we want the codegen template inline so the library stays
-// one-file-loadable. This engine supports the features we actually use:
-// {{ ident }}, {{ dotted.lookup }}, {{ for x in xs }}..{{ end }}, and
-// {{ if cond }}..{{ else if cond }}..{{ else }}..{{ end }}.
-
-// -------------------------------------------------------------------------------------------------
-
-/** Render a triple-quoted template string against a bindings dict. */
-pub fn render_string(template: string, bindings: dict) -> string {
-  let tokens = _tpl_tokenize(template)
-  let result = _tpl_render_block(tokens, 0, len(tokens), bindings)
-  return result.text
-}
-
-fn _tpl_tokenize(src) {
-  var tokens = []
-  var i = 0
-  let n = len(src)
-  var buf = ""
-  while i < n {
-    if i + 1 < n && substring(src, i, 2) == "{{" {
-      if buf != "" {
-        tokens = tokens + [{kind: "text", body: buf}]
-        buf = ""
-      }
-      let close = _find_close(src, i + 2)
-      let inner = trim(substring(src, i + 2, close - (i + 2)))
-      tokens = tokens + [_tpl_classify(inner)]
-      i = close + 2
-    } else {
-      buf = buf + substring(src, i, 1)
-      i = i + 1
-    }
-  }
-  if buf != "" {
-    tokens = tokens + [{kind: "text", body: buf}]
-  }
-  return tokens
-}
-
-fn _find_close(src, start) {
-  let n = len(src)
-  var i = start
-  while i + 1 < n {
-    if substring(src, i, 2) == "}}" {
-      return i
-    }
-    i = i + 1
-  }
-  throw "render_string: unterminated '{{' in template"
-}
-
-fn _tpl_classify(inner) {
-  if starts_with(inner, "for ") {
-    let rest = trim(substring(inner, 4))
-    let space = _index_of(rest, " in ")
-    if space < 0 {
-      throw "render_string: malformed 'for' directive: " + inner
-    }
-    let var_name = trim(substring(rest, 0, space))
-    let expr = trim(substring(rest, space + 4))
-    return {kind: "for_open", var_name: var_name, expr: expr}
-  }
-  if starts_with(inner, "if ") {
-    return {kind: "if_open", expr: trim(substring(inner, 3))}
-  }
-  if starts_with(inner, "else if ") {
-    return {kind: "elif_open", expr: trim(substring(inner, 8))}
-  }
-  if inner == "else" {
-    return {kind: "else_open", expr: ""}
-  }
-  if inner == "end" {
-    return {kind: "end", expr: ""}
-  }
-  return {kind: "expr", expr: inner}
-}
-
-fn _index_of(hay, needle) {
-  let nh = len(hay)
-  let nn = len(needle)
-  if nn == 0 {
-    return 0
-  }
-  var i = 0
-  while i + nn <= nh {
-    if substring(hay, i, nn) == needle {
-      return i
-    }
-    i = i + 1
-  }
-  return -1
-}
-
-fn _tpl_render_block(tokens, start, end, bindings) {
-  var out = ""
-  var i = start
-  while i < end {
-    let t = tokens[i]
-    let kind = t.kind
-    if kind == "text" {
-      out = out + t.body
-      i = i + 1
-    } else if kind == "expr" {
-      out = out + to_string(_tpl_eval(t.expr, bindings))
-      i = i + 1
-    } else if kind == "for_open" {
-      let close = _tpl_find_end(tokens, i + 1, end)
-      let seq = _tpl_eval(t.expr, bindings)
-      if type_of(seq) == "list" {
-        for item in seq {
-          let inner = _tpl_render_block(tokens, i + 1, close, {...bindings, [t.var_name]: item})
-          out = out + inner.text
-        }
-      }
-      i = close + 1
-    } else if kind == "if_open" {
-      let scan = _tpl_scan_if(tokens, i, end)
-      var taken = false
-      for branch in scan.branches {
-        if !taken {
-          let cond = if branch.kind == "else_open" {
-            true
-          } else {
-            _tpl_truthy(_tpl_eval(branch.expr, bindings))
-          }
-          if cond {
-            let inner = _tpl_render_block(tokens, branch.body_start, branch.body_end, bindings)
-            out = out + inner.text
-            taken = true
-          }
-        }
-      }
-      i = scan.end_index + 1
-    } else {
-      return {text: out, next: i}
-    }
-  }
-  return {text: out, next: i}
-}
-
-fn _tpl_find_end(tokens, start, end) {
-  var depth = 0
-  var i = start
-  while i < end {
-    let k = tokens[i].kind
-    if k == "for_open" || k == "if_open" {
-      depth = depth + 1
-    } else if k == "end" {
-      if depth == 0 {
-        return i
-      }
-      depth = depth - 1
-    }
-    i = i + 1
-  }
-  throw "render_string: missing {{ end }} for block"
-}
-
-fn _tpl_scan_if(tokens, start, end) {
-  var depth = 0
-  var branches = []
-  let head = tokens[start]
-  var current = {kind: head.kind, expr: head.expr, body_start: start + 1, body_end: start + 1}
-  var i = start + 1
-  while i < end {
-    let t = tokens[i]
-    let k = t.kind
-    if k == "for_open" || k == "if_open" {
-      depth = depth + 1
-    } else if k == "end" {
-      if depth == 0 {
-        current = {...current, body_end: i}
-        branches = branches + [current]
-        return {branches: branches, end_index: i}
-      }
-      depth = depth - 1
-    } else if depth == 0 && (k == "elif_open" || k == "else_open") {
-      current = {...current, body_end: i}
-      branches = branches + [current]
-      current = {kind: k, expr: t.expr, body_start: i + 1, body_end: i + 1}
-    }
-    i = i + 1
-  }
-  throw "render_string: missing {{ end }} for if-block"
-}
-
-fn _tpl_truthy(v) {
-  if v == nil {
-    return false
-  }
-  if type_of(v) == "bool" {
-    return v
-  }
-  if v == "" {
-    return false
-  }
-  if v == 0 {
-    return false
-  }
-  if type_of(v) == "list" && len(v) == 0 {
-    return false
-  }
-  return true
-}
-
-fn _tpl_eval(expr: string, bindings: dict) {
-  let path = split(trim(expr), ".")
-  if len(path) == 0 {
-    return nil
-  }
-  var node = bindings.get(path[0])
-  var i = 1
-  while i < len(path) {
-    if node == nil {
-      return nil
-    }
-    node = node.get(path[i])
-    i = i + 1
-  }
-  return node
 }

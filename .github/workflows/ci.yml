@@ -86,12 +86,7 @@ jobs:
 
       - name: Run smoke tests
         run: |
-          set -euo pipefail
-          for test in tests/*.harn; do
-            echo "::group::$(basename "$test")"
-            "$HARN_BIN" run "$test"
-            echo "::endgroup::"
-          done
+          "$HARN_BIN" test tests --parallel --timing
         working-directory: harn-openapi
 
       - name: Run regen demo
