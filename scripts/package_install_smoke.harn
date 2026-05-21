@@ -84,7 +84,7 @@ pipeline default() {
   let ops: list<Operation> = operations(doc)
   require len(ops) == 1, "package import should parse and walk one operation"
   require ops[0].operation_id == "ping", "operation id should round-trip"
-  println("package_install_smoke consumer: ok")
+  harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,
   )
