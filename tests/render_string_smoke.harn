@@ -1,6 +1,8 @@
-// render_string_smoke — direct coverage for the stdlib inline template
-// engine used by codegen_module. codegen_smoke exercises it indirectly;
-// this keeps the package pinned to the runtime feature it depends on.
+/**
+ * render_string_smoke — direct coverage for the stdlib inline template
+ * engine used by codegen_module. codegen_smoke exercises it indirectly;
+ * this keeps the package pinned to the runtime feature it depends on.
+ */
 pipeline test_main() {
   let template = """
     Hello {{ user.name }}
@@ -27,5 +29,5 @@ pipeline test_main() {
   assert(empty_loop == "", "empty loops should render nothing")
   let false_branch = render_string("{{ if zero }}bad{{ else }}ok{{ end }}", {zero: 0})
   assert(false_branch == "ok", "numeric zero should be falsey")
-  println("render_string_smoke: ok")
+  harness.stdio.println("render_string_smoke: ok")
 }

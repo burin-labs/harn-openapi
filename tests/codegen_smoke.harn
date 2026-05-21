@@ -3,8 +3,8 @@
 // to assert the emitted source parses cleanly.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -12,7 +12,7 @@ fn harn_cmd(args: string) -> string {
 }
 
 pipeline test_main() {
-  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   let src = codegen_module(
     doc,
@@ -23,29 +23,29 @@ pipeline test_main() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out_path = temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
-  write_file(out_path, src)
-  println("wrote generated module: ${out_path} (${len(src)} bytes)")
-  let cmd = harn_cmd("check " + out_path)
+  let out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
+  harness.fs.write_text(out_path, src)
+  harness.stdio.println("wrote generated module: ${out_path} (${len(src)} bytes)")
+  let cmd = harn_cmd(harness, "check " + out_path)
   let result = shell(cmd)
   if !result.success {
-    println("harn check stderr:")
-    println(result.stderr)
-    println("harn check stdout:")
-    println(result.stdout)
+    harness.stdio.println("harn check stderr:")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("harn check stdout:")
+    harness.stdio.println(result.stdout)
   }
   assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
-  let fmt_cmd = harn_cmd("fmt --check " + out_path)
+  let fmt_cmd = harn_cmd(harness, "fmt --check " + out_path)
   let fmt_result = shell(fmt_cmd)
   if !fmt_result.success {
-    println("harn fmt --check stderr:")
-    println(fmt_result.stderr)
-    println("harn fmt --check stdout:")
-    println(fmt_result.stdout)
+    harness.stdio.println("harn fmt --check stderr:")
+    harness.stdio.println(fmt_result.stderr)
+    harness.stdio.println("harn fmt --check stdout:")
+    harness.stdio.println(fmt_result.stdout)
   }
   assert(
     fmt_result.success,
     "generated SDK must pass `harn fmt --check` (status ${fmt_result.status})",
   )
-  println("codegen_smoke: ok")
+  harness.stdio.println("codegen_smoke: ok")
 }

@@ -5,8 +5,8 @@
 // expected Authorization / header / query bindings at runtime.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -35,61 +35,62 @@ fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   return json_stringify(root)
 }
 
-fn require_contains(haystack: string, needle: string, label: string) {
+fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    println("---BEGIN GENERATED SOURCE---")
-    println(haystack)
-    println("---END GENERATED SOURCE---")
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source to contain \"${needle}\""
   }
 }
 
-fn require_not_contains(haystack: string, needle: string, label: string) {
+fn require_not_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if contains(haystack, needle) {
-    println("---BEGIN GENERATED SOURCE---")
-    println(haystack)
-    println("---END GENERATED SOURCE---")
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source NOT to contain \"${needle}\""
   }
 }
 
-fn check_generates(src: string, label: string) {
-  let tmp_path = temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid() + ".harn"
-  write_file(tmp_path, src)
-  let result = shell(harn_cmd("check " + tmp_path))
+fn check_generates(harness: Harness, src: string, label: string) {
+  let tmp_path = harness.fs.temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid() + ".harn"
+  harness.fs.write_text(tmp_path, src)
+  let result = shell(harn_cmd(harness, "check " + tmp_path))
   if !result.success {
-    println("---harn check stderr---")
-    println(result.stderr)
-    println("---harn check stdout---")
-    println(result.stdout)
+    harness.stdio.println("---harn check stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---harn check stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated SDK must pass \\`harn check\\`"
-  let fmt_result = shell(harn_cmd("fmt --check " + tmp_path))
+  let fmt_result = shell(harn_cmd(harness, "fmt --check " + tmp_path))
   if !fmt_result.success {
-    println("---harn fmt --check stderr---")
-    println(fmt_result.stderr)
-    println("---harn fmt --check stdout---")
-    println(fmt_result.stdout)
+    harness.stdio.println("---harn fmt --check stderr---")
+    harness.stdio.println(fmt_result.stderr)
+    harness.stdio.println("---harn fmt --check stdout---")
+    harness.stdio.println(fmt_result.stdout)
   }
   require fmt_result.success, "${label}: generated SDK must pass \\`harn fmt --check\\`"
 }
 
-fn run_generated(src: string, label: string, imports: string, body: string) {
-  let module_stem = temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid()
+fn run_generated(harness: Harness, src: string, label: string, imports: string, body: string) {
+  let module_stem = harness.fs.temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid()
   let module_path = module_stem + ".harn"
-  let runner_path = temp_dir() + "/harn-openapi-security-runtime-${label}-" + uuid() + ".harn"
-  write_file(module_path, src)
-  write_file(
+  let runner_path = harness.fs.temp_dir() + "/harn-openapi-security-runtime-${label}-" + uuid() + ".harn"
+  harness.fs.write_text(module_path, src)
+  harness.fs
+    .write_text(
     runner_path,
     "import { " + imports + " } from \"" + module_stem + "\"\n\npipeline default() {\n" + body
       + "\n}\n",
   )
-  let result = shell(harn_cmd("run " + runner_path))
+  let result = shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
-    println("---${label} runtime stderr---")
-    println(result.stderr)
-    println("---${label} runtime stdout---")
-    println(result.stdout)
+    harness.stdio.println("---${label} runtime stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---${label} runtime stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated SDK runtime auth assertions must pass"
 }
@@ -105,14 +106,15 @@ pipeline test_main() {
     [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
   )
   let src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
-  require_contains(src_a, "_headers_bearer_auth(client)", "A/dispatch")
-  require_contains(src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
-  require_contains(src_a, "token: string = \"\"", "A/client-has-token")
-  require_contains(src_a, "token_provider = nil", "A/client-has-token-provider")
-  require_not_contains(src_a, "basic_user: string", "A/no-basic-field")
-  require_not_contains(src_a, "api_keys: dict", "A/no-apikey-field")
-  check_generates(src_a, "A")
+  require_contains(harness, src_a, "_headers_bearer_auth(client)", "A/dispatch")
+  require_contains(harness, src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
+  require_contains(harness, src_a, "token: string = \"\"", "A/client-has-token")
+  require_contains(harness, src_a, "token_provider = nil", "A/client-has-token-provider")
+  require_not_contains(harness, src_a, "basic_user: string", "A/no-basic-field")
+  require_not_contains(harness, src_a, "api_keys: dict", "A/no-apikey-field")
+  check_generates(harness, src_a, "A")
   run_generated(
+    harness,
     src_a,
     "A",
     "new_client, get_self",
@@ -126,6 +128,7 @@ pipeline test_main() {
     """,
   )
   run_generated(
+    harness,
     src_a,
     "A-empty-token",
     "new_client, get_self",
@@ -151,7 +154,7 @@ pipeline test_main() {
   )
   let src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
   // Authed op still uses the bearer helper.
-  require_contains(src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
+  require_contains(harness, src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
   // The no-auth op must route through _no_auth_headers.
   let b_lines = split(src_b, "\n")
   var b_public_line = ""
@@ -175,8 +178,9 @@ pipeline test_main() {
     !contains(b_public_line, "_headers_bearer_auth"),
     "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
   )
-  check_generates(src_b, "B")
+  check_generates(harness, src_b, "B")
   run_generated(
+    harness,
     src_b,
     "B",
     "new_client, get_self, public_ping",
@@ -201,14 +205,15 @@ pipeline test_main() {
     [{operation_id: "login", method: "post", path: "/login"}],
   )
   let src_c = codegen_module(parse(doc_c), {module_name: "c", client_name: "C"})
-  require_contains(src_c, "_headers_basic_auth(client)", "C/dispatch")
-  require_contains(src_c, "base64_encode", "C/basic-uses-base64")
-  require_contains(src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
-  require_contains(src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
-  require_contains(src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
-  require_not_contains(src_c, "token: string", "C/no-token-field")
-  check_generates(src_c, "C")
+  require_contains(harness, src_c, "_headers_basic_auth(client)", "C/dispatch")
+  require_contains(harness, src_c, "base64_encode", "C/basic-uses-base64")
+  require_contains(harness, src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
+  require_contains(harness, src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
+  require_contains(harness, src_c, "basic_password: string = \"\"", "C/client-has-basic-password")
+  require_not_contains(harness, src_c, "token: string", "C/no-token-field")
+  check_generates(harness, src_c, "C")
   run_generated(
+    harness,
     src_c,
     "C",
     "new_client, login",
@@ -230,14 +235,15 @@ pipeline test_main() {
     [{operation_id: "get-thing", method: "get", path: "/thing"}],
   )
   let src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
-  require_contains(src_d, "_headers_x_api_key(client)", "D/dispatch")
-  require_contains(src_d, "\"X-Api-Key\":", "D/header-name-emitted")
-  require_contains(src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
-  require_contains(src_d, "api_keys: dict = {}", "D/client-has-api-keys")
-  require_contains(src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
-  require_not_contains(src_d, "token: string", "D/no-token-field")
-  check_generates(src_d, "D")
+  require_contains(harness, src_d, "_headers_x_api_key(client)", "D/dispatch")
+  require_contains(harness, src_d, "\"X-Api-Key\":", "D/header-name-emitted")
+  require_contains(harness, src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
+  require_contains(harness, src_d, "api_keys: dict = {}", "D/client-has-api-keys")
+  require_contains(harness, src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
+  require_not_contains(harness, src_d, "token: string", "D/no-token-field")
+  check_generates(harness, src_d, "D")
   run_generated(
+    harness,
     src_d,
     "D",
     "new_client, get_thing",
@@ -259,12 +265,13 @@ pipeline test_main() {
     [{operation_id: "list-things", method: "get", path: "/things"}],
   )
   let src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
-  require_contains(src_e, "_headers_q_key(client)", "E/headers-dispatch")
-  require_contains(src_e, "_query_q_key_dict(client)", "E/query-spread-in-op")
-  require_contains(src_e, "api_key: v", "E/query-name-emitted")
-  require_contains(src_e, "_query_string", "E/op-has-query-string-call")
-  check_generates(src_e, "E")
+  require_contains(harness, src_e, "_headers_q_key(client)", "E/headers-dispatch")
+  require_contains(harness, src_e, "_query_q_key_dict(client)", "E/query-spread-in-op")
+  require_contains(harness, src_e, "api_key: v", "E/query-name-emitted")
+  require_contains(harness, src_e, "_query_string", "E/op-has-query-string-call")
+  check_generates(harness, src_e, "E")
   run_generated(
+    harness,
     src_e,
     "E",
     "new_client, list_things",
@@ -286,11 +293,12 @@ pipeline test_main() {
     [{operation_id: "me", method: "get", path: "/me"}],
   )
   let src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
-  require_contains(src_f, "_headers_sess_id(client)", "F/dispatch")
-  require_contains(src_f, "_append_cookie_header(hs, \"sid\", api_key)", "F/cookie-header")
-  require_contains(src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
-  check_generates(src_f, "F")
+  require_contains(harness, src_f, "_headers_sess_id(client)", "F/dispatch")
+  require_contains(harness, src_f, "_append_cookie_header(hs, \"sid\", api_key)", "F/cookie-header")
+  require_contains(harness, src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
+  check_generates(harness, src_f, "F")
   run_generated(
+    harness,
     src_f,
     "F",
     "new_client, me",
@@ -317,12 +325,13 @@ pipeline test_main() {
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
   let src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
-  require_contains(src_g, "_headers_oauth2_auth(client)", "G/dispatch")
-  require_contains(src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
-  require_contains(src_g, "token: string = \"\"", "G/client-has-token")
-  require_contains(src_g, "token_provider = nil", "G/client-has-token-provider")
-  check_generates(src_g, "G")
+  require_contains(harness, src_g, "_headers_oauth2_auth(client)", "G/dispatch")
+  require_contains(harness, src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
+  require_contains(harness, src_g, "token: string = \"\"", "G/client-has-token")
+  require_contains(harness, src_g, "token_provider = nil", "G/client-has-token-provider")
+  check_generates(harness, src_g, "G")
   run_generated(
+    harness,
     src_g,
     "G",
     "new_client, do_thing",
@@ -354,8 +363,8 @@ pipeline test_main() {
   )
   let src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
-  require_contains(src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
-  require_contains(src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
+  require_contains(harness, src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
+  require_contains(harness, src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
   // Check per-op dispatch line by line.
   let h_lines = split(src_h, "\n")
   var h_get_me_line = ""
@@ -390,7 +399,7 @@ pipeline test_main() {
     !contains(h_token_line, "_headers_bearer_auth"),
     "H/create_a_token-must-NOT-use-bearer: got \"${h_token_line}\"",
   )
-  check_generates(src_h, "H")
+  check_generates(harness, src_h, "H")
   // ------------------------------------------------------------------
   // Scenario I: mutualTLS — v0 fallback to no-auth with a NOTE comment.
   // ------------------------------------------------------------------
@@ -400,10 +409,10 @@ pipeline test_main() {
     [{operation_id: "mtls-op", method: "get", path: "/secure"}],
   )
   let src_i = codegen_module(parse(doc_i), {module_name: "i", client_name: "I"})
-  require_contains(src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
-  require_contains(src_i, "_headers_mtls(client)", "I/fallback-helper-called")
-  require_contains(src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
-  check_generates(src_i, "I")
+  require_contains(harness, src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
+  require_contains(harness, src_i, "_headers_mtls(client)", "I/fallback-helper-called")
+  require_contains(harness, src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
+  check_generates(harness, src_i, "I")
   // ------------------------------------------------------------------
   // Scenario J: multiple security alternatives are preserved as a NOTE,
   // not a TODO, so generated code can be committed without open TODOs.
@@ -415,11 +424,12 @@ pipeline test_main() {
   )
   let src_j = codegen_module(parse(doc_j), {module_name: "j", client_name: "J"})
   require_contains(
+    harness,
     src_j,
     "NOTE: security alternatives also accepted: basicAuth",
     "J/security-alternative-note",
   )
-  require_not_contains(src_j, "TODO", "J/generated-source-has-no-todos")
-  check_generates(src_j, "J")
-  println("security_smoke: ok")
+  require_not_contains(harness, src_j, "TODO", "J/generated-source-has-no-todos")
+  check_generates(harness, src_j, "J")
+  harness.stdio.println("security_smoke: ok")
 }

@@ -1,6 +1,6 @@
 /* Smoke coverage for issue #7 fixture refresh support scripts. */
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -9,9 +9,9 @@ fn harn_cmd(args: string) -> string {
 
 pipeline test_main() {
   let repo_root = source_dir() + "/.."
-  let unique = to_string(to_int(timestamp())) + "-" + uuid()
-  let old_path = temp_dir() + "/harn-openapi-old-" + unique + ".json"
-  let new_path = temp_dir() + "/harn-openapi-new-" + unique + ".json"
+  let unique = to_string(to_int(harness.clock.timestamp())) + "-" + uuid()
+  let old_path = harness.fs.temp_dir() + "/harn-openapi-old-" + unique + ".json"
+  let new_path = harness.fs.temp_dir() + "/harn-openapi-new-" + unique + ".json"
   let old_doc = """
     {
       "openapi": "3.1.0",
@@ -78,9 +78,10 @@ pipeline test_main() {
       }
     }
     """
-  write_file(old_path, old_doc)
-  write_file(new_path, new_doc)
+  harness.fs.write_text(old_path, old_doc)
+  harness.fs.write_text(new_path, new_doc)
   let diff_cmd = harn_cmd(
+    harness,
     "run "
       + repo_root
       + "/scripts/fixture_diff.harn -- "
@@ -90,8 +91,8 @@ pipeline test_main() {
   )
   let diff = shell(diff_cmd)
   if !diff.success {
-    println(diff.stderr)
-    println(diff.stdout)
+    harness.stdio.println(diff.stderr)
+    harness.stdio.println(diff.stdout)
   }
   assert(diff.success, "fixture_diff.harn must run")
   assert(contains(diff.stdout, "added operations:"), "diff output must include added operations")
@@ -115,18 +116,19 @@ pipeline test_main() {
     contains(diff.stdout, "Stable (schema changed)"),
     "diff output must include schema changes that keep the same field names",
   )
-  let stale_cmd = harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn")
+  let stale_cmd = harn_cmd(harness, "run " + repo_root + "/scripts/check_fixture_staleness.harn")
   let stale = shell(stale_cmd)
   if !stale.success {
-    println(stale.stderr)
-    println(stale.stdout)
+    harness.stdio.println(stale.stderr)
+    harness.stdio.println(stale.stdout)
   }
   assert(stale.success, "check_fixture_staleness.harn must pass for committed metadata")
   assert(contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet")
-  let fixture_path = temp_dir() + "/harn-openapi-integrity-" + unique + ".json"
+  let fixture_path = harness.fs.temp_dir() + "/harn-openapi-integrity-" + unique + ".json"
   let meta_path = fixture_path + ".meta.toml"
-  write_file(fixture_path, "{\"ok\":true}\n")
-  write_file(
+  harness.fs.write_text(fixture_path, "{\"ok\":true}\n")
+  harness.fs
+    .write_text(
     meta_path,
     "upstream_url = \"https://example.com/openapi.json\"\n"
       + "captured_at = \""
@@ -135,12 +137,14 @@ pipeline test_main() {
       + "sha256 = \"definitely-wrong\"\n"
       + "byte_size = 1\n",
   )
-  let bad_integrity = shell(harn_cmd("run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path))
+  let bad_integrity = shell(
+    harn_cmd(harness, "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path),
+  )
   assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")
   assert(
     contains(bad_integrity.stderr, "sha256 mismatch")
       || contains(bad_integrity.stdout, "sha256 mismatch"),
     "integrity failure should mention sha256 mismatch",
   )
-  println("fixture_workflow_smoke: ok")
+  harness.stdio.println("fixture_workflow_smoke: ok")
 }

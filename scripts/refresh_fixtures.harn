@@ -41,18 +41,19 @@ fn _render_meta(captured_at: string, hash: string, byte_size: int) -> string {
 pipeline default() {
   let fixture_path = _fixture_path()
   let meta_path = _meta_path()
-  let old_size = if file_exists(fixture_path) {
-    stat(fixture_path).size
+  let old_size = if harness.fs.exists(fixture_path) {
+    harness.fs.stat(fixture_path).size
   } else {
     0
   }
-  let old_hash = if file_exists(fixture_path) {
-    sha256(read_file(fixture_path))
+  let old_hash = if harness.fs.exists(fixture_path) {
+    sha256(harness.fs.read_text(fixture_path))
   } else {
     ""
   }
-  println("fetching ${_NOTION_OPENAPI_URL}")
-  let response = http_get(
+  harness.stdio.println("fetching ${_NOTION_OPENAPI_URL}")
+  let response = harness.net
+    .get(
     _NOTION_OPENAPI_URL,
     {timeout_ms: 60000, headers: {"User-Agent": "harn-openapi-fixture-refresh"}},
   )
@@ -62,17 +63,17 @@ pipeline default() {
   let captured_at = date_iso()
   let body = response.body
   let new_hash = sha256(body)
-  write_file(fixture_path, body)
-  let new_size = stat(fixture_path).size
-  write_file(meta_path, _render_meta(captured_at, new_hash, new_size))
+  harness.fs.write_text(fixture_path, body)
+  let new_size = harness.fs.stat(fixture_path).size
+  harness.fs.write_text(meta_path, _render_meta(captured_at, new_hash, new_size))
   let delta = new_size - old_size
-  println("wrote ${fixture_path}")
-  println("wrote ${meta_path}")
-  println("captured_at: ${captured_at}")
-  println("sha256: ${new_hash}")
-  println("bytes: ${old_size} -> ${new_size} (delta ${delta})")
+  harness.stdio.println("wrote ${fixture_path}")
+  harness.stdio.println("wrote ${meta_path}")
+  harness.stdio.println("captured_at: ${captured_at}")
+  harness.stdio.println("sha256: ${new_hash}")
+  harness.stdio.println("bytes: ${old_size} -> ${new_size} (delta ${delta})")
   if old_hash != "" && old_hash != new_hash {
-    println("previous sha256: ${old_hash}")
+    harness.stdio.println("previous sha256: ${old_hash}")
   }
-  println("refresh_fixtures: ok")
+  harness.stdio.println("refresh_fixtures: ok")
 }

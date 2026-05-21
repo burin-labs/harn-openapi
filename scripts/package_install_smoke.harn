@@ -14,31 +14,31 @@ fn _sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn _harn_bin() -> string {
-  let bin = env("HARN_BIN")
+fn _harn_bin(harness: Harness) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin
   }
   return "harn"
 }
 
-fn _package_ref(repo_root: string) -> string {
-  let package_ref = env("HARN_PACKAGE_REF")
+fn _package_ref(harness: Harness, repo_root: string) -> string {
+  let package_ref = harness.env.get("HARN_PACKAGE_REF")
   if package_ref != nil && package_ref != "" {
     return package_ref
   }
   return repo_root + "@HEAD"
 }
 
-fn _run(cwd: string, label: string, cmd: string) {
-  println("running: ${label}")
+fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
+  harness.stdio.println("running: ${label}")
   let result = shell_at(cwd, cmd)
   if result.stdout != "" {
-    println(result.stdout.trim())
+    harness.stdio.println(result.stdout.trim())
   }
   if !result.success {
     if result.stderr != "" {
-      println(result.stderr.trim())
+      harness.stdio.println(result.stderr.trim())
     }
     throw "package_install_smoke: " + label + " failed"
   }
@@ -46,11 +46,12 @@ fn _run(cwd: string, label: string, cmd: string) {
 
 pipeline default() {
   let repo_root = _repo_root()
-  let smoke_root = temp_dir() + "/harn-openapi-install-smoke-" + uuid()
-  let harn_bin = _harn_bin()
-  let package_ref = _package_ref(repo_root)
-  mkdir(smoke_root)
-  write_file(
+  let smoke_root = harness.fs.temp_dir() + "/harn-openapi-install-smoke-" + uuid()
+  let harn_bin = _harn_bin(harness)
+  let package_ref = _package_ref(harness, repo_root)
+  harness.fs.mkdir(smoke_root)
+  harness.fs
+    .write_text(
     smoke_root + "/harn.toml",
     """
 [package]
@@ -59,16 +60,19 @@ version = "0.0.0"
 """,
   )
   _run(
+    harness,
     smoke_root,
     "add harn-openapi dependency",
     _sh_quote(harn_bin) + " add " + _sh_quote(package_ref),
   )
   _run(
+    harness,
     smoke_root,
     "locked offline install",
     _sh_quote(harn_bin) + " install --locked --offline --json",
   )
-  write_file(
+  harness.fs
+    .write_text(
     smoke_root + "/smoke.harn",
     """
 import { operations, parse } from "harn-openapi/default"
@@ -80,11 +84,11 @@ pipeline default() {
   let ops: list<Operation> = operations(doc)
   require len(ops) == 1, "package import should parse and walk one operation"
   require ops[0].operation_id == "ping", "operation id should round-trip"
-  println("package_install_smoke consumer: ok")
+  harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,
   )
-  _run(smoke_root, "check consumer smoke", _sh_quote(harn_bin) + " check smoke.harn")
-  _run(smoke_root, "run consumer smoke", _sh_quote(harn_bin) + " run smoke.harn")
-  println("package_install_smoke: ok")
+  _run(harness, smoke_root, "check consumer smoke", _sh_quote(harn_bin) + " check smoke.harn")
+  _run(harness, smoke_root, "run consumer smoke", _sh_quote(harn_bin) + " run smoke.harn")
+  harness.stdio.println("package_install_smoke: ok")
 }
