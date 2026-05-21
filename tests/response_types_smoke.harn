@@ -4,8 +4,8 @@
 // `harn check`.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -154,9 +154,9 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let out_path = temp_dir() + "/harn-openapi-response-types-smoke-" + uuid() + ".harn"
-  write_file(out_path, src)
-  println("wrote tiny module: ${out_path} (${len(src)} bytes)")
+  let out_path = harness.fs.temp_dir() + "/harn-openapi-response-types-smoke-" + uuid() + ".harn"
+  harness.fs.write_text(out_path, src)
+  harness.stdio.println("wrote tiny module: ${out_path} (${len(src)} bytes)")
   // --- Acceptance 1: one alias per distinct response schema. ---
   // PageObject (2 ops share it) + SearchItemsResponse (inline) = 2
   // aliases; deletePage (204) and getRawBytes (non-JSON) emit no
@@ -214,17 +214,17 @@ pipeline test_main() {
   let raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
   // --- Acceptance 7: emitted module passes `harn check`. ---
-  let result = shell(harn_cmd("check " + out_path))
+  let result = shell(harn_cmd(harness, "check " + out_path))
   if !result.success {
-    println("harn check stderr:")
-    println(result.stderr)
-    println("harn check stdout:")
-    println(result.stdout)
+    harness.stdio.println("harn check stderr:")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("harn check stdout:")
+    harness.stdio.println(result.stdout)
   }
   assert(result.success, "generated module must pass `harn check` (status ${result.status})")
   // --- Acceptance 8: on the Notion fixture, emit >=20 distinct type
   // aliases, and fn signatures reuse them by name. ---
-  let notion_raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let notion_doc = parse(notion_raw)
   let notion_src = codegen_module(
     notion_doc,
@@ -236,7 +236,7 @@ pipeline test_main() {
     },
   )
   let alias_count = _count_occurrences(notion_src, "\ntype ")
-  println("notion aliases: ${alias_count}")
+  harness.stdio.println("notion aliases: ${alias_count}")
   assert(alias_count >= 20, "expected >=20 aliases on the Notion fixture, got ${alias_count}")
   // --- Acceptance 9: fileUploadObjectResponse is emitted once even
   // though four operations return it. ---
@@ -268,5 +268,5 @@ pipeline test_main() {
     ),
     "get_user must return UserObjectResponse",
   )
-  println("response_types_smoke: ok")
+  harness.stdio.println("response_types_smoke: ok")
 }

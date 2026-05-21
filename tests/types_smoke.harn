@@ -3,7 +3,7 @@ import "../src/lib"
 
 @test
 pipeline test_main() {
-  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let doc: OpenApiDoc = parse(raw)
   assert(is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard")
   let ops: list<Operation> = operations(doc)
@@ -19,7 +19,7 @@ pipeline test_main() {
   let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
   let values = enum_values(enum_schema)
   assert(values != nil && len(values ?? []) == 2, "enum_values should preserve typed enum lists")
-  let synthetic = parse(read_file(source_dir() + "/fixtures/connector_helpers.openapi.json"))
+  let synthetic = parse(harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json"))
   let helpers: list<AuthHelper> = auth_helpers(synthetic)
   assert(helpers[0].scheme_name != nil, "AuthHelper should expose scheme_name")
   let pages: list<PaginationPlan> = pagination_plans(synthetic)
@@ -29,5 +29,5 @@ pipeline test_main() {
     rates[0].retry_after_header == "Retry-After",
     "RateLimitMetadata should expose retry headers",
   )
-  println("types_smoke: ok")
+  harness.stdio.println("types_smoke: ok")
 }

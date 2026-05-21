@@ -80,46 +80,51 @@ fn _diff_list(old_items: list<string>, new_items: list<string>) -> dict {
   return {added: added, removed: removed}
 }
 
-fn _print_operation_section(title: string, keys: list<string>, index: dict) {
-  println(title + ":")
+fn _print_operation_section(harness: Harness, title: string, keys: list<string>, index: dict) {
+  harness.stdio.println(title + ":")
   if len(keys) == 0 {
-    println("  (none)")
+    harness.stdio.println("  (none)")
     return
   }
   for key in keys {
-    println("  " + _operation_label(index[key]))
+    harness.stdio.println("  " + _operation_label(index[key]))
   }
 }
 
-fn _print_changed_operations(old_ops: dict, new_ops: dict, shared_keys: list<string>) {
-  println("changed operations:")
+fn _print_changed_operations(
+  harness: Harness,
+  old_ops: dict,
+  new_ops: dict,
+  shared_keys: list<string>,
+) {
+  harness.stdio.println("changed operations:")
   var count = 0
   for key in shared_keys {
     let old_op = old_ops[key]
     let new_op = new_ops[key]
     if _operation_fingerprint(old_op) != _operation_fingerprint(new_op) {
       count = count + 1
-      println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
+      harness.stdio.println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
     }
   }
   if count == 0 {
-    println("  (none)")
+    harness.stdio.println("  (none)")
   }
 }
 
-fn _print_schema_name_section(title: string, names: list<string>) {
-  println(title + ":")
+fn _print_schema_name_section(harness: Harness, title: string, names: list<string>) {
+  harness.stdio.println(title + ":")
   if len(names) == 0 {
-    println("  (none)")
+    harness.stdio.println("  (none)")
     return
   }
   for name in names {
-    println("  " + name)
+    harness.stdio.println("  " + name)
   }
 }
 
-fn _print_changed_schemas(old_doc, new_doc, shared_names: list<string>) {
-  println("changed schemas:")
+fn _print_changed_schemas(harness: Harness, old_doc, new_doc, shared_names: list<string>) {
+  harness.stdio.println("changed schemas:")
   var count = 0
   for name in shared_names {
     let old_fields = _schema_fields(old_doc, name)
@@ -133,17 +138,17 @@ fn _print_changed_schemas(old_doc, new_doc, shared_names: list<string>) {
       } else {
         "(schema changed)"
       }
-      println("  " + name + " " + suffix)
+      harness.stdio.println("  " + name + " " + suffix)
       if len(diff.added) > 0 {
-        println("    added: " + join(diff.added, ", "))
+        harness.stdio.println("    added: " + join(diff.added, ", "))
       }
       if len(diff.removed) > 0 {
-        println("    removed: " + join(diff.removed, ", "))
+        harness.stdio.println("    removed: " + join(diff.removed, ", "))
       }
     }
   }
   if count == 0 {
-    println("  (none)")
+    harness.stdio.println("  (none)")
   }
 }
 
@@ -151,28 +156,28 @@ pipeline default() {
   if len(argv) != 2 {
     throw "usage: scripts/fixture_diff.harn <old.json> <new.json>"
   }
-  let old_doc = parse(read_file(argv[0]))
-  let new_doc = parse(read_file(argv[1]))
+  let old_doc = parse(harness.fs.read_text(argv[0]))
+  let new_doc = parse(harness.fs.read_text(argv[1]))
   let old_ops = _operation_index(old_doc)
   let new_ops = _operation_index(new_doc)
   let op_diff = _diff_list(_sorted_keys(old_ops), _sorted_keys(new_ops))
-  _print_operation_section("added operations", op_diff.added, new_ops)
-  _print_operation_section("removed operations", op_diff.removed, old_ops)
+  _print_operation_section(harness, "added operations", op_diff.added, new_ops)
+  _print_operation_section(harness, "removed operations", op_diff.removed, old_ops)
   var shared_ops = []
   for key in _sorted_keys(new_ops) {
     if _sorted_keys(old_ops).contains(key) {
       shared_ops = shared_ops + [key]
     }
   }
-  _print_changed_operations(old_ops, new_ops, shared_ops)
+  _print_changed_operations(harness, old_ops, new_ops, shared_ops)
   let schema_diff = _diff_list(_schema_names(old_doc), _schema_names(new_doc))
-  _print_schema_name_section("added schemas", schema_diff.added)
-  _print_schema_name_section("removed schemas", schema_diff.removed)
+  _print_schema_name_section(harness, "added schemas", schema_diff.added)
+  _print_schema_name_section(harness, "removed schemas", schema_diff.removed)
   var shared_schemas = []
   for name in _schema_names(new_doc) {
     if _schema_names(old_doc).contains(name) {
       shared_schemas = shared_schemas + [name]
     }
   }
-  _print_changed_schemas(old_doc, new_doc, shared_schemas)
+  _print_changed_schemas(harness, old_doc, new_doc, shared_schemas)
 }

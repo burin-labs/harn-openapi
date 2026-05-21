@@ -4,8 +4,8 @@
 // mapping values as tags.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -125,33 +125,33 @@ fn count_occurrences(haystack: string, needle: string) -> int {
   return count
 }
 
-fn require_contains(haystack: string, needle: string, label: string) {
+fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    println("---BEGIN GENERATED SOURCE---")
-    println(haystack)
-    println("---END GENERATED SOURCE---")
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected generated source to contain ${needle}"
   }
 }
 
-fn check_file(path: string, label: string) {
-  let result = shell(harn_cmd("check " + path))
+fn check_file(harness: Harness, path: string, label: string) {
+  let result = shell(harn_cmd(harness, "check " + path))
   if !result.success {
-    println("---${label} harn check stderr---")
-    println(result.stderr)
-    println("---${label} harn check stdout---")
-    println(result.stdout)
+    harness.stdio.println("---${label} harn check stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---${label} harn check stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated module must pass harn check"
 }
 
-fn run_file(path: string, label: string) {
-  let result = shell(harn_cmd("run " + path))
+fn run_file(harness: Harness, path: string, label: string) {
+  let result = shell(harn_cmd(harness, "run " + path))
   if !result.success {
-    println("---${label} harn run stderr---")
-    println(result.stderr)
-    println("---${label} harn run stdout---")
-    println(result.stdout)
+    harness.stdio.println("---${label} harn run stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---${label} harn run stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated module runtime smoke must pass"
 }
@@ -167,20 +167,41 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let module_stem = temp_dir() + "/harn-openapi-polymorphic-generated-" + uuid()
+  let module_stem = harness.fs.temp_dir() + "/harn-openapi-polymorphic-generated-" + uuid()
   let out_path = module_stem + ".harn"
-  write_file(out_path, src)
-  require_contains(src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
-  require_contains(src, "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict", "cat ctor")
-  require_contains(src, "pub fn update_pet_dog_update(bark: bool) -> dict", "dog ctor")
-  require_contains(src, "if ![\"cat\", \"dog\"].contains(body_variant)", "discriminator tags")
-  require_contains(src, "kind: \"cat\"", "cat const discriminator")
-  require_contains(src, "_variant: \"cat\"", "cat internal tag")
-  require_contains(src, "pub fn submit_shape_circle_shape(radius: float) -> dict", "anyOf ctor")
-  require_contains(src, "pub fn submit_shape_square_shape(side: float) -> dict", "anyOf ctor")
-  check_file(out_path, "poly")
-  let runner_path = temp_dir() + "/harn-openapi-polymorphic-runner-" + uuid() + ".harn"
-  write_file(
+  harness.fs.write_text(out_path, src)
+  require_contains(harness, src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
+  require_contains(
+    harness,
+    src,
+    "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict",
+    "cat ctor",
+  )
+  require_contains(harness, src, "pub fn update_pet_dog_update(bark: bool) -> dict", "dog ctor")
+  require_contains(
+    harness,
+    src,
+    "if ![\"cat\", \"dog\"].contains(body_variant)",
+    "discriminator tags",
+  )
+  require_contains(harness, src, "kind: \"cat\"", "cat const discriminator")
+  require_contains(harness, src, "_variant: \"cat\"", "cat internal tag")
+  require_contains(
+    harness,
+    src,
+    "pub fn submit_shape_circle_shape(radius: float) -> dict",
+    "anyOf ctor",
+  )
+  require_contains(
+    harness,
+    src,
+    "pub fn submit_shape_square_shape(side: float) -> dict",
+    "anyOf ctor",
+  )
+  check_file(harness, out_path, "poly")
+  let runner_path = harness.fs.temp_dir() + "/harn-openapi-polymorphic-runner-" + uuid() + ".harn"
+  harness.fs
+    .write_text(
     runner_path,
     "import { new_client, update_pet, update_pet_cat_update } from \""
       + module_stem
@@ -208,8 +229,8 @@ pipeline test_main() {
     }
     """,
   )
-  run_file(runner_path, "poly")
-  let notion_raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  run_file(harness, runner_path, "poly")
+  let notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let notion_src = codegen_module(
     parse(notion_raw),
     {
@@ -220,32 +241,37 @@ pipeline test_main() {
     },
   )
   require_contains(
+    harness,
     notion_src,
     "pub fn update_page_markdown(client: dict, page_id, body, notion_version = nil) -> PageMarkdownResponse",
     "notion umbrella",
   )
   require_contains(
+    harness,
     notion_src,
     "pub fn update_page_markdown_insert_content(insert_content: dict) -> dict",
     "notion insert_content ctor",
   )
   require_contains(
+    harness,
     notion_src,
     "pub fn update_page_markdown_replace_content_range(replace_content_range: dict) -> dict",
     "notion replace_content_range ctor",
   )
   require_contains(
+    harness,
     notion_src,
     "pub fn update_page_markdown_update_content(update_content: dict) -> dict",
     "notion update_content ctor",
   )
   require_contains(
+    harness,
     notion_src,
     "pub fn update_page_markdown_replace_content(replace_content: dict) -> dict",
     "notion replace_content ctor",
   )
   let notion_ctors = count_occurrences(notion_src, "pub fn update_page_markdown_")
   assert(notion_ctors == 4, "expected four Notion markdown constructors, got ${notion_ctors}")
-  require_contains(notion_src, "_strip_codegen_variant(body)", "notion strips _variant")
-  println("polymorphic_body_smoke: ok")
+  require_contains(harness, notion_src, "_strip_codegen_variant(body)", "notion strips _variant")
+  harness.stdio.println("polymorphic_body_smoke: ok")
 }

@@ -8,12 +8,12 @@ import { codegen_module, operations, parse } from "../src/lib"
 
 pipeline default() {
   let fixture = source_dir() + "/../tests/fixtures/notion.openapi.json"
-  let raw = read_file(fixture)
+  let raw = harness.fs.read_text(fixture)
   let doc = parse(raw)
   let ops = operations(doc)
-  println("parsed ${doc.info.title} (OpenAPI ${doc.openapi})")
-  println("  operations: ${len(ops)}")
-  println("  schemas:    ${len(doc.components.schemas)}")
+  harness.stdio.println("parsed ${doc.info.title} (OpenAPI ${doc.openapi})")
+  harness.stdio.println("  operations: ${len(ops)}")
+  harness.stdio.println("  schemas:    ${len(doc.components.schemas)}")
   let src = codegen_module(
     doc,
     {
@@ -23,8 +23,8 @@ pipeline default() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out = temp_dir() + "/harn-openapi-regen-demo-" + uuid() + ".harn"
-  write_file(out, src)
-  println("  wrote:      ${out} (${len(src)} bytes)")
-  println("regen_demo: ok")
+  let out = harness.fs.temp_dir() + "/harn-openapi-regen-demo-" + uuid() + ".harn"
+  harness.fs.write_text(out, src)
+  harness.stdio.println("  wrote:      ${out} (${len(src)} bytes)")
+  harness.stdio.println("regen_demo: ok")
 }

@@ -13,51 +13,58 @@ import {
   webhook_operations,
 } from "../src/lib"
 
-fn harn_cmd(args: string) -> string {
-  let bin = env("HARN_BIN")
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
   return "harn " + args
 }
 
-fn require_contains(haystack: string, needle: string, label: string) {
+fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    println("---BEGIN GENERATED SOURCE---")
-    println(haystack)
-    println("---END GENERATED SOURCE---")
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected generated source to contain \"${needle}\""
   }
 }
 
-fn check_generated(src: string, label: string) -> string {
-  let module_stem = temp_dir() + "/harn-openapi-regression-" + label + "-" + uuid()
+fn check_generated(harness: Harness, src: string, label: string) -> string {
+  let module_stem = harness.fs.temp_dir() + "/harn-openapi-regression-" + label + "-" + uuid()
   let module_path = module_stem + ".harn"
-  write_file(module_path, src)
-  let result = shell(harn_cmd("check " + module_path))
+  harness.fs.write_text(module_path, src)
+  let result = shell(harn_cmd(harness, "check " + module_path))
   if !result.success {
-    println("---${label} harn check stderr---")
-    println(result.stderr)
-    println("---${label} harn check stdout---")
-    println(result.stdout)
+    harness.stdio.println("---${label} harn check stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---${label} harn check stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated module must pass harn check"
   return module_stem
 }
 
-fn run_generated(module_stem: string, label: string, imports: string, body: string) {
-  let runner_path = temp_dir() + "/harn-openapi-regression-runner-" + label + "-" + uuid() + ".harn"
-  write_file(
+fn run_generated(
+  harness: Harness,
+  module_stem: string,
+  label: string,
+  imports: string,
+  body: string,
+) {
+  let runner_path = harness.fs.temp_dir() + "/harn-openapi-regression-runner-" + label + "-" + uuid() + ".harn"
+  harness.fs
+    .write_text(
     runner_path,
     "import { " + imports + " } from \"" + module_stem + "\"\n\npipeline default() {\n" + body
       + "\n}\n",
   )
-  let result = shell(harn_cmd("run " + runner_path))
+  let result = shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
-    println("---${label} runtime stderr---")
-    println(result.stderr)
-    println("---${label} runtime stdout---")
-    println(result.stdout)
+    harness.stdio.println("---${label} runtime stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---${label} runtime stdout---")
+    harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated runtime smoke must pass"
 }
@@ -270,7 +277,12 @@ pipeline test_main() {
     "Retry-After should be found through response ref",
   )
   let ref_src = codegen_module(doc, {module_name: "ref_regression", client_name: "RefRegressionClient"})
-  require_contains(ref_src, "nickname?: string", "optional response fields should remain optional")
+  require_contains(
+    harness,
+    ref_src,
+    "nickname?: string",
+    "optional response fields should remain optional",
+  )
   let src = codegen_module(
     parse(_GENERATED_DOC),
     {
@@ -279,12 +291,28 @@ pipeline test_main() {
       header_overrides: {"X-Escaped": "line\nnext\tend"},
     },
   )
-  require_contains(src, "pub fn return_", "reserved operation ids should be sanitized")
-  require_contains(src, "_merge_header_dicts", "AND security should merge multiple auth helpers")
-  require_contains(src, "fn _headers_api_key_2", "colliding auth helper names should be unique")
-  require_contains(src, "body = nil", "optional request bodies should be optional in signatures")
-  let module_stem = check_generated(src, "generated")
+  require_contains(harness, src, "pub fn return_", "reserved operation ids should be sanitized")
+  require_contains(
+    harness,
+    src,
+    "_merge_header_dicts",
+    "AND security should merge multiple auth helpers",
+  )
+  require_contains(
+    harness,
+    src,
+    "fn _headers_api_key_2",
+    "colliding auth helper names should be unique",
+  )
+  require_contains(
+    harness,
+    src,
+    "body = nil",
+    "optional request bodies should be optional in signatures",
+  )
+  let module_stem = check_generated(harness, src, "generated")
   run_generated(
+    harness,
     module_stem,
     "generated",
     "new_client, return_, upload_file, secure_op",
@@ -317,5 +345,5 @@ pipeline test_main() {
       assert_eq(secure_call.url, "https://api.example.com/secure?api_key=query-secret")
     """,
   )
-  println("regression_bugs_smoke: ok")
+  harness.stdio.println("regression_bugs_smoke: ok")
 }

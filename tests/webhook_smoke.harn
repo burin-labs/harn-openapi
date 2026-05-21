@@ -6,13 +6,13 @@
 import { component_path_items, parse, schema, webhook_operations } from "../src/lib"
 
 pipeline test_main() {
-  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   // parse() must surface the webhooks map.
   let webhooks = doc.webhooks ?? {}
   assert(type_of(webhooks) == "dict", "doc.webhooks must be a dict")
   let webhook_count = len(webhooks)
-  println("webhooks (raw): ${webhook_count}")
+  harness.stdio.println("webhooks (raw): ${webhook_count}")
   assert(webhook_count >= 10, "expected >=10 webhooks in the Notion fixture, got ${webhook_count}")
   // parse() must surface components.pathItems as a dict, even if empty.
   let path_items = doc.components?.pathItems ?? {}
@@ -20,10 +20,10 @@ pipeline test_main() {
   // component_path_items(doc) is the passthrough accessor.
   let comp_path_items = component_path_items(doc)
   assert(type_of(comp_path_items) == "dict", "component_path_items(doc) must return a dict")
-  println("components.pathItems: ${len(comp_path_items)}")
+  harness.stdio.println("components.pathItems: ${len(comp_path_items)}")
   // webhook_operations(doc) flattens webhook path items into a list.
   let webhook_ops = webhook_operations(doc)
-  println("webhook operations: ${len(webhook_ops)}")
+  harness.stdio.println("webhook operations: ${len(webhook_ops)}")
   assert(len(webhook_ops) >= 10, "expected >=10 webhook operations, got ${len(webhook_ops)}")
   // Every entry must have the shape { name, method, path_item, operation, ... }.
   for wop in webhook_ops {
@@ -40,7 +40,8 @@ pipeline test_main() {
     }
   }
   assert(comment_created != nil, "could not find commentCreated webhook")
-  println("commentCreated: ${comment_created.method} -> ${comment_created.operation_id}")
+  harness.stdio
+    .println("commentCreated: ${comment_created.method} -> ${comment_created.operation_id}")
   let req_body = comment_created.operation.get("requestBody")
   assert(req_body != nil, "commentCreated webhook must declare a requestBody")
   let payload_schema_raw = req_body.content["application/json"].schema
@@ -60,7 +61,7 @@ pipeline test_main() {
   )
   if has_props {
     let field_names = resolved.properties.keys()
-    println("commentCreated payload fields: ${len(field_names)}")
+    harness.stdio.println("commentCreated payload fields: ${len(field_names)}")
   }
-  println("webhook_smoke: ok")
+  harness.stdio.println("webhook_smoke: ok")
 }

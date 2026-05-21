@@ -6,20 +6,20 @@
 import { operations, parse } from "../src/lib"
 
 pipeline test_main() {
-  let raw = read_file(source_dir() + "/fixtures/notion.openapi.json")
+  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
   let doc = parse(raw)
   assert(starts_with(doc.openapi, "3.1"), "openapi version must be 3.1.x")
   assert(contains(doc.info.title, "Notion"), "info.title must contain 'Notion'")
   let ops = operations(doc)
   let op_count = len(ops)
-  println("operations: ${op_count}")
+  harness.stdio.println("operations: ${op_count}")
   assert(op_count > 40, "expected >40 operations in the Notion fixture, got ${op_count}")
   let components = doc.components
   assert(components != nil, "doc.components must be present")
   let schemas = components.schemas
   assert(schemas != nil, "doc.components.schemas must be present")
   let schema_count = len(schemas)
-  println("schemas: ${schema_count}")
+  harness.stdio.println("schemas: ${schema_count}")
   assert(schema_count > 100, "expected >100 component schemas")
-  println("parse_smoke: ok")
+  harness.stdio.println("parse_smoke: ok")
 }
