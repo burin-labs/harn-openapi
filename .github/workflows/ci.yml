@@ -84,6 +84,11 @@ jobs:
             tests
         working-directory: harn-openapi
 
+      - name: Check package manifest
+        run: |
+          "$HARN_BIN" package check
+        working-directory: harn-openapi
+
       - name: Run smoke tests
         run: |
           "$HARN_BIN" test tests --parallel --timing
@@ -99,10 +104,53 @@ jobs:
           "$HARN_BIN" run scripts/package_install_smoke.harn
         working-directory: harn-openapi
 
+  fixture-staleness:
+    name: Fixture staleness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out harn-openapi
+        uses: actions/checkout@v6
+        with:
+          path: harn-openapi
+
+      - name: Read Harn version
+        id: harn-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$HARN_ROOT/.harn-version")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install harn
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.harn-version.outputs.version }}"
+          mkdir -p "$HARN_INSTALL_ROOT/bin"
+          if [ ! -x "$HARN_BIN" ]; then
+            if curl -fsSL \
+              -o "${RUNNER_TEMP}/harn.tar.gz" \
+              "https://github.com/burin-labs/harn/releases/download/v${version}/harn-x86_64-unknown-linux-gnu.tar.gz"; then
+              tar -xzf "${RUNNER_TEMP}/harn.tar.gz" -C "$HARN_INSTALL_ROOT/bin"
+            else
+              CARGO_TARGET_DIR="$HARN_INSTALL_TARGET" \
+                cargo install harn-cli \
+                  --version "${version}" \
+                  --locked \
+                  --root "$HARN_INSTALL_ROOT"
+            fi
+          fi
+          "$HARN_BIN" version
+
+      - name: Check fixture staleness
+        run: |
+          "$HARN_BIN" run scripts/check_fixture_staleness.harn
+        working-directory: harn-openapi
+
   ci-status:
     name: CI status
     if: always()
-    needs: [harn]
+    needs: [harn, fixture-staleness]
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures
