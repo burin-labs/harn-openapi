@@ -90,8 +90,25 @@ pipeline test_main() {
   assert(cursor != nil, "listItems should have a cursor pagination plan")
   assert(cursor.kind == "cursor", "listItems should be cursor-pagination")
   assert(cursor.cursor_param == "start_cursor", "cursor plan should preserve request cursor param")
+  assert(cursor.cursor_location == "query", "cursor plan should preserve query cursor location")
   assert(cursor.cursor_response_field == "next_cursor", "cursor plan should preserve response cursor")
   assert(cursor.items_field == "results", "cursor plan should preserve items field")
+  let body_cursor = plan_by_id(plans, "listBodyItems")
+  assert(body_cursor != nil, "listBodyItems should have a body cursor pagination plan")
+  assert(body_cursor.kind == "cursor", "listBodyItems should be cursor-pagination")
+  assert(body_cursor.cursor_param == "start_cursor", "body cursor plan should preserve cursor field")
+  assert(body_cursor.cursor_location == "body", "body cursor plan should preserve cursor location")
+  assert(
+    body_cursor.page_size_param == "page_size",
+    "body cursor plan should preserve page size field",
+  )
+  assert(
+    body_cursor.page_size_location == "body",
+    "body cursor plan should preserve page size location",
+  )
+  let templates = plan_by_id(plans, "listTemplateItems")
+  assert(templates != nil, "listTemplateItems should have a cursor pagination plan")
+  assert(templates.items_field == "templates", "template list should preserve templates item field")
   let page = plan_by_id(plans, "listPageItems")
   assert(page != nil && page.kind == "page", "listPageItems should have a page plan")
   let next_link = plan_by_id(plans, "listNextLinkItems")
@@ -134,6 +151,18 @@ pipeline test_main() {
     src,
     "\\\"kind\\\":\\\"cursor\\\"",
     "generated cursor pagination metadata",
+  )
+  require_contains(
+    harness,
+    src,
+    "\\\"cursor_location\\\":\\\"body\\\"",
+    "generated body cursor pagination metadata",
+  )
+  require_contains(
+    harness,
+    src,
+    "\\\"items_field\\\":\\\"templates\\\"",
+    "generated templates pagination metadata",
   )
   require_contains(
     harness,

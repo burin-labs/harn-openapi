@@ -79,6 +79,71 @@
         }
       }
     },
+    "/body-items": {
+      "post": {
+        "operationId": "listBodyItems",
+        "summary": "List items with body cursor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "start_cursor": {
+                    "type": "string"
+                  },
+                  "page_size": {
+                    "type": "integer"
+                  },
+                  "filter": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/template-items": {
+      "get": {
+        "operationId": "listTemplateItems",
+        "summary": "List template items",
+        "parameters": [
+          {
+            "name": "start_cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplatePage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/page-items": {
       "get": {
         "operationId": "listPageItems",
@@ -256,6 +321,23 @@
           },
           "next_url": {
             "type": "string"
+          }
+        }
+      },
+      "TemplatePage": {
+        "type": "object",
+        "properties": {
+          "templates": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
           }
         }
       }
