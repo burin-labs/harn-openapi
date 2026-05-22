@@ -5,13 +5,17 @@ connector and SDK repos. Once the `v0.1.0` tag exists, it replaces
 sibling-checkout assumptions with a versioned Harn package dependency while
 keeping path overrides for local multi-repo development.
 
+The current prerelease pin is `v0.1.1-rc.1`; prefer it for new downstream work
+because it includes the latest package-manager metadata and connector codegen
+polish.
+
 ## Consumer dependency
 
 Use a versioned package ref in normal connector and SDK repos after the release
 tag is published:
 
 ```sh
-harn add github.com/burin-labs/harn-openapi@v0.1.0
+harn add github.com/burin-labs/harn-openapi@v0.1.1-rc.1
 ```
 
 Then import through the package export path:
@@ -59,7 +63,7 @@ Run the consumer repo's normal Harn gate with the pinned Harn CLI. In this
 repo, the equivalent package-manager smoke is:
 
 ```sh
-HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.0 \
+HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.1-rc.1 \
   harn run scripts/package_install_smoke.harn
 ```
 

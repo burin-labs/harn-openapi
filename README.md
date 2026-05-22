@@ -5,7 +5,7 @@ SDK source code from them. Acts as the reference example of a non-trivial
 external Harn library and powers downstream typed SDKs such as
 [notion-sdk-harn](https://github.com/burin-labs/notion-sdk-harn).
 
-> Status: `0.1.0` pre-release package shape. Until a release tag exists, use a
+> Status: `0.1.1-rc.1` pre-release package shape. Until a release tag exists, use a
 > path dependency or explicit `@HEAD` package smoke for unreleased work.
 
 ## Intent
@@ -60,11 +60,11 @@ For unreleased local or stacked work, use a path dependency:
 harn-openapi = { path = "../harn-openapi" }
 ```
 
-After the `v0.1.0` release tag exists, consumers can use the versioned package
+After the `v0.1.1-rc.1` release tag exists, consumers can use the versioned package
 ref:
 
 ```sh
-harn add github.com/burin-labs/harn-openapi@v0.1.0
+harn add github.com/burin-labs/harn-openapi@v0.1.1-rc.1
 ```
 
 The CI package smoke uses the same package-manager path against the current
@@ -72,7 +72,7 @@ checkout (`<repo>@HEAD`) so pull requests are checked before a release tag
 exists. To test a published ref locally after tagging:
 
 ```sh
-HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.0 \
+HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.1-rc.1 \
   harn run scripts/package_install_smoke.harn
 ```
 
