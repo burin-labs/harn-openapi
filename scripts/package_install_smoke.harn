@@ -4,7 +4,7 @@
  *
  * By default the smoke installs the current checkout with `@HEAD`, which keeps
  * PR CI useful before a release tag exists. Set HARN_PACKAGE_REF to test a
- * published ref such as `github.com/burin-labs/harn-openapi@v0.1.0`.
+ * published ref such as `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
  */
 fn _repo_root() -> string {
   return source_dir() + "/.."
