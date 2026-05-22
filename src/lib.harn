@@ -56,7 +56,10 @@
 //
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
-//       { module_name, client_name, default_base_url?, header_overrides? }.
+//       { module_name, client_name, default_base_url?, header_overrides?,
+//       transport? }. `transport: "connector_policy"` emits calls through
+//       std/connectors/shared while the default raw transport keeps emitting
+//       direct `http_get` / `http_post` / ... calls.
 //       Uses Harn's stdlib `render_string` template engine so generated-code
 //       rendering stays aligned with the runtime instead of a local template
 //       parser.
@@ -391,20 +394,6 @@ type RateLimitMetadata = {
   limit_headers: list<string>,
   remaining_headers: list<string>,
   reset_headers: list<string>,
-}
-
-type ParseOpenApiDoc = {
-  openapi: string,
-  info: Info,
-  jsonSchemaDialect?: string,
-  servers?: list,
-  paths?: dict,
-  webhooks?: dict,
-  components?: dict,
-  security_schemes?: dict,
-  security?: list,
-  tags?: list,
-  externalDocs?: ExternalDocumentation,
 }
 
 let _OPENAPI_DOC_SCHEMA = {
@@ -1006,6 +995,9 @@ let _MODULE_TEMPLATE = """
    * Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
    * Module:     {{ module_name }}
    */
+  {{ if connector_transport }}
+  import { connector_http_json, connector_http_request } from "std/connectors/shared"
+  {{ end }}
 
   {{ for alias in response_aliases }}
   {{ alias.source }}
@@ -1200,9 +1192,12 @@ let _MODULE_TEMPLATE = """
     return {
       status: resp.get("status"),
       retry_after: _header_ci(headers, "Retry-After"),
-      limit: _header_ci(headers, "X-RateLimit-Limit"),
-      remaining: _header_ci(headers, "X-RateLimit-Remaining"),
-      reset: _header_ci(headers, "X-RateLimit-Reset"),
+      limit: _header_ci(headers, "RateLimit-Limit")
+        ?? _header_ci(headers, "X-RateLimit-Limit"),
+      remaining: _header_ci(headers, "RateLimit-Remaining")
+        ?? _header_ci(headers, "X-RateLimit-Remaining"),
+      reset: _header_ci(headers, "RateLimit-Reset")
+        ?? _header_ci(headers, "X-RateLimit-Reset"),
     }
   }
 
@@ -1276,9 +1271,7 @@ let _MODULE_TEMPLATE = """
     var request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
     {{ op.header_cookie_lines }}{{ end }}
     {{ op.request_lines }}
-    if resp.status >= 400 {
-      {{ op.error_throw }}
-    }
+    {{ op.error_lines }}
     {{ op.return_lines }}
   }
   {{ op.body_variant_constructors }}
@@ -1291,6 +1284,7 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   let client_name = options.get("client_name") ?? "Client"
   let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
   let header_overrides = options.get("header_overrides") ?? {}
+  let transport = _transport_kind(options.get("transport") ?? "raw")
   let schemes = doc.get("security_schemes") ?? {}
   let doc_security = doc.get("security") ?? []
   let ops_raw = operations(doc)
@@ -1347,7 +1341,18 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     let op = entry.value
     let ret = op_return_types[entry.index]
     let choice = _resolve_security(op.security, doc_security)
-    let model = _build_op_model(doc, op, seen_names, choice, schemes, ret, helper_names, header_overrides)
+    let model = _build_op_model(
+      doc,
+      op,
+      seen_names,
+      choice,
+      schemes,
+      ret,
+      helper_names,
+      header_overrides,
+      transport,
+      module_name,
+    )
     seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
   }
@@ -1364,6 +1369,7 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     new_client_decl: new_client_decl,
     new_client_return: _render_new_client_return(client_fields),
     client_fields: client_fields,
+    connector_transport: transport == "connector_policy",
     auth_helpers: auth_helpers,
     operations: ops,
     response_aliases: alias_entries,
@@ -1617,6 +1623,18 @@ fn _normalize_generated_source(src, module_name) {
   return out.trim() + "\n"
 }
 
+fn _transport_kind(value) {
+  let transport = to_string(value ?? "raw")
+  if transport == "raw" {
+    return "raw"
+  }
+  if transport == "connector_policy" {
+    return "connector_policy"
+  }
+  throw "harn-openapi.codegen_module: unsupported transport '" + transport
+    + "' (expected 'raw' or 'connector_policy')"
+}
+
 fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   let kind = _scheme_kind(def)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
@@ -1814,7 +1832,18 @@ fn _signature_model(
   }
 }
 
-fn _build_op_model(doc, op, taken_names, choice, schemes, ret, helper_names, header_overrides) {
+fn _build_op_model(
+  doc,
+  op,
+  taken_names,
+  choice,
+  schemes,
+  ret,
+  helper_names,
+  header_overrides,
+  transport,
+  module_name,
+) {
   let fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
   let param_model = _operation_param_models(op.parameters)
   let path_params = param_model.path
@@ -1861,6 +1890,7 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret, helper_names, hea
   }
   let body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
   let body_prepare = _render_body_prepare(fn_name, body_variants)
+  let idempotency_key_param = _idempotency_key_param(header_params)
   return {
     fn_name: fn_name,
     method: op.method,
@@ -1872,7 +1902,17 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret, helper_names, hea
     has_body: has_body,
     body_prepare: body_prepare,
     header_cookie_lines: _render_header_cookie_lines(header_params, cookie_params),
-    request_lines: _render_request_lines(op.method, has_body, body_required, body_prepare),
+    request_lines: _render_request_lines(
+      op.method,
+      has_body,
+      body_required,
+      body_prepare,
+      transport,
+      ret,
+      fn_name,
+      module_name,
+      idempotency_key_param,
+    ),
     body_variant_constructors: _render_body_variant_constructors(body_variants),
     body_variant_fn_names: _body_variant_fn_names(body_variants),
     doc_comment: doc_comment,
@@ -1880,8 +1920,8 @@ fn _build_op_model(doc, op, taken_names, choice, schemes, ret, helper_names, hea
     security_note: security_note,
     return_type: ret.type_name,
     returns_nil: ret.returns_nil,
-    return_lines: _render_return_lines(fn_name, ret),
-    error_throw: _render_error_throw(fn_name),
+    return_lines: _render_return_lines(fn_name, ret, transport),
+    error_lines: _render_error_lines(fn_name, transport),
   }
 }
 
@@ -1906,6 +1946,19 @@ fn _render_error_throw(fn_name) {
     + "      body: resp.body,\n"
     + "      headers: resp.headers,\n"
     + "    }"
+}
+
+fn _render_error_lines(fn_name, transport) {
+  if transport == "connector_policy" {
+    return "if !(resp.ok ?? false) {\n"
+      + "    throw resp\n"
+      + "  }"
+  }
+  return "if resp.status >= 400 {\n"
+    + "    "
+    + _render_error_throw(fn_name)
+    + "\n"
+    + "  }"
 }
 
 fn path_bindings_parts_render(parts) {
@@ -1970,7 +2023,105 @@ fn _render_header_cookie_lines(header_params, cookie_params) {
   return join(lines, "\n  ")
 }
 
-fn _render_request_lines(method, has_body, body_required, body_prepare) {
+fn _idempotency_key_param(header_params) {
+  for p in header_params {
+    if to_string(p.get("name") ?? "").lower() == "idempotency-key" {
+      return p.ident
+    }
+  }
+  return nil
+}
+
+fn _connector_http_function(ret) {
+  if ret.response_mode == "json_any" || ret.response_mode == "json_dict" {
+    return "connector_http_json"
+  }
+  return "connector_http_request"
+}
+
+fn _connector_retry_attempts(method, idempotency_key_param) {
+  let normalized = to_string(method ?? "").lower()
+  if ["get", "head", "put", "delete", "options"].contains(normalized) {
+    return 3
+  }
+  if (normalized == "post" || normalized == "patch") && idempotency_key_param != nil {
+    return 3
+  }
+  return 1
+}
+
+fn _render_connector_options(method, fn_name, module_name, has_body, idempotency_key_param) {
+  var parts = [
+    _harn_dict_entry("headers", "request_headers"),
+    _harn_dict_entry("provider", "\"" + _escape_string(module_name) + "\""),
+    _harn_dict_entry("operation", "\"" + _escape_string(fn_name) + "\""),
+    _harn_dict_entry(
+      "retry",
+      "{max_attempts: " + to_string(_connector_retry_attempts(method, idempotency_key_param)) + "}",
+    ),
+  ]
+  if has_body {
+    parts = parts + [_harn_dict_entry("body", "body_str")]
+  }
+  if idempotency_key_param != nil {
+    parts = parts + [_harn_dict_entry("idempotency_key", idempotency_key_param)]
+  }
+  return _render_binding_dict(parts)
+}
+
+fn _render_connector_call(method, ret, options_expr, indent) {
+  return _connector_http_function(ret)
+    + "(\n"
+    + indent
+    + "  \""
+    + to_string(method ?? "get").upper()
+    + "\",\n"
+    + indent
+    + "  url,\n"
+    + indent
+    + "  "
+    + _indent_after_first(options_expr, indent)
+    + ",\n"
+    + indent
+    + ")"
+}
+
+fn _render_request_lines(
+  method,
+  has_body,
+  body_required,
+  body_prepare,
+  transport,
+  ret,
+  fn_name,
+  module_name,
+  idempotency_key_param,
+) {
+  if transport == "connector_policy" {
+    if !has_body {
+      let options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
+      return "let resp = " + _render_connector_call(method, ret, options, "  ")
+    }
+    if body_required {
+      let options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
+      return body_prepare + "\n  let resp = " + _render_connector_call(method, ret, options, "  ")
+    }
+    let no_body_options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
+    let body_options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
+    return "var resp = nil\n"
+      + "  if body == nil {\n"
+      + "    resp = "
+      + _render_connector_call(method, ret, no_body_options, "    ")
+      + "\n"
+      + "  } else {\n"
+      + "    "
+      + _indent_after_first(body_prepare, "    ")
+      + "\n"
+      + "    resp = "
+      + _render_connector_call(method, ret, body_options, "    ")
+      + "\n"
+      + "  }"
+  }
   if !has_body {
     return "let resp = http_" + method + "(url, {headers: request_headers})"
   }
@@ -1992,12 +2143,24 @@ fn _render_request_lines(method, has_body, body_required, body_prepare) {
     + "  }"
 }
 
-fn _render_return_lines(fn_name, ret) {
+fn _render_return_lines(fn_name, ret, transport) {
   if ret.returns_nil {
     return "return nil"
   }
   if ret.response_mode == "opaque" {
     return "return {status: resp.status, headers: resp.headers, body: resp.body}"
+  }
+  if transport == "connector_policy" {
+    if ret.response_mode == "json_any" {
+      return "return resp.json"
+    }
+    return "let raw = resp.json\n"
+      + "  if type_of(raw) != \"dict\" {\n"
+      + "    throw \""
+      + fn_name
+      + ": expected dict response, got \" + type_of(raw)\n"
+      + "  }\n"
+      + "  return raw"
   }
   if ret.response_mode == "json_any" {
     return "return json_parse(resp.body)"

@@ -1,0 +1,164 @@
+// connector_policy_transport_smoke — issue #69 coverage for the opt-in
+// generated transport that routes SDK calls through std/connectors/shared.
+import { codegen_module, parse } from "../src/lib"
+
+fn harn_cmd(harness: Harness, args: string) -> string {
+  let bin = harness.env.get("HARN_BIN")
+  if bin != nil && bin != "" {
+    return bin + " " + args
+  }
+  return "harn " + args
+}
+
+fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
+  if !contains(haystack, needle) {
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
+    require false, "${label}: expected source to contain \"${needle}\""
+  }
+}
+
+fn require_not_contains(harness: Harness, haystack: string, needle: string, label: string) {
+  if contains(haystack, needle) {
+    harness.stdio.println("---BEGIN GENERATED SOURCE---")
+    harness.stdio.println(haystack)
+    harness.stdio.println("---END GENERATED SOURCE---")
+    require false, "${label}: expected source NOT to contain \"${needle}\""
+  }
+}
+
+fn check_generates(harness: Harness, src: string) -> string {
+  let module_stem = harness.fs.temp_dir() + "/harn-openapi-connector-policy-" + uuid()
+  let module_path = module_stem + ".harn"
+  harness.fs.write_text(module_path, src)
+  let check_result = shell(harn_cmd(harness, "check " + module_path))
+  if !check_result.success {
+    harness.stdio.println("---harn check stderr---")
+    harness.stdio.println(check_result.stderr)
+    harness.stdio.println("---harn check stdout---")
+    harness.stdio.println(check_result.stdout)
+  }
+  require check_result.success, "generated connector-policy SDK must pass `harn check`"
+  let fmt_result = shell(harn_cmd(harness, "fmt --check " + module_path))
+  if !fmt_result.success {
+    harness.stdio.println("---harn fmt --check stderr---")
+    harness.stdio.println(fmt_result.stderr)
+    harness.stdio.println("---harn fmt --check stdout---")
+    harness.stdio.println(fmt_result.stdout)
+  }
+  require fmt_result.success, "generated connector-policy SDK must pass `harn fmt --check`"
+  return module_stem
+}
+
+fn run_generated(harness: Harness, module_stem: string) {
+  let runner_path = harness.fs.temp_dir() + "/harn-openapi-connector-policy-runtime-" + uuid() + ".harn"
+  harness.fs
+    .write_text(
+    runner_path,
+    "import {\n"
+      + "  create_item,\n"
+      + "  create_optional_item,\n"
+      + "  create_unsafe_item,\n"
+      + "  invalid_json,\n"
+      + "  list_items,\n"
+      + "  new_client,\n"
+      + "  rate_limit_metadata,\n"
+      + "} from \""
+      + module_stem
+      + "\"\n\n"
+      + "@test\n"
+      + "pipeline default() {\n"
+      + "  let client = new_client(\"https://api.example.com\")\n"
+      + "  let rates = rate_limit_metadata()\n"
+      + "  assert_eq(rates[0].operation_id, \"listItems\")\n"
+      + "  assert(rates[0].remaining_headers.contains(\"RateLimit-Remaining\"), \"standard rate-limit metadata should be emitted\")\n"
+      + "  http_mock_clear()\n"
+      + "  http_mock(\"GET\", \"https://api.example.com/items\", {responses: [{status: 503, body: \"busy\"}, {status: 200, body: \"{\\\"results\\\":[]}\"}]})\n"
+      + "  let page = list_items(client)\n"
+      + "  let list_calls = http_mock_calls({include_sensitive: true})\n"
+      + "  assert_eq(type_of(page.results), \"list\")\n"
+      + "  assert_eq(len(list_calls), 2)\n"
+      + "  http_mock_clear()\n"
+      + "  http_mock(\"POST\", \"https://api.example.com/items/create\", {responses: [{status: 503, body: \"busy\"}, {status: 201, body: \"{\\\"id\\\":\\\"created\\\"}\"}]})\n"
+      + "  let created = create_item(client, \"idem-1\", {name: \"thing\"})\n"
+      + "  let create_calls = http_mock_calls({include_sensitive: true})\n"
+      + "  assert_eq(created.id, \"created\")\n"
+      + "  assert_eq(len(create_calls), 2)\n"
+      + "  assert_eq(create_calls[0].headers[\"idempotency-key\"], \"idem-1\")\n"
+      + "  http_mock_clear()\n"
+      + "  http_mock(\"POST\", \"https://api.example.com/items/unsafe\", {responses: [{status: 503, body: \"busy\"}, {status: 201, body: \"{\\\"id\\\":\\\"unsafe\\\"}\"}]})\n"
+      + "  let unsafe_caught = try { create_unsafe_item(client, {name: \"unsafe\"}); nil } catch (e) { e }\n"
+      + "  let unsafe_calls = http_mock_calls({include_sensitive: true})\n"
+      + "  assert_eq(type_of(unsafe_caught), \"dict\")\n"
+      + "  assert_eq(unsafe_caught.category, \"overloaded\")\n"
+      + "  assert_eq(len(unsafe_calls), 1)\n"
+      + "  http_mock_clear()\n"
+      + "  http_mock(\"POST\", \"https://api.example.com/items/optional\", {responses: [{status: 204, body: \"\"}, {status: 204, body: \"\"}]})\n"
+      + "  let no_body = create_optional_item(client)\n"
+      + "  let with_body = create_optional_item(client, {name: \"optional\"})\n"
+      + "  let optional_calls = http_mock_calls({include_sensitive: true})\n"
+      + "  assert_eq(no_body, nil)\n"
+      + "  assert_eq(with_body, nil)\n"
+      + "  assert_eq(len(optional_calls), 2)\n"
+      + "  assert_eq(optional_calls[0].get(\"body\"), nil)\n"
+      + "  assert_eq(json_parse(optional_calls[1].body).name, \"optional\")\n"
+      + "  http_mock_clear()\n"
+      + "  http_mock(\"GET\", \"https://api.example.com/items/invalid-json\", {status: 200, body: \"not json\"})\n"
+      + "  let invalid_caught = try { invalid_json(client); nil } catch (e) { e }\n"
+      + "  assert_eq(type_of(invalid_caught), \"dict\")\n"
+      + "  assert_eq(invalid_caught.category, \"invalid_json\")\n"
+      + "  assert_eq(invalid_caught.status, 200)\n"
+      + "  assert_eq(invalid_caught.operation, \"invalid_json\")\n"
+      + "  harness.stdio.println(\"connector_policy runtime: ok\")\n"
+      + "}\n",
+  )
+  let result = shell(harn_cmd(harness, "run " + runner_path))
+  if !result.success {
+    harness.stdio.println("---connector-policy runtime stderr---")
+    harness.stdio.println(result.stderr)
+    harness.stdio.println("---connector-policy runtime stdout---")
+    harness.stdio.println(result.stdout)
+  }
+  require result.success, "generated connector-policy SDK runtime assertions must pass"
+}
+
+@test
+pipeline test_main() {
+  let raw = harness.fs.read_text(source_dir() + "/fixtures/connector_policy.openapi.json")
+  let doc = parse(raw)
+  let raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client"})
+  require_not_contains(
+    harness,
+    raw_src,
+    "std/connectors/shared",
+    "raw transport should not import connector helpers",
+  )
+  require_contains(harness, raw_src, "http_get(", "raw transport remains default")
+  let src = codegen_module(
+    doc,
+    {module_name: "connector_policy", client_name: "Client", transport: "connector_policy"},
+  )
+  require_contains(
+    harness,
+    src,
+    "import { connector_http_json, connector_http_request } from \"std/connectors/shared\"",
+    "connector helper import",
+  )
+  require_contains(harness, src, "connector_http_json(\n    \"GET\"", "GET connector transport")
+  require_contains(harness, src, "connector_http_json(\n    \"POST\"", "POST connector transport")
+  require_contains(
+    harness,
+    src,
+    "connector_http_request(\n      \"POST\"",
+    "opaque connector transport",
+  )
+  require_contains(harness, src, "idempotency_key: idempotency_key", "idempotency option")
+  require_contains(harness, src, "retry: {max_attempts: 3}", "bounded retry option")
+  require_contains(harness, src, "retry: {max_attempts: 1}", "unsafe write no-retry option")
+  require_not_contains(harness, src, "http_get(", "raw GET transport should not be emitted")
+  require_not_contains(harness, src, "http_post(", "raw POST transport should not be emitted")
+  let module_stem = check_generates(harness, src)
+  run_generated(harness, module_stem)
+  harness.stdio.println("connector_policy_transport_smoke: ok")
+}

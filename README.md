@@ -22,6 +22,11 @@ repo keeps that shared logic in one pure-Harn package:
 - generate typed Harn SDK source for downstream provider repos;
 - keep a pinned real-world Notion OpenAPI fixture for deterministic coverage.
 
+The generator is intentionally scoped to focused API packages backed by an
+OpenAPI document. Broad cloud SDK families, provider discovery formats, Smithy,
+and provider-specific auth flows belong in dedicated packages above this layer,
+not in `harn-openapi`.
+
 The repo intentionally has no Cargo workspace, `package.json`, generated build
 system, or non-Harn runtime dependency. CI and local development install the
 pinned Harn CLI from crates.io using `.harn-version`.
@@ -115,6 +120,8 @@ let limits = rate_limit_metadata(doc)
 let src = codegen_module(doc, {
   module_name: "notion",
   client_name: "Client",
+  // Optional. Defaults to raw http_get/post/... calls.
+  transport: "connector_policy",
 })
 write_file("./src/lib.harn", src)
 write_file(
@@ -170,7 +177,8 @@ import { parse } from "../src/lib"
   conventions for downstream retry/backoff code.
 - `codegen_module(doc: OpenApiDoc, options: dict) -> string` — emit a typed Harn SDK
   module source string with per-scheme security dispatch, credential-provider
-  hooks, pagination metadata, and rate-limit metadata (see below).
+  hooks, optional connector-policy transport, pagination metadata, and
+  rate-limit metadata (see below).
 - `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
   generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`.
 
@@ -247,6 +255,38 @@ are merged into the request headers, and cookie parameters are appended to the
 
 Out of scope for v0: full OAuth2 flows (authorization-code, device,
 PKCE) and `mutualTLS` client-certificate plumbing.
+
+### Transport policy
+
+Generated SDKs default to the historical raw transport: direct `http_get`,
+`http_post`, and sibling calls with structured throws for non-2xx responses.
+That keeps existing generated packages stable until they opt in.
+
+For connector packages that want shared retry, idempotency, JSON parse, and
+rate-limit behavior, select the connector policy transport:
+
+```harn
+let src = codegen_module(doc, {
+  module_name: "example_sdk",
+  client_name: "ExampleClient",
+  transport: "connector_policy",
+})
+```
+
+Connector-policy output imports `connector_http_request` and
+`connector_http_json` from `std/connectors/shared`. JSON response operations
+call `connector_http_json`; opaque or empty-response operations call
+`connector_http_request`. On helper errors, generated functions throw the
+helper envelope directly, so callers can branch on `category`, `status`,
+`retryable`, `retry_after_ms`, `error`, and `rate_limit` without parsing a
+string.
+
+Safe or idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) emit a
+bounded retry policy. `POST` and `PATCH` emit that retry policy only when the
+OpenAPI operation declares an explicit `Idempotency-Key` header parameter; the
+generated function also threads that parameter into `options.idempotency_key`
+for the shared helper. Unsafe writes without an idempotency key emit
+`max_attempts: 1`, leaving retries disabled by default.
 
 ### Pagination and rate-limit helpers
 
