@@ -123,6 +123,24 @@ fn run_generated(harness: Harness, module_stem: string) {
   require result.success, "generated connector-policy SDK runtime assertions must pass"
 }
 
+fn build_json_only_doc() -> string {
+  return json_stringify(
+    {
+      openapi: "3.1.0",
+      info: {title: "JSON-only API", version: "0.0.1"},
+      servers: [{url: "https://api.example.com"}],
+      paths: {
+        "/items": {
+          get: {
+            operationId: "list-items",
+            responses: {"200": {description: "ok", content: {"application/json": {schema: {type: "object"}}}}},
+          },
+        },
+      },
+    },
+  )
+}
+
 @test
 pipeline test_main() {
   let raw = harness.fs.read_text(source_dir() + "/fixtures/connector_policy.openapi.json")
@@ -157,5 +175,22 @@ pipeline test_main() {
     "raw transport should not import connector helpers",
   )
   require_contains(harness, raw_src, "http_get(", "explicit raw transport emits raw GET")
+  let json_only_src = codegen_module(
+    parse(build_json_only_doc()),
+    {module_name: "json_only_policy", client_name: "Client"},
+  )
+  require_contains(
+    harness,
+    json_only_src,
+    "import { connector_http_json } from \"std/connectors/shared\"",
+    "JSON-only connector import",
+  )
+  require_not_contains(
+    harness,
+    json_only_src,
+    "connector_http_request",
+    "JSON-only generated SDK should not import unused opaque connector helper",
+  )
+  check_generates(harness, json_only_src)
   harness.stdio.println("connector_policy_transport_smoke: ok")
 }

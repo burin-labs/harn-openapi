@@ -995,8 +995,8 @@ let _MODULE_TEMPLATE = """
    * Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
    * Module:     {{ module_name }}
    */
-  {{ if connector_transport }}
-  import { connector_http_json, connector_http_request } from "std/connectors/shared"
+  {{ if has_connector_imports }}
+  import { {{ connector_imports }} } from "std/connectors/shared"
   {{ end }}
 
   {{ for alias in response_aliases }}
@@ -1360,6 +1360,7 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   for name in alias_cache.order {
     alias_entries = alias_entries + [{source: alias_cache.by_name.get(name)}]
   }
+  let connector_imports = _connector_imports(op_return_types, transport)
   let bindings = {
     doc_title: (doc.get("info") ?? {}).get("title") ?? module_name,
     openapi_version: doc.openapi,
@@ -1369,7 +1370,8 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     new_client_decl: new_client_decl,
     new_client_return: _render_new_client_return(client_fields),
     client_fields: client_fields,
-    connector_transport: transport == "connector_policy",
+    has_connector_imports: connector_imports != "",
+    connector_imports: connector_imports,
     auth_helpers: auth_helpers,
     operations: ops,
     response_aliases: alias_entries,
@@ -2037,6 +2039,30 @@ fn _connector_http_function(ret) {
     return "connector_http_json"
   }
   return "connector_http_request"
+}
+
+fn _connector_imports(return_types, transport: string) -> string {
+  if transport != "connector_policy" {
+    return ""
+  }
+  var needs_json = false
+  var needs_request = false
+  for ret in return_types {
+    let helper = _connector_http_function(ret)
+    if helper == "connector_http_json" {
+      needs_json = true
+    } else if helper == "connector_http_request" {
+      needs_request = true
+    }
+  }
+  var imports = []
+  if needs_json {
+    imports = imports + ["connector_http_json"]
+  }
+  if needs_request {
+    imports = imports + ["connector_http_request"]
+  }
+  return join(imports, ", ")
 }
 
 fn _connector_retry_attempts(method, idempotency_key_param) {
