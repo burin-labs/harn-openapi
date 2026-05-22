@@ -9,7 +9,6 @@ harn = ">=0.8,<0.9"
 
 [exports]
 default = "src/lib.harn"
-types = "src/types.harn"
 
 # Harn-side package dependencies live here. This package currently has none.
 [dependencies]

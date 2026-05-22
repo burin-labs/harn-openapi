@@ -1,4 +1,4 @@
-// connector_policy_transport_smoke — issue #69 coverage for the opt-in
+// connector_policy_transport_smoke — issue #69 coverage for the default
 // generated transport that routes SDK calls through std/connectors/shared.
 import { codegen_module, parse } from "../src/lib"
 
@@ -127,18 +127,7 @@ fn run_generated(harness: Harness, module_stem: string) {
 pipeline test_main() {
   let raw = harness.fs.read_text(source_dir() + "/fixtures/connector_policy.openapi.json")
   let doc = parse(raw)
-  let raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client"})
-  require_not_contains(
-    harness,
-    raw_src,
-    "std/connectors/shared",
-    "raw transport should not import connector helpers",
-  )
-  require_contains(harness, raw_src, "http_get(", "raw transport remains default")
-  let src = codegen_module(
-    doc,
-    {module_name: "connector_policy", client_name: "Client", transport: "connector_policy"},
-  )
+  let src = codegen_module(doc, {module_name: "connector_policy", client_name: "Client"})
   require_contains(
     harness,
     src,
@@ -156,9 +145,17 @@ pipeline test_main() {
   require_contains(harness, src, "idempotency_key: idempotency_key", "idempotency option")
   require_contains(harness, src, "retry: {max_attempts: 3}", "bounded retry option")
   require_contains(harness, src, "retry: {max_attempts: 1}", "unsafe write no-retry option")
-  require_not_contains(harness, src, "http_get(", "raw GET transport should not be emitted")
-  require_not_contains(harness, src, "http_post(", "raw POST transport should not be emitted")
+  require_not_contains(harness, src, "http_get(", "default GET transport should not use raw HTTP")
+  require_not_contains(harness, src, "http_post(", "default POST transport should not use raw HTTP")
   let module_stem = check_generates(harness, src)
   run_generated(harness, module_stem)
+  let raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"})
+  require_not_contains(
+    harness,
+    raw_src,
+    "std/connectors/shared",
+    "raw transport should not import connector helpers",
+  )
+  require_contains(harness, raw_src, "http_get(", "explicit raw transport emits raw GET")
   harness.stdio.println("connector_policy_transport_smoke: ok")
 }

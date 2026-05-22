@@ -63,7 +63,7 @@ version = "0.0.0"
     harness,
     smoke_root,
     "add harn-openapi dependency",
-    _sh_quote(harn_bin) + " add " + _sh_quote(package_ref),
+    _sh_quote(harn_bin) + " add --alias harn-openapi " + _sh_quote(package_ref),
   )
   _run(
     harness,
@@ -76,7 +76,6 @@ version = "0.0.0"
     smoke_root + "/smoke.harn",
     """
 import { operations, parse } from "harn-openapi/default"
-import "harn-openapi/types"
 
 pipeline default() {
   let raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"

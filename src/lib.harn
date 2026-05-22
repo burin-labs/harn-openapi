@@ -57,9 +57,10 @@
 //   codegen_module(doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides?,
-//       transport? }. `transport: "connector_policy"` emits calls through
-//       std/connectors/shared while the default raw transport keeps emitting
-//       direct `http_get` / `http_post` / ... calls.
+//       transport? }. The default `connector_policy` transport emits calls
+//       through std/connectors/shared. `transport: "raw"` keeps the legacy
+//       direct `http_get` / `http_post` / ... calls for generated packages
+//       that have not moved to the shared HTTP policy envelope yet.
 //       Uses Harn's stdlib `render_string` template engine so generated-code
 //       rendering stays aligned with the runtime instead of a local template
 //       parser.
@@ -82,7 +83,6 @@
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
-import "./types"
 
 // -------------------------------------------------------------------------------------------------
 // Types
@@ -1284,7 +1284,7 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   let client_name = options.get("client_name") ?? "Client"
   let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
   let header_overrides = options.get("header_overrides") ?? {}
-  let transport = _transport_kind(options.get("transport") ?? "raw")
+  let transport = _transport_kind(options.get("transport") ?? "connector_policy")
   let schemes = doc.get("security_schemes") ?? {}
   let doc_security = doc.get("security") ?? []
   let ops_raw = operations(doc)
@@ -2176,7 +2176,7 @@ fn _render_return_lines(fn_name, ret, transport) {
 
 fn _render_binding_dict(parts) {
   let inline = "{" + join(parts, ", ") + "}"
-  if len(parts) == 0 || len(inline) + 2 <= 100 {
+  if len(parts) == 0 || len(inline) <= 100 {
     return inline
   }
   var out = "{\n"
