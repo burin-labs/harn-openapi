@@ -22,7 +22,7 @@ By default, this also installs harn-cli from crates.io and runs:
   harn check src scripts
   harn lint src scripts
   harn fmt --check src scripts tests
-  harn run tests/*.harn
+  harn test tests --parallel --timing
   harn run scripts/regen_demo.harn
   harn run scripts/package_install_smoke.harn
 """
@@ -161,10 +161,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
     harness,
     repo_root,
     "run smoke tests",
-    "for test in tests/*.harn; do "
-      + env_prefix
-      + _sh_quote(harn_bin)
-      + " run \"$test\" || exit 1; done",
+    env_prefix + _sh_quote(harn_bin) + " test tests --parallel --timing",
   )
   _run(
     harness,

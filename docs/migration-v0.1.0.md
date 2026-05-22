@@ -1,13 +1,14 @@
 # harn-openapi v0.1.0 migration note
 
 `harn-openapi` v0.1.0 is the first package-manager-ready release shape for
-connector and SDK repos. It replaces sibling-checkout assumptions with a
-versioned Harn package dependency while keeping path overrides for local
-multi-repo development.
+connector and SDK repos. Once the `v0.1.0` tag exists, it replaces
+sibling-checkout assumptions with a versioned Harn package dependency while
+keeping path overrides for local multi-repo development.
 
 ## Consumer dependency
 
-Use a versioned package ref in normal connector and SDK repos:
+Use a versioned package ref in normal connector and SDK repos after the release
+tag is published:
 
 ```sh
 harn add github.com/burin-labs/harn-openapi@v0.1.0
@@ -26,9 +27,9 @@ aliases in scope:
 import "harn-openapi/types"
 ```
 
-Do not require a sibling `../harn-openapi` checkout in CI or in fresh-clone
-bootstrap docs. CI should install the pinned `harn-cli` from crates.io and let
-Harn resolve package dependencies from `harn.toml`.
+After the release tag exists, do not require a sibling `../harn-openapi`
+checkout in CI or in fresh-clone bootstrap docs. CI should use the pinned Harn
+CLI and let Harn resolve package dependencies from `harn.toml`.
 
 ## Generated SDK names
 
@@ -50,13 +51,13 @@ harn-openapi = { path = "../harn-openapi" }
 ```
 
 Before opening a PR in a consuming repo, switch back to the versioned package
-dependency or document why the PR is intentionally stacked on unpublished
-`harn-openapi` work.
+dependency if the tag exists. Otherwise, document that the PR is intentionally
+stacked on unpublished `harn-openapi` work.
 
 ## Verification
 
-Run the consumer repo's normal Harn gate with the crates.io-installed CLI. In
-this repo, the equivalent package-manager smoke is:
+Run the consumer repo's normal Harn gate with the pinned Harn CLI. In this
+repo, the equivalent package-manager smoke is:
 
 ```sh
 HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.0 \

@@ -1,61 +1,66 @@
-# AGENTS.md — harn-openapi
+# AGENTS.md - harn-openapi
 
-**Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) first.** It contains the
-pivot context, what's blocked, what's unblocked, and the v0 milestones.
+Use this with [README.md](./README.md). This file is the current source of
+truth for coding-agent instructions in this repo.
 
-## Quick repo conventions
+## Repo rules
 
-- File extension: `.harn`. Use `snake_case` for filenames (e.g. `parse_paths.harn`).
-- Repo directories use `kebab-case` (already applied to this repo).
-- Entry point: `src/lib.harn`.
-- Tests live under `tests/` and `conformance/` (paired `.harn` + `.expected`
-  fixtures, mirroring upstream harn conventions).
-- Pinned external fixtures live under `tests/fixtures/` (e.g. the Notion
-  OpenAPI spec snapshot).
+- This is a pure Harn package. Do not add a Cargo workspace, `package.json`, or
+  generated build system.
+- Entry points are `src/lib.harn` and `src/types.harn`.
+- Use `.harn` files with `snake_case` names. Keep directories `kebab-case`.
+- Tests live in `tests/*.harn`. Fixtures live in `tests/fixtures/`.
+- Keep the Notion OpenAPI fixture pinned. Refresh it only when the task asks
+  for a fixture refresh.
 
-## How to test
+## Harn references
 
-Install the pinned Harn CLI from crates.io, then run the local gate:
+- For repo-wide Harn conventions, defer to
+  [`/Users/ksinder/projects/harn/AGENTS.md`](/Users/ksinder/projects/harn/AGENTS.md).
+- For syntax, use
+  [`/Users/ksinder/projects/harn/docs/llm/harn-quickref.md`](/Users/ksinder/projects/harn/docs/llm/harn-quickref.md).
+- Before editing Harn code, run `harn skills list --json` and fetch the
+  narrowest matching skill with `harn skills get <name> --full`.
+
+## Local gate
+
+Install the pinned CLI, then run the same checks CI cares about:
 
 ```sh
 cargo install harn-cli --version "$(cat .harn-version)" --locked
 harn check src scripts
 harn lint src scripts
 harn fmt --check src scripts tests
-for test in tests/*.harn; do
-  harn run "$test" || exit 1
-done
+HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
+HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
+harn run scripts/check_fixture_staleness.harn
 ```
 
-## Fixture refresh workflow
+`HARN_BIN` lets generated-code tests shell out to the same CLI version that is
+running the suite.
 
-The Notion OpenAPI fixture is pinned for deterministic tests. Refresh it only
-when intentionally updating the snapshot:
+## Fixture refresh
+
+Refresh the Notion fixture only for deliberate snapshot updates:
 
 ```sh
 cp tests/fixtures/notion.openapi.json /tmp/notion.openapi.old.json
-cd /Users/ksinder/projects/harn
-cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-openapi/scripts/refresh_fixtures.harn
-cargo run --quiet --bin harn -- run /Users/ksinder/projects/harn-openapi/scripts/fixture_diff.harn -- \
+harn run scripts/refresh_fixtures.harn
+harn run scripts/fixture_diff.harn -- \
   /tmp/notion.openapi.old.json \
-  /Users/ksinder/projects/harn-openapi/tests/fixtures/notion.openapi.json
+  tests/fixtures/notion.openapi.json
+harn run scripts/check_fixture_staleness.harn
 ```
 
-Commit the updated JSON and `tests/fixtures/notion.openapi.json.meta.toml`
-together. CI runs `scripts/check_fixture_staleness.harn`: under 90 days is OK,
-90–180 days prints a warning, and over 180 days fails non-`main` branches while
-warning on `main`.
+Commit `tests/fixtures/notion.openapi.json` and
+`tests/fixtures/notion.openapi.json.meta.toml` together. The staleness check is
+quiet under 90 days, warns from 90 to 180 days, and fails non-`main` branches
+after 180 days.
 
-## Upstream conventions
+## Do not
 
-For general Harn coding conventions and the broader project layout, defer to
-[`/Users/ksinder/projects/harn/AGENTS.md`](/Users/ksinder/projects/harn/AGENTS.md).
-The Harn quickref autoload lives in `.Codex/skills/harn-scripting/SKILL.md`
-inside that repo and is the fastest way to get oriented on syntax.
-
-## Don't
-
-- Don't add a Cargo workspace, package.json, or any non-Harn build tooling
-  to this repo. It's pure Harn.
-- Don't hand-edit `LICENSE-*` or `.gitignore`.
+- Do not hand-edit `LICENSE-*` or `.gitignore`.
+- Do not auto-refresh external fixtures during unrelated work.
+- Do not publish docs that require a sibling checkout unless the section is
+  explicitly about local multi-repo development.
