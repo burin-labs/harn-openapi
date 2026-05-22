@@ -371,10 +371,13 @@ type PaginationPlan = {
   kind: string,
   items_field?: string,
   cursor_param?: string,
+  cursor_location?: string,
   cursor_response_field?: string,
   has_more_field?: string,
   page_param?: string,
+  page_location?: string,
   page_size_param?: string,
+  page_size_location?: string,
   next_link_field?: string,
   link_header?: string,
 }
@@ -794,42 +797,51 @@ pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
 
 fn _pagination_plan_for_op(doc, op) {
   let params = op.parameters ?? []
-  let cursor_param = _first_param_named(params, ["start_cursor", "cursor", "after", "page_token", "next_page_token"])
-  let page_param = _first_param_named(params, ["page", "page_number", "page_index", "offset"])
-  let page_size_param = _first_param_named(params, ["page_size", "per_page", "limit", "size"])
+  let body_props = _request_body_json_properties(doc, op)
+  let cursor = _pagination_request_field(
+    params,
+    body_props,
+    ["start_cursor", "cursor", "after", "page_token", "next_page_token"],
+  )
+  let page = _pagination_request_field(params, body_props, ["page", "page_number", "page_index", "offset"])
+  let page_size = _pagination_request_field(params, body_props, ["page_size", "per_page", "limit", "size"])
   let picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" {
     return nil
   }
   let full = schema(doc, picked.schema)
   let props = full.get("properties") ?? {}
-  let items_field = _first_present_key(props, ["results", "data", "items", "records", "objects"])
+  let items_field = _first_present_key(props, ["results", "templates", "data", "items", "records", "objects"])
   let next_cursor = _first_present_key(props, ["next_cursor", "next_page_token", "cursor", "after"])
   let has_more = _first_present_key(props, ["has_more", "hasMore", "more"])
   let next_link = _first_present_key(props, ["next", "next_url", "next_link", "nextPageUrl"])
   let link_header = _success_response_header(doc, op, "Link")
-  if cursor_param != nil && next_cursor != nil {
+  if cursor.name != nil && next_cursor != nil {
     return {
       operation_id: op.operation_id,
       method: op.method,
       path: op.path,
       kind: "cursor",
       items_field: items_field,
-      cursor_param: cursor_param,
+      cursor_param: cursor.name,
+      cursor_location: cursor.location,
       cursor_response_field: next_cursor,
       has_more_field: has_more,
-      page_size_param: page_size_param,
+      page_size_param: page_size.name,
+      page_size_location: page_size.location,
     }
   }
-  if page_param != nil {
+  if page.name != nil {
     return {
       operation_id: op.operation_id,
       method: op.method,
       path: op.path,
       kind: "page",
       items_field: items_field,
-      page_param: page_param,
-      page_size_param: page_size_param,
+      page_param: page.name,
+      page_location: page.location,
+      page_size_param: page_size.name,
+      page_size_location: page_size.location,
     }
   }
   if next_link != nil || link_header != nil {
@@ -844,6 +856,31 @@ fn _pagination_plan_for_op(doc, op) {
     }
   }
   return nil
+}
+
+fn _request_body_json_properties(doc, op) -> dict {
+  let request_schema = _request_json_schema(doc, op.request_body)
+  if request_schema == nil {
+    return {}
+  }
+  let full = schema(doc, request_schema)
+  let props = full.get("properties")
+  if type_of(props) == "dict" {
+    return props
+  }
+  return {}
+}
+
+fn _pagination_request_field(params, body_props, names) -> dict {
+  let query_field = _first_param_named(params, names)
+  if query_field != nil {
+    return {name: query_field, location: "query"}
+  }
+  let body_field = _first_present_key(body_props, names)
+  if body_field != nil {
+    return {name: body_field, location: "body"}
+  }
+  return {name: nil, location: nil}
 }
 
 fn _first_param_named(params, names) {
@@ -1104,7 +1141,7 @@ let _MODULE_TEMPLATE = """
 
   /**
    * Compute the next-page directive from `response` according to `plan`.
-   * Returns a dict with `done: bool` plus either a `query` dict to merge
+   * Returns a dict with `done: bool` plus a `query` or `body` dict to merge
    * into the next call, or a `url` to follow (next-link style).
    */
   pub fn pagination_next(response: dict, plan: dict) -> dict {
@@ -1122,7 +1159,11 @@ let _MODULE_TEMPLATE = """
       } else {
         response.get(has_more_field)
       }
-      return {done: cursor == nil || !has_more, query: {[plan.cursor_param]: cursor}}
+      let field = plan.get("cursor_param")
+      if plan.get("cursor_location") == "body" {
+        return {done: cursor == nil || !has_more, body: {[field]: cursor}}
+      }
+      return {done: cursor == nil || !has_more, query: {[field]: cursor}}
     }
     if kind == "page" {
       return {done: false, query: {}}

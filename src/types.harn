@@ -292,10 +292,13 @@ type PaginationPlan = {
   kind: string,
   items_field?: string,
   cursor_param?: string,
+  cursor_location?: string,
   cursor_response_field?: string,
   has_more_field?: string,
   page_param?: string,
+  page_location?: string,
   page_size_param?: string,
+  page_size_location?: string,
   next_link_field?: string,
   link_header?: string,
 }

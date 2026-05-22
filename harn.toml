@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-openapi"
+docs_url = "https://github.com/burin-labs/harn-openapi#readme"
+harn = ">=0.8,<0.9"
 
 [exports]
 default = "src/lib.harn"

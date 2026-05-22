@@ -125,22 +125,10 @@ let _TINY_DOC = """
   """
 
 fn _count_occurrences(haystack: string, needle: string) -> int {
-  var count = 0
-  var idx = 0
-  let hn = len(haystack)
-  let nn = len(needle)
-  if nn == 0 {
+  if needle == "" {
     return 0
   }
-  while idx + nn <= hn {
-    if substring(haystack, idx, nn) == needle {
-      count = count + 1
-      idx = idx + nn
-    } else {
-      idx = idx + 1
-    }
-  }
-  return count
+  return len(split(haystack, needle)) - 1
 }
 
 pipeline test_main() {
