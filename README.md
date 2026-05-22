@@ -5,9 +5,8 @@ SDK source code from them. Acts as the reference example of a non-trivial
 external Harn library and powers downstream typed SDKs such as
 [notion-sdk-harn](https://github.com/burin-labs/notion-sdk-harn).
 
-> **Status: v0.1.0 release candidate** - the parser, walker, codegen, package
-> metadata, and CI surfaces are intended to be the first production-ready
-> external Harn package contract.
+> Status: `0.1.0` pre-release package shape. Until a release tag exists, use a
+> path dependency or explicit `@HEAD` package smoke for unreleased work.
 
 ## Intent
 
@@ -28,10 +27,10 @@ and provider-specific auth flows belong in dedicated packages above this layer,
 not in `harn-openapi`.
 
 The repo intentionally has no Cargo workspace, `package.json`, generated build
-system, or non-Harn runtime dependency. CI and local development install the
-pinned Harn CLI from crates.io using `.harn-version`.
+system, or non-Harn runtime dependency. CI and local development use the Harn
+CLI pinned by `.harn-version`.
 
-## Repository Layout
+## Repository layout
 
 | Path | Purpose |
 |---|---|
@@ -47,30 +46,32 @@ pinned Harn CLI from crates.io using `.harn-version`.
 | `scripts/fixture_diff.harn` | Prints a structured operation/schema diff between two fixture captures. |
 | `scripts/check_fixture_staleness.harn` | CI guard for fixture age. |
 | `scripts/package_install_smoke.harn` | Clean temp-project install/import smoke for package-manager consumption. |
-| `.harn-version` | Pinned crates.io `harn-cli` version used by CI and local gates. |
-| `scripts/bump_harn_cli_version.harn` | Updates the pinned crates.io `harn-cli` version and runs the local gate. |
+| `.harn-version` | Pinned Harn CLI version used by CI and local gates. |
+| `scripts/bump_harn_cli_version.harn` | Updates the pinned Harn CLI version and runs the local gate. |
 | `.github/workflows/ci.yml` | Main Harn check/lint/fmt/test/demo workflow. |
 | `.github/workflows/fixture-staleness.yml` | Lightweight fixture freshness workflow. |
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
-| `SESSION_PROMPT.md` | Historical project bootstrap and v0 milestone context. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
 
 ## Install
 
-```sh
-harn add github.com/burin-labs/harn-openapi@v0.1.0
-```
-
-For local multi-repo development, a path dependency is still useful:
+For unreleased local or stacked work, use a path dependency:
 
 ```toml
 [dependencies]
 harn-openapi = { path = "../harn-openapi" }
 ```
 
+After the `v0.1.0` release tag exists, consumers can use the versioned package
+ref:
+
+```sh
+harn add github.com/burin-labs/harn-openapi@v0.1.0
+```
+
 The CI package smoke uses the same package-manager path against the current
-checkout (`<repo>@HEAD`) so pull requests are verified before a release tag
-exists. To test a published ref locally:
+checkout (`<repo>@HEAD`) so pull requests are checked before a release tag
+exists. To test a published ref locally after tagging:
 
 ```sh
 HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.0 \
@@ -329,8 +330,8 @@ Downstream SDK wrappers can expose the same two styles as methods, e.g.
 
 ## Development
 
-This repo is being built out by Claude Code sessions following a structured
-prompt. **Read [SESSION_PROMPT.md](./SESSION_PROMPT.md) before making changes.**
+Read [AGENTS.md](./AGENTS.md) before making changes. It has the current agent
+rules, local gate, and fixture workflow.
 
 The upstream Harn language and runtime live at
 [burin-labs/harn](https://github.com/burin-labs/harn). For local development,
@@ -338,9 +339,10 @@ clone it next to this repo at `../harn`.
 
 ### Local checks
 
-The GitHub workflows install `harn-cli` from crates.io, but local development
-can use either a released `harn` binary or the upstream checkout. With a
-released binary:
+The GitHub workflows install the Harn version pinned by `.harn-version`, using
+the published release archive when available and falling back to crates.io.
+Local development can use either a released `harn` binary or the upstream
+checkout. With a released binary:
 
 ```sh
 harn check src scripts
@@ -349,26 +351,30 @@ harn fmt --check src scripts tests
 HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
+harn run scripts/check_fixture_staleness.harn
 ```
 
 When using the sibling upstream checkout instead:
 
 ```sh
+OPENAPI_ROOT="$(pwd)"
 cd ../harn
-cargo run --quiet --bin harn -- check ../harn-openapi/src ../harn-openapi/scripts
-cargo run --quiet --bin harn -- lint ../harn-openapi/src ../harn-openapi/scripts
-cargo run --quiet --bin harn -- fmt --check ../harn-openapi/src ../harn-openapi/scripts ../harn-openapi/tests
-HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- test ../harn-openapi/tests --parallel --timing
-HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/regen_demo.harn
-HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run ../harn-openapi/scripts/package_install_smoke.harn
+cargo run --quiet --bin harn -- check "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts"
+cargo run --quiet --bin harn -- lint "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts"
+cargo run --quiet --bin harn -- fmt --check "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts" "$OPENAPI_ROOT/tests"
+HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- test "$OPENAPI_ROOT/tests" --parallel --timing
+HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/regen_demo.harn"
+HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/package_install_smoke.harn"
+cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/check_fixture_staleness.harn"
 ```
 
 ### CI and merge queue
 
 Both workflows run on pull requests, `main` pushes, merge queue
-`merge_group` events, and manual dispatch. They install a pinned crates.io
-`harn-cli` version with `cargo install --locked`, cache the install and cargo
-registry data, and then run repo-local Harn commands.
+`merge_group` events, and manual dispatch. They install the Harn version pinned
+by `.harn-version`: first from the published Linux release archive, then from
+crates.io with `cargo install --locked` if the archive is unavailable. They
+then run repo-local Harn commands.
 
 `main` is protected by GitHub's merge queue. Changes should be pushed on a
 branch, opened as a PR, and queued after checks pass. The merge queue runs the
@@ -399,8 +405,8 @@ between 90 and 180 days, and fails non-`main` branches once the fixture is over
 
 ### Harn CLI version bumps
 
-GitHub Actions pins `harn-cli` from crates.io via `.harn-version`. When a new
-Harn release is published, update that pin and run the local gate with:
+GitHub Actions reads the Harn version from `.harn-version`. When a new Harn
+release is published, update that pin and run the local gate with:
 
 ```sh
 harn run scripts/bump_harn_cli_version.harn -- 0.8.32
@@ -408,7 +414,7 @@ harn run scripts/bump_harn_cli_version.harn -- 0.8.32
 
 The script accepts a leading `v` (`v0.8.32` is normalized to `0.8.32`),
 installs that `harn-cli` release into a temp directory, then runs check, lint,
-formatting, all smoke tests, `scripts/regen_demo.harn`, and
+formatting, the smoke test suite, `scripts/regen_demo.harn`, and
 `scripts/package_install_smoke.harn`. Use `--no-verify` only when you
 intentionally want to edit the version pin without running the gate.
 
