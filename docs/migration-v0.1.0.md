@@ -20,11 +20,10 @@ Then import through the package export path:
 import { codegen_module, operations, parse } from "harn-openapi/default"
 ```
 
-The `types` export is intended for side-effect import when consumers want type
-aliases in scope:
+Type aliases are available from the default export:
 
 ```harn
-import "harn-openapi/types"
+import "harn-openapi/default"
 ```
 
 After the release tag exists, do not require a sibling `../harn-openapi`

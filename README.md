@@ -34,9 +34,8 @@ CLI pinned by `.harn-version`.
 
 | Path | Purpose |
 |---|---|
-| `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and `src/types.harn` exports shared types. |
+| `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and carries the typed public surface. |
 | `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
-| `src/types.harn` | Type aliases used by the public surface and tests. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
@@ -259,12 +258,9 @@ PKCE) and `mutualTLS` client-certificate plumbing.
 
 ### Transport policy
 
-Generated SDKs default to the historical raw transport: direct `http_get`,
-`http_post`, and sibling calls with structured throws for non-2xx responses.
-That keeps existing generated packages stable until they opt in.
-
-For connector packages that want shared retry, idempotency, JSON parse, and
-rate-limit behavior, select the connector policy transport:
+Generated SDKs default to the connector policy transport. It avoids deprecated
+ambient HTTP builtins in generated code and routes requests through the shared
+retry, idempotency, JSON parse, and rate-limit policy layer:
 
 ```harn
 let src = codegen_module(doc, {
@@ -288,6 +284,20 @@ OpenAPI operation declares an explicit `Idempotency-Key` header parameter; the
 generated function also threads that parameter into `options.idempotency_key`
 for the shared helper. Unsafe writes without an idempotency key emit
 `max_attempts: 1`, leaving retries disabled by default.
+
+Generated packages that still need the historical direct-HTTP shape can opt in
+explicitly:
+
+```harn
+let src = codegen_module(doc, {
+  module_name: "example_sdk",
+  client_name: "ExampleClient",
+  transport: "raw",
+})
+```
+
+Raw transport emits direct `http_get`, `http_post`, and sibling calls with
+structured throws for non-2xx responses. Prefer connector policy for new SDKs.
 
 ### Pagination and rate-limit helpers
 

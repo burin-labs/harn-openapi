@@ -1,7 +1,7 @@
 // error_throw_smoke — verify that generated SDK functions throw a
 // structured dict (not a string) on non-2xx HTTP responses, so callers
-// can pattern-match on `status` / `body` / `headers` / `operation`
-// without parsing strings.
+// can pattern-match on shared connector error envelopes without parsing
+// strings.
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
@@ -28,16 +28,13 @@ fn build_doc() -> string {
 @test
 pipeline test_main() {
   let src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
-  // The throw site must emit a dict literal carrying operation, status,
-  // body, and headers — and must NOT emit the legacy string format.
+  // The default transport should throw the shared connector envelope and
+  // must NOT emit the legacy string format.
   assert(
-    contains(src, "throw {operation: \"get_thing\""),
-    "generated source must throw a dict, not a string",
+    contains(src, "connector_http_request("),
+    "default generated source must use connector transport",
   )
-  assert(
-    contains(src, "headers: resp.headers"),
-    "generated dict must carry resp.headers for downstream request_id parsing",
-  )
+  assert(contains(src, "throw resp"), "generated source must throw the connector envelope")
   assert(
     !contains(src, "throw \"get_thing: HTTP \""),
     "legacy string-throw format must be gone for non-2xx responses",
@@ -64,6 +61,8 @@ pipeline test_main() {
     + "  assert(type_of(caught) == \"dict\", \"expected dict throw\")\n"
     + "  assert_eq(caught.operation, \"get_thing\")\n"
     + "  assert_eq(caught.status, 404)\n"
+    + "  assert_eq(caught.category, \"not_found\")\n"
+    + "  assert_eq(caught.ok, false)\n"
     + "  assert_eq(caught.body, "
     + json_stringify(body_lit)
     + ")\n"
