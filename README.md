@@ -47,8 +47,7 @@ CLI pinned by `.harn-version`.
 | `scripts/package_install_smoke.harn` | Clean temp-project install/import smoke for package-manager consumption. |
 | `.harn-version` | Pinned Harn CLI version used by CI and local gates. |
 | `scripts/bump_harn_cli_version.harn` | Updates the pinned Harn CLI version and runs the local gate. |
-| `.github/workflows/ci.yml` | Main Harn check/lint/fmt/test/demo workflow. |
-| `.github/workflows/fixture-staleness.yml` | Lightweight fixture freshness workflow. |
+| `.github/workflows/ci.yml` | Harn check/lint/fmt/package/test/demo/fixture workflow with an aggregate `CI status` job for branch rules and merge queue. |
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
 
@@ -341,7 +340,7 @@ Downstream SDK wrappers can expose the same two styles as methods, e.g.
 ## Development
 
 Read [AGENTS.md](./AGENTS.md) before making changes. It has the current agent
-rules, local gate, and fixture workflow.
+rules, local gate, and fixture guidance.
 
 The upstream Harn language and runtime live at
 [burin-labs/harn](https://github.com/burin-labs/harn). For local development,
@@ -358,6 +357,7 @@ checkout. With a released binary:
 harn check src scripts
 harn lint src scripts
 harn fmt --check src scripts tests
+harn package check
 HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
@@ -372,6 +372,7 @@ cd ../harn
 cargo run --quiet --bin harn -- check "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts"
 cargo run --quiet --bin harn -- lint "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts"
 cargo run --quiet --bin harn -- fmt --check "$OPENAPI_ROOT/src" "$OPENAPI_ROOT/scripts" "$OPENAPI_ROOT/tests"
+cargo run --quiet --bin harn -- package check "$OPENAPI_ROOT"
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- test "$OPENAPI_ROOT/tests" --parallel --timing
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/regen_demo.harn"
 HARN_BIN="$PWD/target/debug/harn" cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/package_install_smoke.harn"
@@ -380,11 +381,14 @@ cargo run --quiet --bin harn -- run "$OPENAPI_ROOT/scripts/check_fixture_stalene
 
 ### CI and merge queue
 
-Both workflows run on pull requests, `main` pushes, merge queue
-`merge_group` events, and manual dispatch. They install the Harn version pinned
+The CI workflow runs on pull requests, `main` pushes, merge queue
+`merge_group` events, and manual dispatch. It installs the Harn version pinned
 by `.harn-version`: first from the published Linux release archive, then from
-crates.io with `cargo install --locked` if the archive is unavailable. They
-then run repo-local Harn commands.
+crates.io with `cargo install --locked` if the archive is unavailable.
+
+Branch rules require the aggregate `CI status` job. Keep every required check
+as a dependency of that job so repository rulesets and merge queue
+configuration do not drift when individual job names change.
 
 `main` is protected by GitHub's merge queue. Changes should be pushed on a
 branch, opened as a PR, and queued after checks pass. The merge queue runs the

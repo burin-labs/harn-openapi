@@ -7,7 +7,7 @@ truth for coding-agent instructions in this repo.
 
 - This is a pure Harn package. Do not add a Cargo workspace, `package.json`, or
   generated build system.
-- Entry points are `src/lib.harn` and `src/types.harn`.
+- The package default export is `src/lib.harn`.
 - Use `.harn` files with `snake_case` names. Keep directories `kebab-case`.
 - Tests live in `tests/*.harn`. Fixtures live in `tests/fixtures/`.
 - Keep the Notion OpenAPI fixture pinned. Refresh it only when the task asks
@@ -31,6 +31,7 @@ cargo install harn-cli --version "$(cat .harn-version)" --locked
 harn check src scripts
 harn lint src scripts
 harn fmt --check src scripts tests
+harn package check
 HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
