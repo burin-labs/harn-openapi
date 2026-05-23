@@ -1,0 +1,126 @@
+// security_hardening_smoke — guards added in the 2026-05-23 security sweep:
+//   F4 cycle detection + max-depth backstop in $ref resolution
+//   F5 maxAllOf / maxProperties ceiling in _merge_schema + schema()
+//   F6 _escape_string rejects ASCII control characters
+import { codegen_module, parse, schema } from "../src/lib"
+
+fn _circular_ref_doc() -> string {
+  // A -> B -> A is a $ref cycle inside a single resolution chain: the
+  // recursive _resolve_ref_inner sees `A` re-enter its `seen_refs` set and
+  // throws. The allOf-level cycle is handled separately by the depth cap.
+  return """
+    {
+      "openapi": "3.1.0",
+      "info": { "title": "Cycle", "version": "1.0.0" },
+      "paths": {},
+      "components": {
+        "schemas": {
+          "A": { "$ref": "#/components/schemas/B" },
+          "B": { "$ref": "#/components/schemas/A" }
+        }
+      }
+    }
+    """
+}
+
+fn _long_all_of_doc(chain_len: int) -> string {
+  var parts = "["
+  var sep = ""
+  var i = 0
+  while i < chain_len {
+    parts = parts + sep + "{\"type\":\"object\"}"
+    sep = ","
+    i = i + 1
+  }
+  parts = parts + "]"
+  return "{"
+    + "\"openapi\":\"3.1.0\","
+    + "\"info\":{\"title\":\"Long\",\"version\":\"1.0.0\"},"
+    + "\"paths\":{},"
+    + "\"components\":{\"schemas\":{\"Long\":{\"allOf\":"
+    + parts
+    + "}}}"
+    + "}"
+}
+
+fn _ctrl_char_doc() -> string {
+  // Smuggle a NUL byte via JSON's   escape into an apiKey security
+  // scheme name. The parser accepts the escape (valid JSON); codegen funnels
+  // the scheme name through `_escape_string` (in `_render_auth_helper` for
+  // apiKey-header / apiKey-query / apiKey-cookie schemes), which must reject
+  // the control byte before it ends up in emitted source.
+  return "{"
+    + "\"openapi\":\"3.1.0\","
+    + "\"info\":{\"title\":\"Ctrl\",\"version\":\"1.0.0\"},"
+    + "\"paths\":{\"/x\":{\"get\":{"
+    + "\"operationId\":\"getx\","
+    + "\"responses\":{\"200\":{\"description\":\"ok\"}},"
+    + "\"security\":[{\"bad\\u0000name\":[]}]}}},"
+    + "\"components\":{\"securitySchemes\":{\"bad\\u0000name\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-API-Key\"}}},"
+    + "\"security\":[{\"bad\\u0000name\":[]}]"
+    + "}"
+}
+
+@test
+pipeline test_f4_circular_ref_detected() {
+  let doc = parse(_circular_ref_doc())
+  let caught = try {
+    let _ignored = schema(doc, {"$ref": "#/components/schemas/A"})
+    nil
+  } catch (e) {
+    e
+  }
+  assert(caught != nil, "expected circular $ref to throw")
+  let msg = to_string(caught)
+  assert(
+    contains(msg, "circular $ref") || contains(msg, "depth exceeded"),
+    "expected cycle or depth-cap message, got: " + msg,
+  )
+  harness.stdio.println("f4 circular ref: ok")
+}
+
+@test
+pipeline test_f5_all_of_branch_count_cap() {
+  let doc = parse(_long_all_of_doc(65))
+  let caught = try {
+    let _ignored = schema(doc, {"$ref": "#/components/schemas/Long"})
+    nil
+  } catch (e) {
+    e
+  }
+  assert(caught != nil, "expected oversize allOf branch count to throw")
+  assert(
+    contains(to_string(caught), "allOf branch count")
+      || contains(to_string(caught), "allOf chain length"),
+    "expected allOf cap message, got: " + to_string(caught),
+  )
+  harness.stdio.println("f5 allOf branch count cap: ok")
+}
+
+@test
+pipeline test_f5_all_of_at_cap_succeeds() {
+  // At exactly the cap (64), schema() must still succeed: caps should not
+  // regress legitimate-but-large specs.
+  let doc = parse(_long_all_of_doc(64))
+  let resolved = schema(doc, {"$ref": "#/components/schemas/Long"})
+  assert(type_of(resolved) == "dict", "schema() at allOf cap should succeed")
+  harness.stdio.println("f5 allOf at cap: ok")
+}
+
+@test
+pipeline test_f6_escape_string_rejects_nul() {
+  let doc = parse(_ctrl_char_doc())
+  assert(doc != nil, "ctrl-char doc should parse (JSON allows \\u0000 escapes)")
+  let caught = try {
+    let _src = codegen_module(doc, {module_name: "ctrl", client_name: "C"})
+    nil
+  } catch (e) {
+    e
+  }
+  assert(caught != nil, "codegen must reject NUL in identifiers")
+  assert(
+    contains(to_string(caught), "control character"),
+    "expected control-character rejection from _escape_string, got: " + to_string(caught),
+  )
+  harness.stdio.println("f6 escape_string: ok")
+}

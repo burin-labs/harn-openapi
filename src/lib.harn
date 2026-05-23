@@ -561,20 +561,50 @@ fn _synth_operation_id(method, path) {
   return method + "_" + trimmed
 }
 
+// Hard backstop for $ref resolution depth. Per-chain cycle detection in
+// `_resolve_ref_inner` catches A -> B -> A, but a malicious spec can spread a
+// long ref chain across allOf branches; this cap prevents pathological recursion
+// (or accidental fan-out) from exhausting the stack during codegen.
+let _MAX_REF_DEPTH = 32
+
 /** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
 pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
-  let resolved = _resolve_ref(doc, ref_or_inline)
+  return _schema_inner(doc, ref_or_inline, [])
+}
+
+fn _schema_inner(doc, ref_or_inline, seen_refs) {
+  let resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
   let all_of = resolved.get("allOf")
   if all_of == nil {
     return resolved
   }
+  if type_of(all_of) == "list" && len(all_of) > _MAX_ALL_OF {
+    throw "harn-openapi.schema: allOf branch count " + to_string(len(all_of))
+      + " exceeds limit "
+      + to_string(_MAX_ALL_OF)
+  }
+  let next_seen = _ref_chain_for(ref_or_inline, seen_refs)
   var merged = {}
   for part in all_of {
-    let piece = _resolve_ref(doc, part)
+    let piece = _resolve_ref_inner(doc, part, next_seen)
     merged = _merge_schema(merged, piece)
   }
   let own = _omit_key(resolved, "allOf")
   return _merge_schema(merged, own)
+}
+
+fn _ref_chain_for(node, seen_refs) {
+  if type_of(node) != "dict" {
+    return seen_refs
+  }
+  let ref = node.get("$ref")
+  if ref == nil || type_of(ref) != "string" {
+    return seen_refs
+  }
+  if seen_refs.contains(ref) {
+    return seen_refs
+  }
+  return seen_refs + [ref]
 }
 
 fn _resolve_ref(doc, node) {
@@ -593,7 +623,10 @@ fn _resolve_ref_inner(doc, node, seen_refs) {
     throw "harn-openapi.schema: expected string $ref, got " + type_of(ref)
   }
   if seen_refs.contains(ref) {
-    throw "harn-openapi.schema: circular ref " + ref
+    throw "harn-openapi.schema: circular $ref detected: " + ref
+  }
+  if len(seen_refs) >= _MAX_REF_DEPTH {
+    throw "harn-openapi.schema: $ref depth exceeded " + to_string(_MAX_REF_DEPTH) + " at " + ref
   }
   let target = _lookup_ref(doc, ref)
   let resolved_target = _resolve_ref_inner(doc, target, seen_refs + [ref])
@@ -628,6 +661,12 @@ fn _unescape_pointer(seg) {
   return replace(replace(seg, "~1", "/"), "~0", "~")
 }
 
+// DoS backstops for malicious specs: a deeply chained allOf or a schema
+// declaring thousands of properties can spike CPU/memory during codegen.
+let _MAX_ALL_OF = 64
+
+let _MAX_PROPERTIES = 1024
+
 fn _merge_schema(base, overlay) {
   if type_of(overlay) != "dict" {
     return base
@@ -638,13 +677,25 @@ fn _merge_schema(base, overlay) {
     let v = entry.value
     if k == "properties" {
       let existing = merged.get("properties") ?? {}
-      merged = {...merged, properties: existing + v}
+      let combined = existing + v
+      if type_of(combined) == "dict" && len(combined) > _MAX_PROPERTIES {
+        throw "harn-openapi.schema: properties count " + to_string(len(combined))
+          + " exceeds limit "
+          + to_string(_MAX_PROPERTIES)
+      }
+      merged = {...merged, properties: combined}
     } else if k == "required" {
       let existing = merged.get("required") ?? []
       merged = {...merged, required: _dedupe(existing + v)}
     } else if k == "allOf" {
       let existing = merged.get("allOf") ?? []
-      merged = {...merged, allOf: existing + v}
+      let combined = existing + v
+      if type_of(combined) == "list" && len(combined) > _MAX_ALL_OF {
+        throw "harn-openapi.schema: allOf chain length " + to_string(len(combined))
+          + " exceeds limit "
+          + to_string(_MAX_ALL_OF)
+      }
+      merged = {...merged, allOf: combined}
     } else {
       merged = {...merged, [k]: v}
     }
@@ -3138,7 +3189,16 @@ fn _is_plain_identifier(s) {
 }
 
 fn _escape_string(s) {
-  var out = replace(to_string(s), "\\", "\\\\")
+  // Defence-in-depth: even though emitted code is re-checked by `harn check`
+  // in tests, control characters smuggled in from a malicious OpenAPI spec
+  // could close a Harn string literal early or break our codegen output. We
+  // explicitly escape \n, \r, \t, and reject any remaining ASCII control
+  // characters (U+0000-U+001F) before emitting.
+  let coerced = to_string(s)
+  if regex_match("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]", coerced) != nil {
+    throw "harn-openapi: control character in string value (only \\n, \\r, \\t are escaped, others are rejected)"
+  }
+  var out = replace(coerced, "\\", "\\\\")
   out = replace(out, "\"", "\\\"")
   out = replace(out, "\n", "\\n")
   out = replace(out, "\r", "\\r")
