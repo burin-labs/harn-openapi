@@ -18,10 +18,10 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   CARGO_TERM_COLOR: always
-  HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-bin
+  HARN_INSTALL_ROOT: ${{ github.workspace }}/harn-openapi/.harn/harn-bin
   HARN_INSTALL_TARGET: ${{ github.workspace }}/target/harn-install
   HARN_ROOT: ${{ github.workspace }}/harn-openapi
-  HARN_BIN: ${{ github.workspace }}/harn-bin/bin/harn
+  HARN_BIN: ${{ github.workspace }}/harn-openapi/.harn/harn-bin/bin/harn
 
 jobs:
   harn:
@@ -101,7 +101,7 @@ jobs:
 
       - name: Package install smoke
         run: |
-          "$HARN_BIN" run scripts/package_install_smoke.harn
+          "$HARN_BIN" run --no-sandbox scripts/package_install_smoke.harn
         working-directory: harn-openapi
 
   fixture-staleness:

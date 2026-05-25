@@ -1,7 +1,7 @@
 // regen_demo — end-to-end demo of the parse → codegen → write loop
 // against the bundled Notion OpenAPI fixture. Writes a generated SDK
-// module to the Harn runtime temp directory so it doesn't dirty the
-// tree. Run directly:
+// module to .harn/tmp so it stays inside the workspace sandbox without
+// dirtying tracked files. Run directly:
 //
 //   harn run /path/to/harn-openapi/scripts/regen_demo.harn
 import { codegen_module, operations, parse } from "../src/lib"
@@ -23,7 +23,9 @@ pipeline default() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out = harness.fs.temp_dir() + "/harn-openapi-regen-demo-" + uuid() + ".harn"
+  let out_dir = source_dir() + "/../.harn/tmp"
+  harness.fs.mkdir(out_dir)
+  let out = out_dir + "/harn-openapi-regen-demo-" + uuid() + ".harn"
   harness.fs.write_text(out, src)
   harness.stdio.println("  wrote:      ${out} (${len(src)} bytes)")
   harness.stdio.println("regen_demo: ok")

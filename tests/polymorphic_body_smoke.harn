@@ -12,6 +12,12 @@ fn harn_cmd(harness: Harness, args: string) -> string {
   return "harn " + args
 }
 
+fn scratch_path(harness: Harness, label: string) -> string {
+  let root = source_dir() + "/../.harn/tmp"
+  harness.fs.mkdir(root)
+  return root + "/" + label + "-" + uuid()
+}
+
 let _POLY_DOC = """
   {
     "openapi": "3.1.0",
@@ -167,7 +173,7 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let module_stem = harness.fs.temp_dir() + "/harn-openapi-polymorphic-generated-" + uuid()
+  let module_stem = scratch_path(harness, "harn-openapi-polymorphic-generated")
   let out_path = module_stem + ".harn"
   harness.fs.write_text(out_path, src)
   require_contains(harness, src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
@@ -199,7 +205,7 @@ pipeline test_main() {
     "anyOf ctor",
   )
   check_file(harness, out_path, "poly")
-  let runner_path = harness.fs.temp_dir() + "/harn-openapi-polymorphic-runner-" + uuid() + ".harn"
+  let runner_path = scratch_path(harness, "harn-openapi-polymorphic-runner") + ".harn"
   harness.fs
     .write_text(
     runner_path,
@@ -209,6 +215,7 @@ pipeline test_main() {
       + """
 
     pipeline default() {
+      egress_policy({allow: ["api.example.com"], default: "deny"})
       http_mock_clear()
       http_mock("PATCH", "https://api.example.com/pets/p1", {
         status: 200,

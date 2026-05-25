@@ -119,8 +119,10 @@ fn _replace_version_file(harness: Harness, repo_root: string, new_version: strin
 
 fn _verify_version(harness: Harness, repo_root: string, version: string) {
   let slug = _version_slug(version)
-  let install_root = harness.fs.temp_dir() + "/harn-openapi-harn-cli-" + slug
-  let target_dir = harness.fs.temp_dir() + "/harn-openapi-harn-cli-target-" + slug
+  let scratch_root = repo_root + "/.harn/tmp"
+  harness.fs.mkdir(scratch_root)
+  let install_root = scratch_root + "/harn-openapi-harn-cli-" + slug
+  let target_dir = scratch_root + "/harn-openapi-harn-cli-target-" + slug
   let harn_bin = install_root + "/bin/harn"
   if !harness.fs.exists(harn_bin) {
     _run(

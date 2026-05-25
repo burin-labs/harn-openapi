@@ -13,6 +13,12 @@ fn harn_cmd(harness: Harness, args: string) -> string {
   return "harn " + args
 }
 
+fn scratch_path(harness: Harness, label: string) -> string {
+  let root = source_dir() + "/../.harn/tmp"
+  harness.fs.mkdir(root)
+  return root + "/" + label + "-" + uuid()
+}
+
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
   var paths = {}
   for op in ops {
@@ -54,7 +60,7 @@ fn require_not_contains(harness: Harness, haystack: string, needle: string, labe
 }
 
 fn check_generates(harness: Harness, src: string, label: string) {
-  let tmp_path = harness.fs.temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid() + ".harn"
+  let tmp_path = scratch_path(harness, "harn-openapi-security-smoke-${label}") + ".harn"
   harness.fs.write_text(tmp_path, src)
   let result = shell(harn_cmd(harness, "check " + tmp_path))
   if !result.success {
@@ -75,14 +81,19 @@ fn check_generates(harness: Harness, src: string, label: string) {
 }
 
 fn run_generated(harness: Harness, src: string, label: string, imports: string, body: string) {
-  let module_stem = harness.fs.temp_dir() + "/harn-openapi-security-smoke-${label}-" + uuid()
+  let module_stem = scratch_path(harness, "harn-openapi-security-smoke-${label}")
   let module_path = module_stem + ".harn"
-  let runner_path = harness.fs.temp_dir() + "/harn-openapi-security-runtime-${label}-" + uuid() + ".harn"
+  let runner_path = scratch_path(harness, "harn-openapi-security-runtime-${label}") + ".harn"
   harness.fs.write_text(module_path, src)
   harness.fs
     .write_text(
     runner_path,
-    "import { " + imports + " } from \"" + module_stem + "\"\n\npipeline default() {\n" + body
+    "import { "
+      + imports
+      + " } from \""
+      + module_stem
+      + "\"\n\npipeline default() {\n  egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+      + body
       + "\n}\n",
   )
   let result = shell(harn_cmd(harness, "run " + runner_path))

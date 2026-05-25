@@ -10,8 +10,10 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 pipeline test_main() {
   let repo_root = source_dir() + "/.."
   let unique = to_string(to_int(harness.clock.timestamp())) + "-" + uuid()
-  let old_path = harness.fs.temp_dir() + "/harn-openapi-old-" + unique + ".json"
-  let new_path = harness.fs.temp_dir() + "/harn-openapi-new-" + unique + ".json"
+  let scratch = repo_root + "/.harn/tmp/harn-openapi-fixture-workflow-" + unique
+  harness.fs.mkdir(scratch)
+  let old_path = scratch + "/old.json"
+  let new_path = scratch + "/new.json"
   let old_doc = """
     {
       "openapi": "3.1.0",
@@ -124,7 +126,7 @@ pipeline test_main() {
   }
   assert(stale.success, "check_fixture_staleness.harn must pass for committed metadata")
   assert(contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet")
-  let fixture_path = harness.fs.temp_dir() + "/harn-openapi-integrity-" + unique + ".json"
+  let fixture_path = scratch + "/integrity.json"
   let meta_path = fixture_path + ".meta.toml"
   harness.fs.write_text(fixture_path, "{\"ok\":true}\n")
   harness.fs
@@ -132,7 +134,7 @@ pipeline test_main() {
     meta_path,
     "upstream_url = \"https://example.com/openapi.json\"\n"
       + "captured_at = \""
-      + date_iso()
+      + date_format(harness.clock.timestamp(), "%Y-%m-%dT%H:%M:%S%.3fZ", "UTC")
       + "\"\n"
       + "sha256 = \"definitely-wrong\"\n"
       + "byte_size = 1\n",
@@ -146,5 +148,6 @@ pipeline test_main() {
       || contains(bad_integrity.stdout, "sha256 mismatch"),
     "integrity failure should mention sha256 mismatch",
   )
+  harness.fs.delete(scratch)
   harness.stdio.println("fixture_workflow_smoke: ok")
 }

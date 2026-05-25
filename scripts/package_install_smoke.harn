@@ -2,9 +2,10 @@
  * package_install_smoke - verify a clean consumer can install and import this
  * package.
  *
- * By default the smoke installs the current checkout with `@HEAD`, which keeps
- * PR CI useful before a release tag exists. Set HARN_PACKAGE_REF to test a
- * published ref such as `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
+ * By default the smoke installs the current checkout as a path dependency,
+ * which keeps PR CI useful before a release tag exists. Set HARN_PACKAGE_REF
+ * to test a published ref such as
+ * `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
  */
 fn _repo_root() -> string {
   return source_dir() + "/.."
@@ -27,7 +28,11 @@ fn _package_ref(harness: Harness, repo_root: string) -> string {
   if package_ref != nil && package_ref != "" {
     return package_ref
   }
-  return repo_root + "@HEAD"
+  return repo_root
+}
+
+fn _scratch_root(repo_root: string, label: string) -> string {
+  return repo_root + "/.harn/tmp/" + label + "-" + uuid()
 }
 
 fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
@@ -46,7 +51,7 @@ fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
 
 pipeline default() {
   let repo_root = _repo_root()
-  let smoke_root = harness.fs.temp_dir() + "/harn-openapi-install-smoke-" + uuid()
+  let smoke_root = _scratch_root(repo_root, "harn-openapi-install-smoke")
   let harn_bin = _harn_bin(harness)
   let package_ref = _package_ref(harness, repo_root)
   harness.fs.mkdir(smoke_root)
@@ -89,5 +94,6 @@ pipeline default() {
   )
   _run(harness, smoke_root, "check consumer smoke", _sh_quote(harn_bin) + " check smoke.harn")
   _run(harness, smoke_root, "run consumer smoke", _sh_quote(harn_bin) + " run smoke.harn")
+  harness.fs.delete(smoke_root)
   harness.stdio.println("package_install_smoke: ok")
 }
