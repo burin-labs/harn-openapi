@@ -60,7 +60,7 @@ pipeline default() {
   if !response.ok {
     throw "refresh_fixtures: upstream returned HTTP " + to_string(response.status)
   }
-  let captured_at = date_iso()
+  let captured_at = date_format(harness.clock.timestamp(), "%Y-%m-%dT%H:%M:%S%.3fZ", "UTC")
   let body = response.body
   let new_hash = sha256(body)
   harness.fs.write_text(fixture_path, body)

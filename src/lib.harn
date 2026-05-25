@@ -58,9 +58,9 @@
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides?,
 //       transport? }. The default `connector_policy` transport emits calls
-//       through std/connectors/shared. `transport: "raw"` keeps the legacy
-//       direct `http_get` / `http_post` / ... calls for generated packages
-//       that have not moved to the shared HTTP policy envelope yet.
+//       through std/connectors/shared. `transport: "raw"` keeps a minimal
+//       direct `harness.net.request(...)` path for generated packages that
+//       have not moved to the shared HTTP policy envelope yet.
 //       Uses Harn's stdlib `render_string` template engine so generated-code
 //       rendering stays aligned with the runtime instead of a local template
 //       parser.
@@ -2199,24 +2199,30 @@ fn _render_request_lines(
       + "\n"
       + "  }"
   }
+  let raw_method = to_string(method ?? "get").upper()
   if !has_body {
-    return "let resp = http_" + method + "(url, {headers: request_headers})"
+    return "let resp = harness.net.request(\""
+      + raw_method
+      + "\", url, {headers: request_headers})"
   }
   if body_required {
-    return body_prepare + "\n  let resp = http_" + method + "(url, body_str, {headers: request_headers})"
+    return body_prepare
+      + "\n  let resp = harness.net.request(\""
+      + raw_method
+      + "\", url, {body: body_str, headers: request_headers})"
   }
   return "var resp = nil\n"
     + "  if body == nil {\n"
-    + "    resp = http_"
-    + method
-    + "(url, {headers: request_headers})\n"
+    + "    resp = harness.net.request(\""
+    + raw_method
+    + "\", url, {headers: request_headers})\n"
     + "  } else {\n"
     + "    "
     + _indent_after_first(body_prepare, "    ")
     + "\n"
-    + "    resp = http_"
-    + method
-    + "(url, body_str, {headers: request_headers})\n"
+    + "    resp = harness.net.request(\""
+    + raw_method
+    + "\", url, {body: body_str, headers: request_headers})\n"
     + "  }"
 }
 

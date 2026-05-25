@@ -34,7 +34,7 @@ harn fmt --check src scripts tests
 harn package check
 HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
 harn run scripts/regen_demo.harn
-HARN_BIN="$(command -v harn)" harn run scripts/package_install_smoke.harn
+HARN_BIN="$(command -v harn)" harn run --no-sandbox scripts/package_install_smoke.harn
 harn run scripts/check_fixture_staleness.harn
 ```
 

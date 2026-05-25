@@ -12,17 +12,12 @@ fn sh_quote(value: string) -> string {
 }
 
 fn cat_file(harness: Harness, path: string) -> string {
-  let result = shell("cat " + sh_quote(path))
-  if !result.success {
-    harness.stdio.println(result.stderr)
-  }
-  require result.success, "must read " + path
-  return result.stdout
+  return harness.fs.read_text(path)
 }
 
 pipeline test_main() {
   let repo_root = source_dir() + "/.."
-  let fake_root = harness.fs.temp_dir() + "/harn-openapi-bump-smoke-" + uuid()
+  let fake_root = repo_root + "/.harn/tmp/harn-openapi-bump-smoke-" + uuid()
   harness.fs.mkdir(fake_root)
   harness.fs.write_text(fake_root + "/.harn-version", "0.0.1\n")
   let cmd = harn_cmd(
@@ -43,5 +38,6 @@ pipeline test_main() {
   assert(contains(result.stdout, "skipped verification"), "test path should skip the full gate")
   let version = cat_file(harness, fake_root + "/.harn-version")
   assert_eq(version, "9.8.7\n")
+  harness.fs.delete(fake_root)
   harness.stdio.println("bump_harn_cli_version_smoke: ok")
 }
