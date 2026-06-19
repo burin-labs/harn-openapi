@@ -13,7 +13,8 @@ pipeline default() {
   let ops = operations(doc)
   harness.stdio.println("parsed ${doc.info.title} (OpenAPI ${doc.openapi})")
   harness.stdio.println("  operations: ${len(ops)}")
-  harness.stdio.println("  schemas:    ${len(doc.components.schemas)}")
+  let schemas = doc.components?.schemas ?? {}
+  harness.stdio.println("  schemas:    ${len(schemas)}")
   let src = codegen_module(
     doc,
     {

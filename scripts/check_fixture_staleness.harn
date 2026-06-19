@@ -45,11 +45,8 @@ fn _fixture_age_days(harness: Harness, captured_at: string) -> int {
 
 fn _fixture_path_for_meta(meta_path: string) -> string {
   let suffix = ".meta.toml"
-  if len(meta_path) > len(suffix) {
-    let tail = substring(meta_path, len(meta_path) - len(suffix), len(suffix))
-    if tail == suffix {
-      return substring(meta_path, 0, len(meta_path) - len(suffix))
-    }
+  if meta_path.ends_with(suffix) {
+    return substring(meta_path, 0, len(meta_path) - len(suffix))
   }
   return meta_path + ".json"
 }
