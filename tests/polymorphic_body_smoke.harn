@@ -121,7 +121,7 @@ fn count_occurrences(haystack: string, needle: string) -> int {
     return 0
   }
   while idx + nn <= hn {
-    if substring(haystack, idx, nn) == needle {
+    if substring(haystack, idx, idx + nn) == needle {
       count = count + 1
       idx = idx + nn
     } else {

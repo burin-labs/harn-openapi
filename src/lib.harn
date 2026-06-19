@@ -1273,7 +1273,7 @@ let _MODULE_TEMPLATE = """
     if path == "" {
       return base_url
     }
-    let base_has_slash = substring(base_url, len(base_url) - 1, 1) == "/"
+    let base_has_slash = substring(base_url, len(base_url) - 1) == "/"
     let path_has_slash = starts_with(path, "/")
     if base_has_slash && path_has_slash {
       return substring(base_url, 0, len(base_url) - 1) + path
@@ -2826,7 +2826,7 @@ fn _index_of(hay, needle) {
   }
   var i = 0
   while i + nn <= nh {
-    if substring(hay, i, nn) == needle {
+    if substring(hay, i, i + nn) == needle {
       return i
     }
     i = i + 1
@@ -2914,7 +2914,7 @@ fn _pascal_case(raw) {
     if seg != "" {
       let first = substring(seg, 0, 1).upper()
       let rest = if len(seg) > 1 {
-        substring(seg, 1, len(seg) - 1)
+        substring(seg, 1)
       } else {
         ""
       }
@@ -3081,13 +3081,13 @@ fn _snake_case_base(raw, fallback) {
   var out = ""
   var i = 0
   while i < len(cleaned) {
-    let ch = substring(cleaned, i, 1)
+    let ch = substring(cleaned, i, i + 1)
     if ch == "_" {
-      if out != "" && substring(out, len(out) - 1, 1) != "_" {
+      if out != "" && substring(out, len(out) - 1) != "_" {
         out = out + "_"
       }
     } else {
-      if _is_upper(ch) && out != "" && substring(out, len(out) - 1, 1) != "_" {
+      if _is_upper(ch) && out != "" && substring(out, len(out) - 1) != "_" {
         out = out + "_"
       }
       out = out + ch.lower()

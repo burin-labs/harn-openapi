@@ -1,4 +1,4 @@
-/*
+/**
  * package_install_smoke - verify a clean consumer can install and import this
  * package.
  *
