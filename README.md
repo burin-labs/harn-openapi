@@ -423,10 +423,10 @@ GitHub Actions reads the Harn version from `.harn-version`. When a new Harn
 release is published, update that pin and run the local gate with:
 
 ```sh
-harn run scripts/bump_harn_cli_version.harn -- 0.8.126
+harn run scripts/bump_harn_cli_version.harn -- 0.8.130
 ```
 
-The script accepts a leading `v` (`v0.8.126` is normalized to `0.8.126`),
+The script accepts a leading `v` (`v0.8.130` is normalized to `0.8.130`),
 installs that `harn-cli` release into a temp directory, then runs check, lint,
 formatting, the smoke test suite, `scripts/regen_demo.harn`, and
 `scripts/package_install_smoke.harn`. Use `--no-verify` only when you
