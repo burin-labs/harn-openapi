@@ -638,7 +638,7 @@ fn _lookup_ref(doc, ref) {
   if !starts_with(ref, "#/") {
     throw "harn-openapi.schema: only local JSON Pointer refs are supported, got " + ref
   }
-  let parts = split(substring(ref, 2), "/")
+  let parts = split(substring(ref, 2, len(ref)), "/")
   var node = doc
   for raw_seg in parts {
     let seg = _unescape_pointer(raw_seg)
@@ -1273,7 +1273,7 @@ let _MODULE_TEMPLATE = """
     if path == "" {
       return base_url
     }
-    let base_has_slash = substring(base_url, len(base_url) - 1) == "/"
+    let base_has_slash = substring(base_url, len(base_url) - 1, len(base_url)) == "/"
     let path_has_slash = starts_with(path, "/")
     if base_has_slash && path_has_slash {
       return substring(base_url, 0, len(base_url) - 1) + path
@@ -2914,7 +2914,7 @@ fn _pascal_case(raw) {
     if seg != "" {
       let first = substring(seg, 0, 1).upper()
       let rest = if len(seg) > 1 {
-        substring(seg, 1)
+        substring(seg, 1, len(seg))
       } else {
         ""
       }
@@ -3083,11 +3083,11 @@ fn _snake_case_base(raw, fallback) {
   while i < len(cleaned) {
     let ch = substring(cleaned, i, i + 1)
     if ch == "_" {
-      if out != "" && substring(out, len(out) - 1) != "_" {
+      if out != "" && substring(out, len(out) - 1, len(out)) != "_" {
         out = out + "_"
       }
     } else {
-      if _is_upper(ch) && out != "" && substring(out, len(out) - 1) != "_" {
+      if _is_upper(ch) && out != "" && substring(out, len(out) - 1, len(out)) != "_" {
         out = out + "_"
       }
       out = out + ch.lower()

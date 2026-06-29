@@ -256,5 +256,12 @@ pipeline test_main() {
     ),
     "get_user must return UserObjectResponse",
   )
+  // --- Acceptance 11: operation ids with multi-character segments
+  // must not be truncated by substring semantics. ---
+  assert(
+    contains(notion_src, "pub fn retrieve_a_block(client: dict, block_id, notion_version = nil)"),
+    "retrieve_a_block operation name must not be shortened",
+  )
+  assert(!contains(notion_src, "pub fn r(client: dict"), "operation name must not collapse to r")
   harness.stdio.println("response_types_smoke: ok")
 }
