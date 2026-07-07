@@ -16,7 +16,7 @@ fn _sh_quote(value: string) -> string {
 }
 
 fn _harn_bin(harness: Harness) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin
   }
@@ -24,7 +24,7 @@ fn _harn_bin(harness: Harness) -> string {
 }
 
 fn _package_ref(harness: Harness, repo_root: string) -> string {
-  let package_ref = harness.env.get("HARN_PACKAGE_REF")
+  const package_ref = harness.env.get("HARN_PACKAGE_REF")
   if package_ref != nil && package_ref != "" {
     return package_ref
   }
@@ -37,7 +37,7 @@ fn _scratch_root(repo_root: string, label: string) -> string {
 
 fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
   harness.stdio.println("running: ${label}")
-  let result = shell_at(cwd, cmd)
+  const result = shell_at(cwd, cmd)
   if result.stdout != "" {
     harness.stdio.println(result.stdout.trim())
   }
@@ -50,10 +50,10 @@ fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
 }
 
 pipeline default() {
-  let repo_root = _repo_root()
-  let smoke_root = _scratch_root(repo_root, "harn-openapi-install-smoke")
-  let harn_bin = _harn_bin(harness)
-  let package_ref = _package_ref(harness, repo_root)
+  const repo_root = _repo_root()
+  const smoke_root = _scratch_root(repo_root, "harn-openapi-install-smoke")
+  const harn_bin = _harn_bin(harness)
+  const package_ref = _package_ref(harness, repo_root)
   harness.fs.mkdir(smoke_root)
   harness.fs
     .write_text(

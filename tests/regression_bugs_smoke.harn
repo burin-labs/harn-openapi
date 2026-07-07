@@ -14,7 +14,7 @@ import {
 } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -22,7 +22,7 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  let root = source_dir() + "/../.harn/tmp"
+  const root = source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + uuid()
 }
@@ -37,10 +37,10 @@ fn require_contains(harness: Harness, haystack: string, needle: string, label: s
 }
 
 fn check_generated(harness: Harness, src: string, label: string) -> string {
-  let module_stem = scratch_path(harness, "harn-openapi-regression-" + label)
-  let module_path = module_stem + ".harn"
+  const module_stem = scratch_path(harness, "harn-openapi-regression-" + label)
+  const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
-  let result = shell(harn_cmd(harness, "check " + module_path))
+  const result = shell(harn_cmd(harness, "check " + module_path))
   if !result.success {
     harness.stdio.println("---${label} harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -58,7 +58,7 @@ fn run_generated(
   imports: string,
   body: string,
 ) {
-  let runner_path = scratch_path(harness, "harn-openapi-regression-runner-" + label) + ".harn"
+  const runner_path = scratch_path(harness, "harn-openapi-regression-runner-" + label) + ".harn"
   harness.fs
     .write_text(
     runner_path,
@@ -70,7 +70,7 @@ fn run_generated(
       + body
       + "\n}\n",
   )
-  let result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
     harness.stdio.println("---${label} runtime stderr---")
     harness.stdio.println(result.stderr)
@@ -80,7 +80,7 @@ fn run_generated(
   require result.success, "${label}: generated runtime smoke must pass"
 }
 
-let _REF_DOC = """
+const _REF_DOC = """
   {
     "openapi": "3.1.0",
     "info": {"title": "Regression API", "version": "1.0.0"},
@@ -160,7 +160,7 @@ let _REF_DOC = """
   }
   """
 
-let _GENERATED_DOC = """
+const _GENERATED_DOC = """
   {
     "openapi": "3.1.0",
     "info": {"title": "Generated Regression API", "version": "1.0.0"},
@@ -231,21 +231,21 @@ let _GENERATED_DOC = """
   """
 
 pipeline test_main() {
-  let bad_numeric = try {
+  const bad_numeric = try {
     parse(json_stringify({openapi: 3.1, info: {title: "bad", version: "0"}, paths: {}}))
     nil
   } catch (e) {
     e
   }
   assert(bad_numeric != nil, "numeric openapi version must be rejected")
-  let bad_minor = try {
+  const bad_minor = try {
     parse(json_stringify({openapi: "3.10.0", info: {title: "bad", version: "0"}, paths: {}}))
     nil
   } catch (e) {
     e
   }
   assert(bad_minor != nil, "openapi 3.10.0 must not be accepted as 3.1.x")
-  let doc = parse(_REF_DOC)
+  const doc = parse(_REF_DOC)
   assert(
     doc.jsonSchemaDialect == "https://json-schema.org/draft/2020-12/schema",
     "dialect must survive parse",
@@ -255,11 +255,11 @@ pipeline test_main() {
     "top-level externalDocs must survive parse",
   )
   assert(!is_reference({"$ref": 123}), "is_reference must reject non-string refs")
-  let nums = enum_values({type: "integer", enum: [1, 2]}) ?? []
+  const nums = enum_values({type: "integer", enum: [1, 2]}) ?? []
   assert(nums[0] == 1 && nums[1] == 2, "enum_values must preserve non-string enum values")
-  let ops = operations(doc)
+  const ops = operations(doc)
   assert(len(ops) == 1, "referenced path item should flatten to one operation")
-  let op = ops[0]
+  const op = ops[0]
   assert(op.operation_id == "get-widget", "path item $ref operation id should survive")
   assert(op.deprecated, "operation metadata should not be dropped")
   assert(op.externalDocs?.url == "https://docs.example.com/get", "externalDocs should not be dropped")
@@ -268,33 +268,33 @@ pipeline test_main() {
     "path-level servers should become effective servers",
   )
   assert(len(op.parameters) == 2, "path-level and operation parameters should merge")
-  let webhooks = webhook_operations(doc)
+  const webhooks = webhook_operations(doc)
   assert(len(webhooks) == 1, "referenced webhook path item should flatten")
   assert(webhooks[0].operation_id == "widget-created", "webhook operation id should survive")
-  let resolved = schema(doc, {"$ref": "#/components/schemas/WidgetResponse"})
+  const resolved = schema(doc, {"$ref": "#/components/schemas/WidgetResponse"})
   assert(resolved.properties.get("id") != nil, "chained $ref should keep base properties")
   assert(resolved.properties.get("name") != nil, "$ref sibling properties should be additive")
   assert(resolved.required.contains("id"), "chained $ref should keep base required fields")
   assert(resolved.required.contains("name"), "$ref sibling required fields should be additive")
-  let pages = pagination_plans(doc)
+  const pages = pagination_plans(doc)
   assert(
     len(pages) == 1 && pages[0].kind == "cursor",
     "pagination should resolve response refs and +json",
   )
-  let rates = rate_limit_metadata(doc)
+  const rates = rate_limit_metadata(doc)
   assert(len(rates) == 1, "rate-limit metadata should resolve response refs")
   assert(
     rates[0].retry_after_header == "Retry-After",
     "Retry-After should be found through response ref",
   )
-  let ref_src = codegen_module(doc, {module_name: "ref_regression", client_name: "RefRegressionClient"})
+  const ref_src = codegen_module(doc, {module_name: "ref_regression", client_name: "RefRegressionClient"})
   require_contains(
     harness,
     ref_src,
     "nickname?: string",
     "optional response fields should remain optional",
   )
-  let src = codegen_module(
+  const src = codegen_module(
     parse(_GENERATED_DOC),
     {
       module_name: "regression",
@@ -321,7 +321,7 @@ pipeline test_main() {
     "body = nil",
     "optional request bodies should be optional in signatures",
   )
-  let module_stem = check_generated(harness, src, "generated")
+  const module_stem = check_generated(harness, src, "generated")
   run_generated(
     harness,
     module_stem,

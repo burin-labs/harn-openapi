@@ -396,7 +396,7 @@ type RateLimitMetadata = {
   reset_headers: list<string>,
 }
 
-let _OPENAPI_DOC_SCHEMA = {
+const _OPENAPI_DOC_SCHEMA = {
   type: "dict",
   properties: {
     openapi: {type: "string"},
@@ -415,21 +415,21 @@ let _OPENAPI_DOC_SCHEMA = {
 
 /** Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc. */
 pub fn parse(json_string: string) -> OpenApiDoc {
-  let raw = json_parse(json_string)
-  let raw_version = raw.get("openapi")
+  const raw = json_parse(json_string)
+  const raw_version = raw.get("openapi")
   if raw_version == nil {
     throw "harn-openapi.parse: missing top-level 'openapi' field"
   }
   if type_of(raw_version) != "string" {
     throw "harn-openapi.parse: expected openapi to be a string, got " + type_of(raw_version)
   }
-  let version = raw_version
+  const version = raw_version
   if regex_match("^3\\.1\\.[0-9]+$", version) == nil {
     throw "harn-openapi.parse: expected openapi 3.1.x, got " + version
   }
-  let components = raw.get("components") ?? {}
-  let components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
-  let doc = {
+  const components = raw.get("components") ?? {}
+  const components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
+  const doc = {
     openapi: version,
     info: raw.get("info") ?? {},
     jsonSchemaDialect: raw.get("jsonSchemaDialect"),
@@ -450,7 +450,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
 // Walking helpers
 // -------------------------------------------------------------------------------------------------
 
-let _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]
+const _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]
 
 /** Flatten every operation in the doc's `paths` dict. */
 pub fn operations(doc: OpenApiDoc) -> list<Operation> {
@@ -464,23 +464,23 @@ pub fn webhook_operations(doc: OpenApiDoc) -> list<WebhookOperation> {
 
 /** Passthrough accessor for `components.pathItems` (OAS 3.1). */
 pub fn component_path_items(doc: OpenApiDoc) -> dict<string, RefOr<PathItem>> {
-  let components = doc.get("components") ?? {}
+  const components = doc.get("components") ?? {}
   return components.get("pathItems") ?? {}
 }
 
 fn _flatten_path_item_map(items, doc, mode) {
-  var out = []
+  let out = []
   for entry in items {
-    let key = entry.key
-    let item = _resolve_ref(doc, entry.value)
+    const key = entry.key
+    const item = _resolve_ref(doc, entry.value)
     for method in _HTTP_METHODS {
-      let op = item.get(method)
+      const op = item.get(method)
       if op != nil {
-        let raw_params = _merge_parameters(item.get("parameters") ?? [], op.get("parameters") ?? [], doc)
-        let effective_security = op.get("security") ?? doc.get("security") ?? []
-        let effective_servers = op.get("servers") ?? item.get("servers") ?? doc.get("servers") ?? []
+        const raw_params = _merge_parameters(item.get("parameters") ?? [], op.get("parameters") ?? [], doc)
+        const effective_security = op.get("security") ?? doc.get("security") ?? []
+        const effective_servers = op.get("servers") ?? item.get("servers") ?? doc.get("servers") ?? []
         if mode == "webhook" {
-          let normalized = {
+          const normalized = {
             name: key,
             method: method,
             path_item: item,
@@ -497,7 +497,7 @@ fn _flatten_path_item_map(items, doc, mode) {
           }
           out = out + [_merge_shallow(op, normalized)]
         } else {
-          let normalized = {
+          const normalized = {
             method: method,
             path: key,
             operation_id: op.get("operationId") ?? _synth_operation_id(method, key),
@@ -519,23 +519,23 @@ fn _flatten_path_item_map(items, doc, mode) {
 }
 
 fn _merge_parameters(path_params, op_params, doc) {
-  let resolved_path = _resolve_param_list(path_params, doc)
-  let resolved_op = _resolve_param_list(op_params, doc)
+  const resolved_path = _resolve_param_list(path_params, doc)
+  const resolved_op = _resolve_param_list(op_params, doc)
   if len(resolved_path) == 0 {
     return resolved_op
   }
   if len(resolved_op) == 0 {
     return resolved_path
   }
-  var combined = []
-  var taken = []
+  let combined = []
+  let taken = []
   for p in resolved_op {
-    let key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
+    const key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
     taken = taken + [key]
     combined = combined + [p]
   }
   for p in resolved_path {
-    let key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
+    const key = to_string(p.get("name")) + "::" + to_string(p.get("in") ?? "query")
     if !taken.contains(key) {
       combined = combined + [p]
     }
@@ -544,7 +544,7 @@ fn _merge_parameters(path_params, op_params, doc) {
 }
 
 fn _resolve_param_list(params, doc) {
-  var out = []
+  let out = []
   for p in params {
     if type_of(p) == "dict" && p.get("$ref") != nil {
       out = out + [_resolve_ref(doc, p)]
@@ -556,8 +556,8 @@ fn _resolve_param_list(params, doc) {
 }
 
 fn _synth_operation_id(method, path) {
-  let cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", path)
-  let trimmed = regex_replace_all("^_+|_+$", "", cleaned)
+  const cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", path)
+  const trimmed = regex_replace_all("^_+|_+$", "", cleaned)
   return method + "_" + trimmed
 }
 
@@ -565,7 +565,7 @@ fn _synth_operation_id(method, path) {
 // `_resolve_ref_inner` catches A -> B -> A, but a malicious spec can spread a
 // long ref chain across allOf branches; this cap prevents pathological recursion
 // (or accidental fan-out) from exhausting the stack during codegen.
-let _MAX_REF_DEPTH = 32
+const _MAX_REF_DEPTH = 32
 
 /** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
 pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
@@ -573,8 +573,8 @@ pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
 }
 
 fn _schema_inner(doc, ref_or_inline, seen_refs) {
-  let resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
-  let all_of = resolved.get("allOf")
+  const resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
+  const all_of = resolved.get("allOf")
   if all_of == nil {
     return resolved
   }
@@ -583,13 +583,13 @@ fn _schema_inner(doc, ref_or_inline, seen_refs) {
       + " exceeds limit "
       + to_string(_MAX_ALL_OF)
   }
-  let next_seen = _ref_chain_for(ref_or_inline, seen_refs)
-  var merged = {}
+  const next_seen = _ref_chain_for(ref_or_inline, seen_refs)
+  let merged = {}
   for part in all_of {
-    let piece = _resolve_ref_inner(doc, part, next_seen)
+    const piece = _resolve_ref_inner(doc, part, next_seen)
     merged = _merge_schema(merged, piece)
   }
-  let own = _omit_key(resolved, "allOf")
+  const own = _omit_key(resolved, "allOf")
   return _merge_schema(merged, own)
 }
 
@@ -597,7 +597,7 @@ fn _ref_chain_for(node, seen_refs) {
   if type_of(node) != "dict" {
     return seen_refs
   }
-  let ref = node.get("$ref")
+  const ref = node.get("$ref")
   if ref == nil || type_of(ref) != "string" {
     return seen_refs
   }
@@ -615,7 +615,7 @@ fn _resolve_ref_inner(doc, node, seen_refs) {
   if type_of(node) != "dict" {
     return {}
   }
-  let ref = node.get("$ref")
+  const ref = node.get("$ref")
   if ref == nil {
     return node
   }
@@ -628,9 +628,9 @@ fn _resolve_ref_inner(doc, node, seen_refs) {
   if len(seen_refs) >= _MAX_REF_DEPTH {
     throw "harn-openapi.schema: $ref depth exceeded " + to_string(_MAX_REF_DEPTH) + " at " + ref
   }
-  let target = _lookup_ref(doc, ref)
-  let resolved_target = _resolve_ref_inner(doc, target, seen_refs + [ref])
-  let siblings = _omit_key(node, "$ref")
+  const target = _lookup_ref(doc, ref)
+  const resolved_target = _resolve_ref_inner(doc, target, seen_refs + [ref])
+  const siblings = _omit_key(node, "$ref")
   return _merge_schema(resolved_target, siblings)
 }
 
@@ -638,10 +638,10 @@ fn _lookup_ref(doc, ref) {
   if !starts_with(ref, "#/") {
     throw "harn-openapi.schema: only local JSON Pointer refs are supported, got " + ref
   }
-  let parts = split(substring(ref, 2, len(ref)), "/")
-  var node = doc
+  const parts = split(substring(ref, 2, len(ref)), "/")
+  let node = doc
   for raw_seg in parts {
-    let seg = _unescape_pointer(raw_seg)
+    const seg = _unescape_pointer(raw_seg)
     if seg == "components" {
       node = doc.components ?? {}
     } else {
@@ -663,21 +663,21 @@ fn _unescape_pointer(seg) {
 
 // DoS backstops for malicious specs: a deeply chained allOf or a schema
 // declaring thousands of properties can spike CPU/memory during codegen.
-let _MAX_ALL_OF = 64
+const _MAX_ALL_OF = 64
 
-let _MAX_PROPERTIES = 1024
+const _MAX_PROPERTIES = 1024
 
 fn _merge_schema(base, overlay) {
   if type_of(overlay) != "dict" {
     return base
   }
-  var merged = base
+  let merged = base
   for entry in overlay {
-    let k = entry.key
-    let v = entry.value
+    const k = entry.key
+    const v = entry.value
     if k == "properties" {
-      let existing = merged.get("properties") ?? {}
-      let combined = existing + v
+      const existing = merged.get("properties") ?? {}
+      const combined = existing + v
       if type_of(combined) == "dict" && len(combined) > _MAX_PROPERTIES {
         throw "harn-openapi.schema: properties count " + to_string(len(combined))
           + " exceeds limit "
@@ -685,11 +685,11 @@ fn _merge_schema(base, overlay) {
       }
       merged = {...merged, properties: combined}
     } else if k == "required" {
-      let existing = merged.get("required") ?? []
+      const existing = merged.get("required") ?? []
       merged = {...merged, required: _dedupe(existing + v)}
     } else if k == "allOf" {
-      let existing = merged.get("allOf") ?? []
-      let combined = existing + v
+      const existing = merged.get("allOf") ?? []
+      const combined = existing + v
       if type_of(combined) == "list" && len(combined) > _MAX_ALL_OF {
         throw "harn-openapi.schema: allOf chain length " + to_string(len(combined))
           + " exceeds limit "
@@ -710,7 +710,7 @@ fn _merge_shallow(base, overlay) {
   if type_of(overlay) != "dict" {
     return base
   }
-  var merged = base
+  let merged = base
   for entry in overlay {
     merged = {...merged, [entry.key]: entry.value}
   }
@@ -718,7 +718,7 @@ fn _merge_shallow(base, overlay) {
 }
 
 fn _omit_key(d, k) {
-  var out = {}
+  let out = {}
   for entry in d {
     if entry.key != k {
       out = {...out, [entry.key]: entry.value}
@@ -728,8 +728,8 @@ fn _omit_key(d, k) {
 }
 
 fn _dedupe(xs) {
-  var seen = []
-  var out = []
+  let seen = []
+  let out = []
   for x in xs {
     if !seen.contains(x) {
       seen = seen + [x]
@@ -744,7 +744,7 @@ pub fn enum_values(sch: Schema) -> list? {
   if type_of(sch) != "dict" {
     return nil
   }
-  let vs = sch.get("enum")
+  const vs = sch.get("enum")
   if vs == nil {
     return nil
   }
@@ -774,13 +774,13 @@ pub fn is_schema(value: unknown) -> bool {
 
 /** Classify reusable auth helper metadata for declared security schemes. */
 pub fn auth_helpers(doc: OpenApiDoc) -> list<AuthHelper> {
-  let schemes = doc.get("security_schemes") ?? {}
-  var out = []
+  const schemes = doc.get("security_schemes") ?? {}
+  let out = []
   for entry in schemes {
-    let name = entry.key
-    let def = entry.value
-    let kind = _scheme_kind(def)
-    var helper = {scheme_name: name, kind: kind, client_fields: _client_fields_for_scheme_kind(kind)}
+    const name = entry.key
+    const def = entry.value
+    const kind = _scheme_kind(def)
+    let helper = {scheme_name: name, kind: kind, client_fields: _client_fields_for_scheme_kind(kind)}
     if starts_with(kind, "apiKey-") {
       helper = {...helper, location: def.get("in") ?? "header", parameter_name: def.get("name") ?? name}
     }
@@ -806,12 +806,12 @@ fn _client_fields_for_scheme_kind(kind) {
 }
 
 fn _oauth_scope_names(def) {
-  let flows = def.get("flows") ?? {}
-  var scopes = []
+  const flows = def.get("flows") ?? {}
+  let scopes = []
   for flow_name in ["implicit", "password", "clientCredentials", "authorizationCode"] {
-    let flow = flows.get(flow_name)
+    const flow = flows.get(flow_name)
     if type_of(flow) == "dict" {
-      let flow_scopes = flow.get("scopes") ?? {}
+      const flow_scopes = flow.get("scopes") ?? {}
       for entry in flow_scopes {
         if !scopes.contains(entry.key) {
           scopes = scopes + [entry.key]
@@ -825,9 +825,9 @@ fn _oauth_scope_names(def) {
 
 /** Detect reusable pagination patterns from operation params and responses. */
 pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
-  var out = []
+  let out = []
   for op in operations(doc) {
-    let plan = _pagination_plan_for_op(doc, op)
+    const plan = _pagination_plan_for_op(doc, op)
     if plan != nil {
       out = out + [plan]
     }
@@ -836,26 +836,26 @@ pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
 }
 
 fn _pagination_plan_for_op(doc, op) {
-  let params = op.parameters ?? []
-  let body_props = _request_body_json_properties(doc, op)
-  let cursor = _pagination_request_field(
+  const params = op.parameters ?? []
+  const body_props = _request_body_json_properties(doc, op)
+  const cursor = _pagination_request_field(
     params,
     body_props,
     ["start_cursor", "cursor", "after", "page_token", "next_page_token"],
   )
-  let page = _pagination_request_field(params, body_props, ["page", "page_number", "page_index", "offset"])
-  let page_size = _pagination_request_field(params, body_props, ["page_size", "per_page", "limit", "size"])
-  let picked = _pick_success_response(doc, op)
+  const page = _pagination_request_field(params, body_props, ["page", "page_number", "page_index", "offset"])
+  const page_size = _pagination_request_field(params, body_props, ["page_size", "per_page", "limit", "size"])
+  const picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" {
     return nil
   }
-  let full = schema(doc, picked.schema)
-  let props = full.get("properties") ?? {}
-  let items_field = _first_present_key(props, ["results", "templates", "data", "items", "records", "objects"])
-  let next_cursor = _first_present_key(props, ["next_cursor", "next_page_token", "cursor", "after"])
-  let has_more = _first_present_key(props, ["has_more", "hasMore", "more"])
-  let next_link = _first_present_key(props, ["next", "next_url", "next_link", "nextPageUrl"])
-  let link_header = _success_response_header(doc, op, "Link")
+  const full = schema(doc, picked.schema)
+  const props = full.get("properties") ?? {}
+  const items_field = _first_present_key(props, ["results", "templates", "data", "items", "records", "objects"])
+  const next_cursor = _first_present_key(props, ["next_cursor", "next_page_token", "cursor", "after"])
+  const has_more = _first_present_key(props, ["has_more", "hasMore", "more"])
+  const next_link = _first_present_key(props, ["next", "next_url", "next_link", "nextPageUrl"])
+  const link_header = _success_response_header(doc, op, "Link")
   if cursor.name != nil && next_cursor != nil {
     return {
       operation_id: op.operation_id,
@@ -899,12 +899,12 @@ fn _pagination_plan_for_op(doc, op) {
 }
 
 fn _request_body_json_properties(doc, op) -> dict {
-  let request_schema = _request_json_schema(doc, op.request_body)
+  const request_schema = _request_json_schema(doc, op.request_body)
   if request_schema == nil {
     return {}
   }
-  let full = schema(doc, request_schema)
-  let props = full.get("properties")
+  const full = schema(doc, request_schema)
+  const props = full.get("properties")
   if type_of(props) == "dict" {
     return props
   }
@@ -912,11 +912,11 @@ fn _request_body_json_properties(doc, op) -> dict {
 }
 
 fn _pagination_request_field(params, body_props, names) -> dict {
-  let query_field = _first_param_named(params, names)
+  const query_field = _first_param_named(params, names)
   if query_field != nil {
     return {name: query_field, location: "query"}
   }
-  let body_field = _first_present_key(body_props, names)
+  const body_field = _first_present_key(body_props, names)
   if body_field != nil {
     return {name: body_field, location: "body"}
   }
@@ -949,9 +949,9 @@ fn _first_present_key(d, names) {
 fn _success_response_header(doc, op, header_name) {
   for entry in op.responses {
     if _is_success_code(entry.key) {
-      let response = _resolve_ref(doc, entry.value)
-      let headers = response.get("headers") ?? {}
-      let found = _header_name_case_insensitive(headers, header_name)
+      const response = _resolve_ref(doc, entry.value)
+      const headers = response.get("headers") ?? {}
+      const found = _header_name_case_insensitive(headers, header_name)
       if found != nil {
         return found
       }
@@ -974,9 +974,9 @@ fn _header_name_case_insensitive(headers, wanted) {
 
 /** Surface response header conventions used by retry/backoff code. */
 pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
-  var out = []
+  let out = []
   for op in operations(doc) {
-    let meta = _rate_limit_metadata_for_op(doc, op)
+    const meta = _rate_limit_metadata_for_op(doc, op)
     if meta != nil {
       out = out + [meta]
     }
@@ -985,25 +985,25 @@ pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
 }
 
 fn _rate_limit_metadata_for_op(doc, op) {
-  var status = nil
-  var retry_after = nil
-  var limit_headers = []
-  var remaining_headers = []
-  var reset_headers = []
+  let status = nil
+  let retry_after = nil
+  let limit_headers = []
+  let remaining_headers = []
+  let reset_headers = []
   for response_entry in op.responses {
-    let code = response_entry.key
-    let response = _resolve_ref(doc, response_entry.value)
-    let headers = response.get("headers") ?? {}
+    const code = response_entry.key
+    const response = _resolve_ref(doc, response_entry.value)
+    const headers = response.get("headers") ?? {}
     if code == "429" {
       status = "429"
     }
-    let retry_header = _header_name_case_insensitive(headers, "Retry-After")
+    const retry_header = _header_name_case_insensitive(headers, "Retry-After")
     if retry_header != nil {
       retry_after = retry_header
     }
     for header_entry in headers {
-      let header = header_entry.key
-      let normalized = header.lower()
+      const header = header_entry.key
+      const normalized = header.lower()
       if contains(normalized, "ratelimit-limit") || contains(normalized, "rate-limit-limit") {
         if !limit_headers.contains(header) {
           limit_headers = limit_headers + [header]
@@ -1040,7 +1040,7 @@ fn _rate_limit_metadata_for_op(doc, op) {
 // Codegen
 // -------------------------------------------------------------------------------------------------
 
-let _MODULE_TEMPLATE = """
+const _MODULE_TEMPLATE = """
   /*
    * Auto-generated by harn-openapi codegen — do not edit by hand.
    * Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
@@ -1060,7 +1060,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _no_auth_headers(client: dict) -> dict {
-    var hs = {"Content-Type": "application/json"}
+    let hs = {"Content-Type": "application/json"}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
@@ -1068,7 +1068,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _merge_header_dicts(header_sets: list) -> dict {
-    var out = {}
+    let out = {}
     for hs in header_sets {
       for entry in hs {
         out = {...out, [entry.key]: entry.value}
@@ -1078,7 +1078,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _with_extra_headers(headers: dict, client: dict) -> dict {
-    var hs = headers
+    let hs = headers
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
@@ -1259,7 +1259,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _interpolate(template: string, bindings: dict) -> string {
-    var out = template
+    let out = template
     for entry in bindings {
       out = replace(out, "{" + entry.key + "}", url_encode(to_string(entry.value)))
     }
@@ -1285,7 +1285,7 @@ let _MODULE_TEMPLATE = """
   }
 
   fn _query_string(params: dict) -> string {
-    var parts = []
+    let parts = []
     for entry in params {
       if entry.value != nil {
         parts = parts + [url_encode(entry.key) + "=" + url_encode(to_string(entry.value))]
@@ -1301,7 +1301,7 @@ let _MODULE_TEMPLATE = """
     if type_of(body) != "dict" {
       throw "polymorphic request body must be a dict with a _variant marker"
     }
-    var out = {}
+    let out = {}
     for entry in body {
       if entry.key != "_variant" {
         out = {...out, [entry.key]: entry.value}
@@ -1317,9 +1317,9 @@ let _MODULE_TEMPLATE = """
     let path_bindings = {{ op.path_bindings }}
     let path = _interpolate("{{ op.path }}", path_bindings)
     {{ if op.has_query }}let query_bindings = {{ op.query_bindings }}
-    var url = _join_url(client.base_url, path)
+    let url = _join_url(client.base_url, path)
     url = url + _query_string(query_bindings){{ else }}let url = _join_url(client.base_url, path){{ end }}
-    var request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
+    let request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
     {{ op.header_cookie_lines }}{{ end }}
     {{ op.request_lines }}
     {{ op.error_lines }}
@@ -1331,21 +1331,21 @@ let _MODULE_TEMPLATE = """
 
 /** Emit a Harn SDK module as source code. */
 pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
-  let module_name = options.get("module_name") ?? "generated_sdk"
-  let client_name = options.get("client_name") ?? "Client"
-  let default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
-  let header_overrides = options.get("header_overrides") ?? {}
-  let transport = _transport_kind(options.get("transport") ?? "connector_policy")
-  let schemes = doc.get("security_schemes") ?? {}
-  let doc_security = doc.get("security") ?? []
-  let ops_raw = operations(doc)
+  const module_name = options.get("module_name") ?? "generated_sdk"
+  const client_name = options.get("client_name") ?? "Client"
+  const default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
+  const header_overrides = options.get("header_overrides") ?? {}
+  const transport = _transport_kind(options.get("transport") ?? "connector_policy")
+  const schemes = doc.get("security_schemes") ?? {}
+  const doc_security = doc.get("security") ?? []
+  const ops_raw = operations(doc)
   // First pass (security): resolve each op's security choice so we can
   // collect the set of schemes actually referenced. An explicit
   // `security: []` at either the operation or document level means
   // "no auth" and must NOT pull in a scheme.
-  var used_schemes = []
+  let used_schemes = []
   for op in ops_raw {
-    let choice = _resolve_security(op.security, doc_security)
+    const choice = _resolve_security(op.security, doc_security)
     for scheme_name in choice.scheme_names {
       if !used_schemes.contains(scheme_name) {
         used_schemes = used_schemes + [scheme_name]
@@ -1353,13 +1353,13 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     }
   }
   // Derive which client fields are needed from the used schemes.
-  let client_fields = _derive_client_fields(used_schemes, schemes)
-  let new_client_decl = _render_new_client_decl(client_fields, default_base_url, header_overrides)
-  let helper_names = _allocate_auth_helper_names(used_schemes, schemes)
+  const client_fields = _derive_client_fields(used_schemes, schemes)
+  const new_client_decl = _render_new_client_decl(client_fields, default_base_url, header_overrides)
+  const helper_names = _allocate_auth_helper_names(used_schemes, schemes)
   // Emit per-scheme header/query helpers.
-  var auth_helpers = []
+  let auth_helpers = []
   for scheme_name in used_schemes {
-    let def = schemes.get(scheme_name)
+    const def = schemes.get(scheme_name)
     if def != nil {
       auth_helpers = auth_helpers
         + [
@@ -1377,22 +1377,22 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
   // Second pass (response types): collect response-type aliases, keyed so
   // refs to the same component schema are emitted once and reused by every
   // operation that returns it.
-  var alias_cache = {by_ref: {}, by_name: {}, order: []}
-  var op_return_types = []
+  let alias_cache = {by_ref: {}, by_name: {}, order: []}
+  let op_return_types = []
   for op in ops_raw {
-    let rt = _resolve_response_type(doc, op, alias_cache)
+    const rt = _resolve_response_type(doc, op, alias_cache)
     alias_cache = rt.cache
     op_return_types = op_return_types + [rt.info]
   }
   // Third pass: build operation models with per-op security dispatch and
   // typed return wired up.
-  var ops = []
-  var seen_names = []
+  let ops = []
+  let seen_names = []
   for entry in ops_raw.enumerate() {
-    let op = entry.value
-    let ret = op_return_types[entry.index]
-    let choice = _resolve_security(op.security, doc_security)
-    let model = _build_op_model(
+    const op = entry.value
+    const ret = op_return_types[entry.index]
+    const choice = _resolve_security(op.security, doc_security)
+    const model = _build_op_model(
       doc,
       op,
       seen_names,
@@ -1407,12 +1407,12 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
   }
-  var alias_entries = []
+  let alias_entries = []
   for name in alias_cache.order {
     alias_entries = alias_entries + [{source: alias_cache.by_name.get(name)}]
   }
-  let connector_imports = _connector_imports(op_return_types, transport)
-  let bindings = {
+  const connector_imports = _connector_imports(op_return_types, transport)
+  const bindings = {
     doc_title: (doc.get("info") ?? {}).get("title") ?? module_name,
     openapi_version: doc.openapi,
     module_name: module_name,
@@ -1434,13 +1434,13 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
 
 /** Emit a harn.toml manifest for a generated SDK package. */
 pub fn codegen_harn_toml(options: dict) -> string {
-  let package_name = options.get("package_name") ?? options.get("module_name") ?? "generated-sdk"
-  let version = options.get("version") ?? "0.0.0"
-  let description = options.get("description") ?? "Generated Harn SDK package."
-  let default_export = options.get("default_export") ?? "src/lib.harn"
-  let types_export = options.get("types_export")
-  let dependencies = options.get("dependencies") ?? {}
-  var out = "[package]\n"
+  const package_name = options.get("package_name") ?? options.get("module_name") ?? "generated-sdk"
+  const version = options.get("version") ?? "0.0.0"
+  const description = options.get("description") ?? "Generated Harn SDK package."
+  const default_export = options.get("default_export") ?? "src/lib.harn"
+  const types_export = options.get("types_export")
+  const dependencies = options.get("dependencies") ?? {}
+  let out = "[package]\n"
   out = out + "name = \"" + _escape_toml_string(package_name) + "\"\n"
   out = out + "version = \"" + _escape_toml_string(version) + "\"\n"
   out = out + "description = \"" + _escape_toml_string(description) + "\"\n\n"
@@ -1467,7 +1467,7 @@ pub fn codegen_harn_toml(options: dict) -> string {
  */
 fn _resolve_security(op_security, doc_security) {
   // operation.security wins even when it's an empty list (means "no auth").
-  let reqs = if op_security != nil {
+  const reqs = if op_security != nil {
     op_security
   } else {
     doc_security
@@ -1475,13 +1475,13 @@ fn _resolve_security(op_security, doc_security) {
   if type_of(reqs) != "list" || len(reqs) == 0 {
     return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
-  let first = reqs[0]
+  const first = reqs[0]
   if type_of(first) != "dict" {
     return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
   // The first requirement object is an AND: every scheme key in it applies.
-  var picked_names = []
-  var picked = nil
+  let picked_names = []
+  let picked = nil
   for entry in first {
     if picked == nil {
       picked = entry.key
@@ -1493,12 +1493,12 @@ fn _resolve_security(op_security, doc_security) {
   if picked == nil {
     return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
   }
-  var alternatives = []
-  var i = 1
+  let alternatives = []
+  let i = 1
   while i < len(reqs) {
-    let alt = reqs[i]
+    const alt = reqs[i]
     if type_of(alt) == "dict" {
-      var alt_names = []
+      let alt_names = []
       for entry in alt {
         if !picked_names.contains(entry.key) && !alt_names.contains(entry.key) {
           alt_names = alt_names + [entry.key]
@@ -1514,18 +1514,18 @@ fn _resolve_security(op_security, doc_security) {
 }
 
 fn _allocate_auth_helper_names(used_schemes, schemes) {
-  var header_names = {}
-  var query_names = {}
-  var taken = []
+  let header_names = {}
+  let query_names = {}
+  let taken = []
   for scheme_name in used_schemes {
-    let header_base = "_headers_" + _sanitize_ident(scheme_name)
-    let header_name = _unique_fn_name(header_base, taken)
+    const header_base = "_headers_" + _sanitize_ident(scheme_name)
+    const header_name = _unique_fn_name(header_base, taken)
     taken = taken + [header_name]
     header_names = {...header_names, [scheme_name]: header_name}
-    let def = schemes.get(scheme_name)
+    const def = schemes.get(scheme_name)
     if def != nil && _scheme_kind(def) == "apiKey-query" {
-      let query_base = "_query_" + _sanitize_ident(scheme_name) + "_dict"
-      let query_name = _unique_fn_name(query_base, taken)
+      const query_base = "_query_" + _sanitize_ident(scheme_name) + "_dict"
+      const query_name = _unique_fn_name(query_base, taken)
       taken = taken + [query_name]
       query_names = {...query_names, [scheme_name]: query_name}
     }
@@ -1535,13 +1535,13 @@ fn _allocate_auth_helper_names(used_schemes, schemes) {
 
 /** Which client-struct fields are needed given the schemes actually used? */
 fn _derive_client_fields(used_schemes, schemes) {
-  var want_token = false
-  var want_basic = false
-  var want_api_keys = false
+  let want_token = false
+  let want_basic = false
+  let want_api_keys = false
   for name in used_schemes {
-    let def = schemes.get(name)
+    const def = schemes.get(name)
     if def != nil {
-      let kind = _scheme_kind(def)
+      const kind = _scheme_kind(def)
       if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
         want_token = true
       } else if kind == "basic" {
@@ -1551,7 +1551,7 @@ fn _derive_client_fields(used_schemes, schemes) {
       }
     }
   }
-  var fields = []
+  let fields = []
   if want_token {
     fields = fields + [{name: "token", kind: "string", default: "\"\""}]
     fields = fields + [{name: "token_provider", kind: "dynamic", default: "nil"}]
@@ -1576,9 +1576,9 @@ fn _derive_client_fields(used_schemes, schemes) {
  *          "unknown".
  */
 fn _scheme_kind(def) {
-  let ty = def.get("type")
+  const ty = def.get("type")
   if ty == "http" {
-    let scheme = def.get("scheme")
+    const scheme = def.get("scheme")
     if scheme == "bearer" {
       return "bearer"
     }
@@ -1588,7 +1588,7 @@ fn _scheme_kind(def) {
     return "unknown"
   }
   if ty == "apiKey" {
-    let loc = def.get("in") ?? "header"
+    const loc = def.get("in") ?? "header"
     if loc == "header" {
       return "apiKey-header"
     }
@@ -1613,7 +1613,7 @@ fn _scheme_kind(def) {
 }
 
 fn _render_new_client_decl(fields, default_base_url, header_overrides) {
-  var parts = ["base_url: string = \"" + _escape_string(default_base_url) + "\""]
+  let parts = ["base_url: string = \"" + _escape_string(default_base_url) + "\""]
   for f in fields {
     if f.kind == "string" {
       parts = parts + [f.name + ": string = " + f.default]
@@ -1628,16 +1628,16 @@ fn _render_new_client_decl(fields, default_base_url, header_overrides) {
 }
 
 fn _render_new_client_return(fields) {
-  var parts = ["base_url: base_url"]
+  let parts = ["base_url: base_url"]
   for field in fields {
     parts = parts + [field.name + ": " + field.name]
   }
   parts = parts + ["extra_headers: extra_headers"]
-  let inline = "{" + join(parts, ", ") + "}"
+  const inline = "{" + join(parts, ", ") + "}"
   if len(inline) + 2 <= 100 {
     return "return " + inline
   }
-  var out = "return {\n"
+  let out = "return {\n"
   for part in parts {
     out = out + "    " + part + ",\n"
   }
@@ -1650,12 +1650,12 @@ fn _render_pub_fn_decl(name, params, return_type) {
 }
 
 fn _render_fn_decl_suffix(name, params, return_type) {
-  let inline = name + "(" + join(params, ", ") + ") -> " + return_type
-  let params_width = len("pub fn " + name + "(" + join(params, ", ") + ")")
+  const inline = name + "(" + join(params, ", ") + ") -> " + return_type
+  const params_width = len("pub fn " + name + "(" + join(params, ", ") + ")")
   if params_width <= 100 {
     return inline
   }
-  var out = name + "(\n"
+  let out = name + "(\n"
   for p in params {
     out = out + "  " + p + ",\n"
   }
@@ -1664,7 +1664,7 @@ fn _render_fn_decl_suffix(name, params, return_type) {
 }
 
 fn _normalize_generated_source(src, module_name) {
-  var out = src
+  let out = src
   while contains(out, "\n\n\n") {
     out = replace(out, "\n\n\n", "\n\n")
   }
@@ -1677,7 +1677,7 @@ fn _normalize_generated_source(src, module_name) {
 }
 
 fn _transport_kind(value) {
-  let transport = to_string(value ?? "raw")
+  const transport = to_string(value ?? "raw")
   if transport == "raw" {
     return "raw"
   }
@@ -1689,11 +1689,11 @@ fn _transport_kind(value) {
 }
 
 fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
-  let kind = _scheme_kind(def)
+  const kind = _scheme_kind(def)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let token = _client_token(client)\n"
-      + "  var hs = "
+      + "  const token = _client_token(client)\n"
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if token != \"\" {\n"
@@ -1704,24 +1704,24 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   }
   if kind == "basic" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let basic = _client_basic(client)\n"
-      + "  var hs = "
+      + "  const basic = _client_basic(client)\n"
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
-      + "    let encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
+      + "    const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
       + "    hs = {...hs, Authorization: \"Basic \" + encoded}\n"
       + "  }\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
   if kind == "apiKey-header" {
-    let header_name = def.get("name") ?? scheme_name
+    const header_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let api_key = _client_api_key(client, \""
+      + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1733,12 +1733,12 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "}"
   }
   if kind == "apiKey-cookie" {
-    let cookie_name = def.get("name") ?? scheme_name
+    const cookie_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let api_key = _client_api_key(client, \""
+      + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1753,9 +1753,9 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     // Headers helper adds nothing beyond Content-Type; a parallel
     // _query_<scheme>_dict helper contributes the auth parameter dict
     // which is spread into each operation's query bindings.
-    let query_name = def.get("name") ?? scheme_name
+    const query_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  return _with_extra_headers(hs, client)\n"
@@ -1764,7 +1764,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "fn "
       + query_fn_name
       + "(client: dict) -> dict {\n"
-      + "  let v = _client_api_key(client, \""
+      + "  const v = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
       + "  if v == \"\" {\n"
@@ -1788,7 +1788,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
 }
 
 fn _default_server_url(doc) {
-  let servers = doc.get("servers") ?? []
+  const servers = doc.get("servers") ?? []
   if len(servers) == 0 {
     return ""
   }
@@ -1796,17 +1796,17 @@ fn _default_server_url(doc) {
 }
 
 fn _operation_param_models(params) {
-  var path_params = []
-  var query_params = []
-  var header_params = []
-  var cookie_params = []
-  var taken_param_idents = []
+  let path_params = []
+  let query_params = []
+  let header_params = []
+  let cookie_params = []
+  let taken_param_idents = []
   for p in params {
     if p.get("name") != nil {
-      let ident = _unique_fn_name(_sanitize_ident(p.get("name")), taken_param_idents)
+      const ident = _unique_fn_name(_sanitize_ident(p.get("name")), taken_param_idents)
       taken_param_idents = taken_param_idents + [ident]
-      let modeled = _merge_shallow(p, {ident: ident})
-      let loc = p.get("in") ?? "query"
+      const modeled = _merge_shallow(p, {ident: ident})
+      const loc = p.get("in") ?? "query"
       if loc == "path" {
         path_params = path_params + [modeled]
       } else if loc == "query" {
@@ -1830,19 +1830,19 @@ fn _signature_model(
   cookie_params,
   header_overrides,
 ) {
-  var required_sig = ["client: dict"]
-  var optional_sig = []
-  var path_bindings_parts = []
+  let required_sig = ["client: dict"]
+  let optional_sig = []
+  let path_bindings_parts = []
   for p in path_params {
-    let name = p.get("name")
-    let nm = p.ident
+    const name = p.get("name")
+    const nm = p.ident
     required_sig = required_sig + [nm]
     path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
   }
-  var query_bindings_parts = []
+  let query_bindings_parts = []
   for p in query_params {
-    let name = p.get("name")
-    let nm = p.ident
+    const name = p.get("name")
+    const nm = p.ident
     if p.get("required") {
       required_sig = required_sig + [nm]
     } else {
@@ -1851,7 +1851,7 @@ fn _signature_model(
     query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   for p in header_params {
-    let nm = p.ident
+    const nm = p.ident
     if p.get("required") && header_overrides.get(p.name) == nil {
       required_sig = required_sig + [nm]
     } else {
@@ -1859,15 +1859,15 @@ fn _signature_model(
     }
   }
   for p in cookie_params {
-    let nm = p.ident
+    const nm = p.ident
     if p.get("required") {
       required_sig = required_sig + [nm]
     } else {
       optional_sig = optional_sig + [nm + " = nil"]
     }
   }
-  let has_body = op.request_body != nil
-  let body_required = has_body && _request_body_required(doc, op.request_body)
+  const has_body = op.request_body != nil
+  const body_required = has_body && _request_body_required(doc, op.request_body)
   if has_body {
     if body_required {
       required_sig = required_sig + ["body"]
@@ -1897,53 +1897,53 @@ fn _build_op_model(
   transport,
   module_name,
 ) {
-  let fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
-  let param_model = _operation_param_models(op.parameters)
-  let path_params = param_model.path
-  let query_params = param_model.query
-  let header_params = param_model.header
-  let cookie_params = param_model.cookie
-  let sig = _signature_model(doc, op, path_params, query_params, header_params, cookie_params, header_overrides)
-  let sig_parts = sig.required + sig.optional
-  let has_body = sig.has_body
-  let body_required = sig.body_required
-  let path_bindings_parts = sig.path_bindings_parts
-  let query_bindings_parts = sig.query_bindings_parts
-  let scheme_names = choice.scheme_names
-  let headers_call = _render_headers_call(scheme_names, helper_names)
-  var query_scheme_names = []
+  const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
+  const param_model = _operation_param_models(op.parameters)
+  const path_params = param_model.path
+  const query_params = param_model.query
+  const header_params = param_model.header
+  const cookie_params = param_model.cookie
+  const sig = _signature_model(doc, op, path_params, query_params, header_params, cookie_params, header_overrides)
+  const sig_parts = sig.required + sig.optional
+  const has_body = sig.has_body
+  const body_required = sig.body_required
+  const path_bindings_parts = sig.path_bindings_parts
+  const query_bindings_parts = sig.query_bindings_parts
+  const scheme_names = choice.scheme_names
+  const headers_call = _render_headers_call(scheme_names, helper_names)
+  let query_scheme_names = []
   for scheme_name in scheme_names {
-    let def = schemes.get(scheme_name)
+    const def = schemes.get(scheme_name)
     if def != nil && _scheme_kind(def) == "apiKey-query" {
       query_scheme_names = query_scheme_names + [scheme_name]
     }
   }
-  let has_query_params = len(query_params) > 0
-  let has_apikey_query = len(query_scheme_names) > 0
-  let has_query = has_query_params || has_apikey_query
-  let doc_lines = split(op.summary, "\n")
-  let first = if len(doc_lines) > 0 {
+  const has_query_params = len(query_params) > 0
+  const has_apikey_query = len(query_scheme_names) > 0
+  const has_query = has_query_params || has_apikey_query
+  const doc_lines = split(op.summary, "\n")
+  const first = if len(doc_lines) > 0 {
     doc_lines[0]
   } else {
     ""
   }
-  let safe_summary = if first == "" {
+  const safe_summary = if first == "" {
     op.operation_id
   } else {
     first
   }
-  let doc_comment = "/** " + _escape_comment(safe_summary) + " */"
+  const doc_comment = "/** " + _escape_comment(safe_summary) + " */"
   // If the op had multiple security requirement alternatives, preserve the
   // discarded names in a note so a human can retarget manually.
-  let alts = choice.alternatives
-  let security_note = if type_of(alts) == "list" && len(alts) > 0 {
+  const alts = choice.alternatives
+  const security_note = if type_of(alts) == "list" && len(alts) > 0 {
     "NOTE: security alternatives also accepted: " + join(alts, ", ")
   } else {
     ""
   }
-  let body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
-  let body_prepare = _render_body_prepare(fn_name, body_variants)
-  let idempotency_key_param = _idempotency_key_param(header_params)
+  const body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
+  const body_prepare = _render_body_prepare(fn_name, body_variants)
+  const idempotency_key_param = _idempotency_key_param(header_params)
   return {
     fn_name: fn_name,
     method: op.method,
@@ -1985,7 +1985,7 @@ fn _build_op_model(
  * (see crates/harn-fmt/src/formatter/mod.rs::format_comma_sequence).
  */
 fn _render_error_throw(fn_name) {
-  let dict_inline = "operation: \""
+  const dict_inline = "operation: \""
     + fn_name
     + "\", status: resp.status, body: resp.body, headers: resp.headers"
   if 2 + len(dict_inline) <= 100 {
@@ -2022,9 +2022,9 @@ fn _render_headers_call(scheme_names, helper_names) {
   if len(scheme_names) == 0 {
     return "_no_auth_headers(client)"
   }
-  var calls = []
+  let calls = []
   for scheme_name in scheme_names {
-    let helper = helper_names.headers.get(scheme_name)
+    const helper = helper_names.headers.get(scheme_name)
     if helper != nil {
       calls = calls + [helper + "(client)"]
     }
@@ -2039,9 +2039,9 @@ fn _render_headers_call(scheme_names, helper_names) {
 }
 
 fn _render_query_bindings(parts, query_scheme_names, helper_names) {
-  var all_parts = parts
+  let all_parts = parts
   for scheme_name in query_scheme_names {
-    let helper = helper_names.queries.get(scheme_name)
+    const helper = helper_names.queries.get(scheme_name)
     if helper != nil {
       all_parts = all_parts + ["..." + helper + "(client)"]
     }
@@ -2050,7 +2050,7 @@ fn _render_query_bindings(parts, query_scheme_names, helper_names) {
 }
 
 fn _render_header_cookie_lines(header_params, cookie_params) {
-  var lines = []
+  let lines = []
   for p in header_params {
     lines = lines
       + [
@@ -2096,17 +2096,17 @@ fn _connector_imports(return_types, transport: string) -> string {
   if transport != "connector_policy" {
     return ""
   }
-  var needs_json = false
-  var needs_request = false
+  let needs_json = false
+  let needs_request = false
   for ret in return_types {
-    let helper = _connector_http_function(ret)
+    const helper = _connector_http_function(ret)
     if helper == "connector_http_json" {
       needs_json = true
     } else if helper == "connector_http_request" {
       needs_request = true
     }
   }
-  var imports = []
+  let imports = []
   if needs_json {
     imports = imports + ["connector_http_json"]
   }
@@ -2117,7 +2117,7 @@ fn _connector_imports(return_types, transport: string) -> string {
 }
 
 fn _connector_retry_attempts(method, idempotency_key_param) {
-  let normalized = to_string(method ?? "").lower()
+  const normalized = to_string(method ?? "").lower()
   if ["get", "head", "put", "delete", "options"].contains(normalized) {
     return 3
   }
@@ -2128,7 +2128,7 @@ fn _connector_retry_attempts(method, idempotency_key_param) {
 }
 
 fn _render_connector_options(method, fn_name, module_name, has_body, idempotency_key_param) {
-  var parts = [
+  let parts = [
     _harn_dict_entry("headers", "request_headers"),
     _harn_dict_entry("provider", "\"" + _escape_string(module_name) + "\""),
     _harn_dict_entry("operation", "\"" + _escape_string(fn_name) + "\""),
@@ -2176,16 +2176,16 @@ fn _render_request_lines(
 ) {
   if transport == "connector_policy" {
     if !has_body {
-      let options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
-      return "let resp = " + _render_connector_call(method, ret, options, "  ")
+      const options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
+      return "const resp = " + _render_connector_call(method, ret, options, "  ")
     }
     if body_required {
-      let options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
-      return body_prepare + "\n  let resp = " + _render_connector_call(method, ret, options, "  ")
+      const options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
+      return body_prepare + "\n  const resp = " + _render_connector_call(method, ret, options, "  ")
     }
-    let no_body_options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
-    let body_options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
-    return "var resp = nil\n"
+    const no_body_options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
+    const body_options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
+    return "let resp = nil\n"
       + "  if body == nil {\n"
       + "    resp = "
       + _render_connector_call(method, ret, no_body_options, "    ")
@@ -2199,19 +2199,19 @@ fn _render_request_lines(
       + "\n"
       + "  }"
   }
-  let raw_method = to_string(method ?? "get").upper()
+  const raw_method = to_string(method ?? "get").upper()
   if !has_body {
-    return "let resp = harness.net.request(\""
+    return "const resp = harness.net.request(\""
       + raw_method
       + "\", url, {headers: request_headers})"
   }
   if body_required {
     return body_prepare
-      + "\n  let resp = harness.net.request(\""
+      + "\n  const resp = harness.net.request(\""
       + raw_method
       + "\", url, {body: body_str, headers: request_headers})"
   }
-  return "var resp = nil\n"
+  return "let resp = nil\n"
     + "  if body == nil {\n"
     + "    resp = harness.net.request(\""
     + raw_method
@@ -2237,7 +2237,7 @@ fn _render_return_lines(fn_name, ret, transport) {
     if ret.response_mode == "json_any" {
       return "return resp.json"
     }
-    return "let raw = resp.json\n"
+    return "const raw = resp.json\n"
       + "  if type_of(raw) != \"dict\" {\n"
       + "    throw \""
       + fn_name
@@ -2248,7 +2248,7 @@ fn _render_return_lines(fn_name, ret, transport) {
   if ret.response_mode == "json_any" {
     return "return json_parse(resp.body)"
   }
-  return "let raw = json_parse(resp.body)\n"
+  return "const raw = json_parse(resp.body)\n"
     + "  if type_of(raw) != \"dict\" {\n"
     + "    throw \""
     + fn_name
@@ -2258,11 +2258,11 @@ fn _render_return_lines(fn_name, ret, transport) {
 }
 
 fn _render_binding_dict(parts) {
-  let inline = "{" + join(parts, ", ") + "}"
+  const inline = "{" + join(parts, ", ") + "}"
   if len(parts) == 0 || len(inline) <= 100 {
     return inline
   }
-  var out = "{\n"
+  let out = "{\n"
   for part in parts {
     out = out + "    " + part + ",\n"
   }
@@ -2274,12 +2274,12 @@ fn _request_json_schema(doc, request_body) {
   if request_body == nil {
     return nil
   }
-  let rb = _resolve_ref(doc, request_body)
-  let content = rb.get("content")
+  const rb = _resolve_ref(doc, request_body)
+  const content = rb.get("content")
   if content == nil {
     return nil
   }
-  let app_json = _json_media_type(content)
+  const app_json = _json_media_type(content)
   if app_json == nil {
     return nil
   }
@@ -2290,8 +2290,8 @@ fn _request_body_required(doc, request_body) {
   if request_body == nil {
     return false
   }
-  let rb = _resolve_ref(doc, request_body)
-  let required = rb.get("required")
+  const rb = _resolve_ref(doc, request_body)
+  const required = rb.get("required")
   if type_of(required) == "bool" {
     return required
   }
@@ -2299,12 +2299,12 @@ fn _request_body_required(doc, request_body) {
 }
 
 fn _body_variants_for_op(doc, op, fn_name, taken_names) {
-  let raw_schema = _request_json_schema(doc, op.request_body)
+  const raw_schema = _request_json_schema(doc, op.request_body)
   if raw_schema == nil {
     return []
   }
-  let root = schema(doc, raw_schema)
-  let variant_nodes = if root.get("oneOf") != nil {
+  const root = schema(doc, raw_schema)
+  const variant_nodes = if root.get("oneOf") != nil {
     root.get("oneOf")
   } else {
     root.get("anyOf")
@@ -2312,25 +2312,25 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
   if type_of(variant_nodes) != "list" || len(variant_nodes) < 2 {
     return []
   }
-  let discriminator = root.get("discriminator")
-  let discriminator_property = if type_of(discriminator) == "dict" {
+  const discriminator = root.get("discriminator")
+  const discriminator_property = if type_of(discriminator) == "dict" {
     discriminator.get("propertyName")
   } else {
     nil
   }
-  var variants = []
-  var taken_suffixes = []
-  var taken_fn_names = taken_names + [fn_name]
+  let variants = []
+  let taken_suffixes = []
+  let taken_fn_names = taken_names + [fn_name]
   for entry in variant_nodes.enumerate() {
-    let raw_variant = entry.value
-    let resolved = schema(doc, raw_variant)
-    let mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
-    let display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
-    let tag = _variant_tag(discriminator_property, resolved, display_name, mapping_tag)
-    let suffix_base = _snake_case_ident(display_name)
-    let suffix = _unique_fn_name(suffix_base, taken_suffixes)
+    const raw_variant = entry.value
+    const resolved = schema(doc, raw_variant)
+    const mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
+    const display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
+    const tag = _variant_tag(discriminator_property, resolved, display_name, mapping_tag)
+    const suffix_base = _snake_case_ident(display_name)
+    const suffix = _unique_fn_name(suffix_base, taken_suffixes)
     taken_suffixes = taken_suffixes + [suffix]
-    let variant_fn_name = _unique_fn_name(fn_name + "_" + suffix, taken_fn_names)
+    const variant_fn_name = _unique_fn_name(fn_name + "_" + suffix, taken_fn_names)
     taken_fn_names = taken_fn_names + [variant_fn_name]
     variants = variants
       + [
@@ -2349,11 +2349,11 @@ fn _discriminator_mapping_tag(discriminator, raw_variant) {
   if type_of(discriminator) != "dict" || type_of(raw_variant) != "dict" {
     return nil
   }
-  let mapping = discriminator.get("mapping")
+  const mapping = discriminator.get("mapping")
   if type_of(mapping) != "dict" {
     return nil
   }
-  let ref = raw_variant.get("$ref")
+  const ref = raw_variant.get("$ref")
   if ref == nil {
     return nil
   }
@@ -2367,13 +2367,13 @@ fn _discriminator_mapping_tag(discriminator, raw_variant) {
 
 fn _variant_display_name(raw_variant, resolved, mapping_tag, index) {
   if type_of(resolved) == "dict" {
-    let title = resolved.get("title")
+    const title = resolved.get("title")
     if type_of(title) == "string" && title != "" {
       return _pascal_case(title)
     }
   }
   if type_of(raw_variant) == "dict" {
-    let ref = raw_variant.get("$ref")
+    const ref = raw_variant.get("$ref")
     if type_of(ref) == "string" && ref != "" {
       return _alias_name_from_ref(ref)
     }
@@ -2389,7 +2389,7 @@ fn _variant_tag(discriminator_property, resolved, display_name, mapping_tag) {
     return mapping_tag
   }
   if type_of(discriminator_property) == "string" && discriminator_property != "" {
-    let const_tag = _schema_property_literal(resolved, discriminator_property)
+    const const_tag = _schema_property_literal(resolved, discriminator_property)
     if const_tag != nil {
       return to_string(const_tag)
     }
@@ -2401,16 +2401,16 @@ fn _schema_property_literal(resolved, property_name) {
   if type_of(resolved) != "dict" {
     return nil
   }
-  let props = resolved.get("properties") ?? {}
-  let prop = props.get(property_name)
+  const props = resolved.get("properties") ?? {}
+  const prop = props.get(property_name)
   if type_of(prop) != "dict" {
     return nil
   }
-  let const_value = prop.get("const")
+  const const_value = prop.get("const")
   if const_value != nil {
     return const_value
   }
-  let values = prop.get("enum")
+  const values = prop.get("enum")
   if type_of(values) == "list" && len(values) > 0 {
     return values[0]
   }
@@ -2421,26 +2421,26 @@ fn _variant_constructor_fields(doc, resolved) {
   if type_of(resolved) != "dict" || type_of(resolved.get("properties")) != "dict" {
     return []
   }
-  let props = resolved.get("properties") ?? {}
-  let required = resolved.get("required") ?? []
-  var keys = []
+  const props = resolved.get("properties") ?? {}
+  const required = resolved.get("required") ?? []
+  let keys = []
   for entry in props {
     keys = keys + [entry.key]
   }
   keys.sort()
-  var fields = []
-  var taken_idents = []
+  let fields = []
+  let taken_idents = []
   for key in keys {
-    let prop_schema = props.get(key)
-    let const_value = if type_of(prop_schema) == "dict" {
+    const prop_schema = props.get(key)
+    const const_value = if type_of(prop_schema) == "dict" {
       prop_schema.get("const")
     } else {
       nil
     }
-    let ident_base = _sanitize_ident(key)
-    let ident = _unique_fn_name(ident_base, taken_idents)
+    const ident_base = _sanitize_ident(key)
+    const ident = _unique_fn_name(ident_base, taken_idents)
     taken_idents = taken_idents + [ident]
-    let ty = _harn_type_for_property(doc, prop_schema, 1).annotation
+    const ty = _harn_type_for_property(doc, prop_schema, 1).annotation
     fields = fields
       + [
       {
@@ -2457,7 +2457,7 @@ fn _variant_constructor_fields(doc, resolved) {
 }
 
 fn _body_variant_fn_names(variants) {
-  var names = []
+  let names = []
   for variant in variants {
     names = names + [variant.fn_name]
   }
@@ -2465,7 +2465,7 @@ fn _body_variant_fn_names(variants) {
 }
 
 fn _body_variant_tags(variants) {
-  var tags = []
+  let tags = []
   for variant in variants {
     tags = tags + [variant.tag]
   }
@@ -2474,11 +2474,11 @@ fn _body_variant_tags(variants) {
 
 fn _render_body_prepare(fn_name, variants) {
   if len(variants) == 0 {
-    return "let body_str = json_stringify(body)"
+    return "const body_str = json_stringify(body)"
   }
-  let tags = _render_string_list(_body_variant_tags(variants))
-  let ctor_names = join(_body_variant_fn_names(variants), ", ")
-  return "let body_variant = if type_of(body) == \"dict\" {\n"
+  const tags = _render_string_list(_body_variant_tags(variants))
+  const ctor_names = join(_body_variant_fn_names(variants), ", ")
+  return "const body_variant = if type_of(body) == \"dict\" {\n"
     + "    body.get(\"_variant\")\n"
     + "  } else {\n"
     + "    nil\n"
@@ -2497,11 +2497,11 @@ fn _render_body_prepare(fn_name, variants) {
     + fn_name
     + ": unknown request body variant \" + to_string(body_variant)\n"
     + "  }\n"
-    + "  let body_str = json_stringify(_strip_codegen_variant(body))"
+    + "  const body_str = json_stringify(_strip_codegen_variant(body))"
 }
 
 fn _render_string_list(items) {
-  var parts = []
+  let parts = []
   for item in items {
     parts = parts + ["\"" + _escape_string(to_string(item)) + "\""]
   }
@@ -2512,7 +2512,7 @@ fn _render_body_variant_constructors(variants) {
   if len(variants) == 0 {
     return ""
   }
-  var chunks = []
+  let chunks = []
   for variant in variants {
     chunks = chunks + [_render_body_variant_constructor(variant)]
   }
@@ -2520,10 +2520,10 @@ fn _render_body_variant_constructors(variants) {
 }
 
 fn _render_body_variant_constructor(variant) {
-  var required_sig = []
-  var optional_sig = []
-  var literal_entries = []
-  var optional_lines = []
+  let required_sig = []
+  let optional_sig = []
+  let literal_entries = []
+  let optional_lines = []
   for field in variant.fields {
     if field.has_const {
       literal_entries = literal_entries + [_harn_dict_entry(field.key, _render_literal(field.const_value))]
@@ -2544,9 +2544,9 @@ fn _render_body_variant_constructor(variant) {
       ]
     }
   }
-  let doc_comment = "/** Build a `" + _escape_string(variant.tag)
+  const doc_comment = "/** Build a `" + _escape_string(variant.tag)
     + "` variant of the polymorphic request body. */\n"
-  let sig_parts = required_sig + optional_sig
+  const sig_parts = required_sig + optional_sig
   if len(sig_parts) == 0 && len(literal_entries) == 0 {
     return doc_comment
       + "pub fn "
@@ -2558,13 +2558,13 @@ fn _render_body_variant_constructor(variant) {
       + "}"
   }
   literal_entries = literal_entries + [_harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\"")]
-  var body = doc_comment
+  let body = doc_comment
     + "pub fn "
     + variant.fn_name
     + "("
     + join(sig_parts, ", ")
     + ") -> dict {\n"
-  body = body + "  var body = " + _render_binding_dict(literal_entries) + "\n"
+  body = body + "  let body = " + _render_binding_dict(literal_entries) + "\n"
   for line in optional_lines {
     body = body + line + "\n"
   }
@@ -2600,7 +2600,7 @@ fn _render_data_literal(value) {
     if len(value) == 0 {
       return "[]"
     }
-    var out = "[\n"
+    let out = "[\n"
     for item in value {
       out = out + "    " + _indent_after_first(_render_data_literal(item), "    ") + ",\n"
     }
@@ -2608,7 +2608,7 @@ fn _render_data_literal(value) {
     return out
   }
   if type_of(value) == "dict" {
-    var parts = []
+    let parts = []
     for entry in value {
       if entry.value != nil {
         parts = parts + [_harn_dict_entry(entry.key, _render_data_literal(entry.value))]
@@ -2617,7 +2617,7 @@ fn _render_data_literal(value) {
     if len(parts) == 0 {
       return "{}"
     }
-    var out = "{\n"
+    let out = "{\n"
     for part in parts {
       out = out + "    " + _indent_after_first(part, "    ") + ",\n"
     }
@@ -2632,7 +2632,7 @@ fn _indent_after_first(src, indent) {
 }
 
 fn _render_json_parse_expr(value) {
-  let encoded = _escape_string(json_stringify(value))
+  const encoded = _escape_string(json_stringify(value))
   if len(encoded) <= 80 {
     return "json_parse(\"" + encoded + "\")"
   }
@@ -2652,7 +2652,7 @@ fn _render_json_parse_expr(value) {
 // -------------------------------------------------------------------------------------------------
 
 fn _resolve_response_type(doc, op, cache) {
-  let picked = _pick_success_response(doc, op)
+  const picked = _pick_success_response(doc, op)
   if picked == nil {
     // No 2xx declared at all — legacy `dict` with empty-body fallback.
     return {
@@ -2669,7 +2669,7 @@ fn _resolve_response_type(doc, op, cache) {
       cache: cache,
     }
   }
-  let schema_raw = picked.schema
+  const schema_raw = picked.schema
   if schema_raw == nil {
     // JSON content entry with no declared schema — fall back to dict.
     return {
@@ -2677,16 +2677,16 @@ fn _resolve_response_type(doc, op, cache) {
       cache: cache,
     }
   }
-  let ref = schema_raw.get("$ref")
+  const ref = schema_raw.get("$ref")
   // For classification we always work off the fully-resolved (allOf-
   // merged) schema, since components often declare the interesting
   // shape inside `allOf: [...]`.
-  let full = schema(doc, schema_raw)
-  let shape = _schema_shape_kind(full)
+  const full = schema(doc, schema_raw)
+  const shape = _schema_shape_kind(full)
   if shape == "nil" {
     return {info: {type_name: "nil", returns_nil: true, alias_name: nil, response_mode: "nil"}, cache: cache}
   }
-  let untyped_json_type = _untyped_json_return_type(full)
+  const untyped_json_type = _untyped_json_return_type(full)
   if shape == "dict" && untyped_json_type != "dict" {
     return {
       info: {type_name: untyped_json_type, returns_nil: false, alias_name: nil, response_mode: "json_any"},
@@ -2694,7 +2694,7 @@ fn _resolve_response_type(doc, op, cache) {
     }
   }
   if ref != nil {
-    let cached = cache.by_ref.get(ref)
+    const cached = cache.by_ref.get(ref)
     if cached != nil {
       if shape == "dict" {
         return {
@@ -2720,10 +2720,10 @@ fn _resolve_response_type(doc, op, cache) {
         cache: cache,
       }
     }
-    let base_alias = _alias_name_from_ref(ref)
-    let alias_name = _unique_type_name(base_alias, cache)
-    let source = _emit_struct_alias(doc, alias_name, full)
-    let new_cache = {
+    const base_alias = _alias_name_from_ref(ref)
+    const alias_name = _unique_type_name(base_alias, cache)
+    const source = _emit_struct_alias(doc, alias_name, full)
+    const new_cache = {
       by_ref: {...cache.by_ref, [ref]: alias_name},
       by_name: {...cache.by_name, [alias_name]: source},
       order: cache.order + [alias_name],
@@ -2747,10 +2747,10 @@ fn _resolve_response_type(doc, op, cache) {
       cache: cache,
     }
   }
-  let base = _alias_name_from_operation(op.operation_id)
-  let alias_name = _unique_type_name(base, cache)
-  let source = _emit_struct_alias(doc, alias_name, full)
-  let new_cache = {
+  const base = _alias_name_from_operation(op.operation_id)
+  const alias_name = _unique_type_name(base, cache)
+  const source = _emit_struct_alias(doc, alias_name, full)
+  const new_cache = {
     by_ref: cache.by_ref,
     by_name: {...cache.by_name, [alias_name]: source},
     order: cache.order + [alias_name],
@@ -2770,16 +2770,16 @@ fn _pick_success_response(doc, op) {
   //                              (e.g. application/octet-stream). The
   //                              caller keeps the legacy `dict` return.
   //   nil                      — operation has no 2xx response at all.
-  var saw_opaque = false
+  let saw_opaque = false
   for entry in op.responses {
-    let code = entry.key
+    const code = entry.key
     if _is_success_code(code) {
-      let resp = _resolve_ref(doc, entry.value)
-      let content = resp.get("content")
+      const resp = _resolve_ref(doc, entry.value)
+      const content = resp.get("content")
       if content == nil {
         return {kind: "nil"}
       }
-      let app_json = _json_media_type(content)
+      const app_json = _json_media_type(content)
       if app_json != nil {
         return {kind: "json", schema: app_json.get("schema")}
       }
@@ -2796,12 +2796,12 @@ fn _json_media_type(content) {
   if type_of(content) != "dict" {
     return nil
   }
-  let exact = content.get("application/json")
+  const exact = content.get("application/json")
   if exact != nil {
     return exact
   }
   for entry in content {
-    let normalized = _media_type_without_parameters(entry.key)
+    const normalized = _media_type_without_parameters(entry.key)
     if normalized == "application/json" || regex_match("\\+json$", normalized) != nil {
       return entry.value
     }
@@ -2810,8 +2810,8 @@ fn _json_media_type(content) {
 }
 
 fn _media_type_without_parameters(raw) {
-  let lowered = to_string(raw).lower()
-  let semi = _index_of(lowered, ";")
+  const lowered = to_string(raw).lower()
+  const semi = _index_of(lowered, ";")
   if semi >= 0 {
     return trim(substring(lowered, 0, semi))
   }
@@ -2819,12 +2819,12 @@ fn _media_type_without_parameters(raw) {
 }
 
 fn _index_of(hay, needle) {
-  let nh = len(hay)
-  let nn = len(needle)
+  const nh = len(hay)
+  const nn = len(needle)
   if nn == 0 {
     return 0
   }
-  var i = 0
+  let i = 0
   while i + nn <= nh {
     if substring(hay, i, i + nn) == needle {
       return i
@@ -2863,7 +2863,7 @@ fn _schema_shape_kind(sch) {
   if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
     return "dict"
   }
-  let ty = sch.get("type")
+  const ty = sch.get("type")
   if ty == "object" {
     // `type: object` with no explicit properties — treat as bag-of-kv.
     return "dict"
@@ -2879,11 +2879,11 @@ fn _untyped_json_return_type(sch) {
   if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
     return "any"
   }
-  let ty = sch.get("type")
+  const ty = sch.get("type")
   if ty == "array" {
     return "list"
   }
-  let prim = _primitive_harn_type(ty)
+  const prim = _primitive_harn_type(ty)
   if prim != nil {
     return prim
   }
@@ -2892,8 +2892,8 @@ fn _untyped_json_return_type(sch) {
 
 fn _alias_name_from_ref(ref) {
   // "#/components/schemas/pageObjectResponse" -> "PageObjectResponse"
-  let parts = split(ref, "/")
-  let tail = _unescape_pointer(parts[len(parts) - 1])
+  const parts = split(ref, "/")
+  const tail = _unescape_pointer(parts[len(parts) - 1])
   return _pascal_case(tail)
 }
 
@@ -2908,12 +2908,12 @@ fn _pascal_case(raw) {
   if raw == nil || raw == "" {
     return "T"
   }
-  let segments = split(regex_replace_all("[^a-zA-Z0-9]+", "_", raw), "_")
-  var out = ""
+  const segments = split(regex_replace_all("[^a-zA-Z0-9]+", "_", raw), "_")
+  let out = ""
   for seg in segments {
     if seg != "" {
-      let first = substring(seg, 0, 1).upper()
-      let rest = if len(seg) > 1 {
+      const first = substring(seg, 0, 1).upper()
+      const rest = if len(seg) > 1 {
         substring(seg, 1, len(seg))
       } else {
         ""
@@ -2924,7 +2924,7 @@ fn _pascal_case(raw) {
   if out == "" {
     return "T"
   }
-  let first_char = substring(out, 0, 1)
+  const first_char = substring(out, 0, 1)
   if _is_digit(first_char) {
     return "T" + out
   }
@@ -2935,8 +2935,8 @@ fn _unique_type_name(base, cache) {
   if cache.by_name.get(base) == nil {
     return base
   }
-  var n = 2
-  var candidate = base + to_string(n)
+  let n = 2
+  let candidate = base + to_string(n)
   while cache.by_name.get(candidate) != nil {
     n = n + 1
     candidate = base + to_string(n)
@@ -2945,23 +2945,23 @@ fn _unique_type_name(base, cache) {
 }
 
 fn _emit_struct_alias(doc, alias_name, resolved) {
-  let props = resolved.get("properties") ?? {}
-  let required = resolved.get("required") ?? []
-  var keys = []
+  const props = resolved.get("properties") ?? {}
+  const required = resolved.get("required") ?? []
+  let keys = []
   for entry in props {
     keys = keys + [entry.key]
   }
   keys.sort()
-  var fields = []
+  let fields = []
   for key in keys {
-    let prop_schema = props.get(key)
-    let field_type = _harn_type_for_property(doc, prop_schema, 1)
+    const prop_schema = props.get(key)
+    const field_type = _harn_type_for_property(doc, prop_schema, 1)
     fields = fields + [_harn_struct_field(key, field_type.annotation, required.contains(key))]
   }
   if len(fields) <= 4 {
     return "type " + alias_name + " = {" + join(fields, ", ") + "}"
   }
-  var out = "type " + alias_name + " = {\n"
+  let out = "type " + alias_name + " = {\n"
   for field in fields {
     out = out + "  " + field + ",\n"
   }
@@ -2975,29 +2975,29 @@ fn _harn_type_for_property(doc, prop_schema, depth) {
   if type_of(prop_schema) != "dict" {
     return {annotation: "dict", comment: ""}
   }
-  let ref = prop_schema.get("$ref")
+  const ref = prop_schema.get("$ref")
   if ref != nil {
-    let resolved = schema(doc, prop_schema)
-    let kind = _schema_shape_kind(resolved)
+    const resolved = schema(doc, prop_schema)
+    const kind = _schema_shape_kind(resolved)
     if kind == "dict" {
-      let ty = resolved.get("type")
-      let prim = _primitive_harn_type(ty)
+      const ty = resolved.get("type")
+      const prim = _primitive_harn_type(ty)
       if prim != nil {
         return {annotation: prim, comment: ""}
       }
-      let ref_name = _alias_name_from_ref(ref)
+      const ref_name = _alias_name_from_ref(ref)
       return {annotation: "dict", comment: ref_name + " (polymorphic or primitive) — narrow with schema_is."}
     }
     // Referenced schema is a struct. v0 does not recursively emit
     // dependent aliases, so nested struct refs render as `dict` with a
     // hint pointing at the schema name.
-    let ref_name = _alias_name_from_ref(ref)
+    const ref_name = _alias_name_from_ref(ref)
     return {annotation: "dict", comment: ref_name + " — nested; narrow with schema_is."}
   }
   if prop_schema.get("oneOf") != nil || prop_schema.get("anyOf") != nil {
     return {annotation: "dict", comment: "polymorphic; narrow with schema_is."}
   }
-  let ty = prop_schema.get("type")
+  const ty = prop_schema.get("type")
   if ty == "array" {
     return {annotation: "list", comment: ""}
   }
@@ -3009,7 +3009,7 @@ fn _harn_type_for_property(doc, prop_schema, depth) {
     }
     return {annotation: "dict", comment: ""}
   }
-  let prim = _primitive_harn_type(ty)
+  const prim = _primitive_harn_type(ty)
   if prim != nil {
     return {annotation: prim, comment: ""}
   }
@@ -3044,7 +3044,7 @@ fn _harn_struct_field(key, annotation, required) {
 }
 
 fn _struct_has_renderable_keys(resolved) {
-  let props = resolved.get("properties") ?? {}
+  const props = resolved.get("properties") ?? {}
   for entry in props {
     if !_is_plain_identifier(entry.key) {
       return false
@@ -3058,7 +3058,7 @@ fn _sanitize_fn_name(raw) {
 }
 
 fn _sanitize_ident(raw) {
-  let s = _sanitize_fn_name(raw)
+  const s = _sanitize_fn_name(raw)
   if _is_reserved(s) {
     return s + "_"
   }
@@ -3066,7 +3066,7 @@ fn _sanitize_ident(raw) {
 }
 
 fn _snake_case_ident(raw) {
-  let out = _snake_case_base(raw, "variant")
+  const out = _snake_case_base(raw, "variant")
   if _is_reserved(out) {
     return out + "_"
   }
@@ -3077,11 +3077,11 @@ fn _snake_case_base(raw, fallback) {
   if raw == nil || raw == "" {
     return fallback
   }
-  let cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
-  var out = ""
-  var i = 0
+  const cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
+  let out = ""
+  let i = 0
   while i < len(cleaned) {
-    let ch = substring(cleaned, i, i + 1)
+    const ch = substring(cleaned, i, i + 1)
     if ch == "_" {
       if out != "" && substring(out, len(out) - 1, len(out)) != "_" {
         out = out + "_"
@@ -3098,7 +3098,7 @@ fn _snake_case_base(raw, fallback) {
   if out == "" {
     return fallback
   }
-  let first_char = substring(out, 0, 1)
+  const first_char = substring(out, 0, 1)
   if _is_digit(first_char) {
     return fallback + "_" + out
   }
@@ -3118,7 +3118,7 @@ fn _is_digit(c) {
     || c == "9"
 }
 
-let _RESERVED = [
+const _RESERVED = [
   "if",
   "else",
   "elif",
@@ -3163,8 +3163,8 @@ fn _unique_fn_name(base, taken) {
   if !taken.contains(base) {
     return base
   }
-  var n = 2
-  var candidate = base + "_" + to_string(n)
+  let n = 2
+  let candidate = base + "_" + to_string(n)
   while taken.contains(candidate) {
     n = n + 1
     candidate = base + "_" + to_string(n)
@@ -3187,7 +3187,7 @@ fn _is_plain_identifier(s) {
   if s == "" {
     return false
   }
-  let first = substring(s, 0, 1)
+  const first = substring(s, 0, 1)
   if _is_digit(first) {
     return false
   }
@@ -3200,11 +3200,11 @@ fn _escape_string(s) {
   // could close a Harn string literal early or break our codegen output. We
   // explicitly escape \n, \r, \t, and reject any remaining ASCII control
   // characters (U+0000-U+001F) before emitting.
-  let coerced = to_string(s)
+  const coerced = to_string(s)
   if regex_match("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]", coerced) != nil {
     throw "harn-openapi: control character in string value (only \\n, \\r, \\t are escaped, others are rejected)"
   }
-  var out = replace(coerced, "\\", "\\\\")
+  let out = replace(coerced, "\\", "\\\\")
   out = replace(out, "\"", "\\\"")
   out = replace(out, "\n", "\\n")
   out = replace(out, "\r", "\\r")
@@ -3230,9 +3230,9 @@ fn _render_manifest_dependency(name, spec) {
   if type_of(spec) != "dict" {
     return _toml_key(name) + " = \"*\"\n"
   }
-  var parts = []
+  let parts = []
   for key in ["path", "git", "rev", "branch", "tag", "version"] {
-    let value = spec.get(key)
+    const value = spec.get(key)
     if value != nil {
       parts = parts + [_toml_key(key) + " = \"" + _escape_toml_string(value) + "\""]
     }
@@ -3247,7 +3247,7 @@ fn _render_dict_literal(d) {
   if type_of(d) != "dict" {
     return "{}"
   }
-  var parts = []
+  let parts = []
   for entry in d {
     parts = parts + [_harn_dict_entry(entry.key, "\"" + _escape_string(to_string(entry.value)) + "\"")]
   }

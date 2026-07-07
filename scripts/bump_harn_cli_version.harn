@@ -5,7 +5,7 @@
 //
 // The default path updates `.harn-version`, installs the requested harn-cli
 // release from crates.io into a temp root, and runs the local gate.
-let _VERSION_REL_PATH = ".harn-version"
+const _VERSION_REL_PATH = ".harn-version"
 
 fn _repo_root() -> string {
   return source_dir() + "/.."
@@ -29,8 +29,8 @@ By default, this also installs harn-cli from crates.io and runs:
 }
 
 fn _normalize_version(raw: string) -> string {
-  let trimmed = trim(raw)
-  let version = if starts_with(trimmed, "v") {
+  const trimmed = trim(raw)
+  const version = if starts_with(trimmed, "v") {
     trimmed[1:len(trimmed)]
   } else {
     trimmed
@@ -42,12 +42,12 @@ fn _normalize_version(raw: string) -> string {
 }
 
 fn _parse_args(harness: Harness) -> dict {
-  var version = ""
-  var repo_root = _repo_root()
-  var verify = true
-  var i = 0
+  let version = ""
+  let repo_root = _repo_root()
+  let verify = true
+  let i = 0
   while i < len(argv) {
-    let arg = argv[i]
+    const arg = argv[i]
     if arg == "--help" || arg == "-h" {
       harness.stdio.println(_usage())
       exit(0)
@@ -84,7 +84,7 @@ fn _sh_quote(value: string) -> string {
 
 fn _run(harness: Harness, repo_root: string, label: string, cmd: string) {
   harness.stdio.println("running: ${label}")
-  let result = shell_at(repo_root, cmd)
+  const result = shell_at(repo_root, cmd)
   if result.stdout != "" {
     harness.stdio.println(result.stdout.trim())
   }
@@ -101,13 +101,13 @@ fn _version_slug(version: string) -> string {
 }
 
 fn _replace_version_file(harness: Harness, repo_root: string, new_version: string) -> dict {
-  let path = repo_root + "/" + _VERSION_REL_PATH
-  let old_version = if harness.fs.exists(path) {
+  const path = repo_root + "/" + _VERSION_REL_PATH
+  const old_version = if harness.fs.exists(path) {
     trim(harness.fs.read_text(path))
   } else {
     ""
   }
-  let updated = new_version + "\n"
+  const updated = new_version + "\n"
   if !harness.fs.exists(path) || harness.fs.read_text(path) != updated {
     harness.fs.write_text(path, updated)
     harness.stdio.println("updated ${path}: ${old_version} -> ${new_version}")
@@ -118,12 +118,12 @@ fn _replace_version_file(harness: Harness, repo_root: string, new_version: strin
 }
 
 fn _verify_version(harness: Harness, repo_root: string, version: string) {
-  let slug = _version_slug(version)
-  let scratch_root = repo_root + "/.harn/tmp"
+  const slug = _version_slug(version)
+  const scratch_root = repo_root + "/.harn/tmp"
   harness.fs.mkdir(scratch_root)
-  let install_root = scratch_root + "/harn-openapi-harn-cli-" + slug
-  let target_dir = scratch_root + "/harn-openapi-harn-cli-target-" + slug
-  let harn_bin = install_root + "/bin/harn"
+  const install_root = scratch_root + "/harn-openapi-harn-cli-" + slug
+  const target_dir = scratch_root + "/harn-openapi-harn-cli-target-" + slug
+  const harn_bin = install_root + "/bin/harn"
   if !harness.fs.exists(harn_bin) {
     _run(
       harness,
@@ -139,7 +139,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
   } else {
     harness.stdio.println("using cached harn-cli ${version}: ${harn_bin}")
   }
-  let env_prefix = "HARN_ROOT=" + _sh_quote(repo_root) + " HARN_BIN=" + _sh_quote(harn_bin) + " "
+  const env_prefix = "HARN_ROOT=" + _sh_quote(repo_root) + " HARN_BIN=" + _sh_quote(harn_bin) + " "
   _run(harness, repo_root, "harn version", _sh_quote(harn_bin) + " version")
   _run(
     harness,
@@ -180,7 +180,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
 }
 
 pipeline default() {
-  let args = _parse_args(harness)
+  const args = _parse_args(harness)
   _replace_version_file(harness, args.repo_root, args.version)
   if args.verify {
     _verify_version(harness, args.repo_root, args.version)

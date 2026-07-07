@@ -24,9 +24,9 @@ fn _circular_ref_doc() -> string {
 }
 
 fn _long_all_of_doc(chain_len: int) -> string {
-  var parts = "["
-  var sep = ""
-  var i = 0
+  let parts = "["
+  let sep = ""
+  let i = 0
   while i < chain_len {
     parts = parts + sep + "{\"type\":\"object\"}"
     sep = ","
@@ -63,15 +63,15 @@ fn _ctrl_char_doc() -> string {
 
 @test
 pipeline test_f4_circular_ref_detected() {
-  let doc = parse(_circular_ref_doc())
-  let caught = try {
+  const doc = parse(_circular_ref_doc())
+  const caught = try {
     let _ignored = schema(doc, {"$ref": "#/components/schemas/A"})
     nil
   } catch (e) {
     e
   }
   assert(caught != nil, "expected circular $ref to throw")
-  let msg = to_string(caught)
+  const msg = to_string(caught)
   assert(
     contains(msg, "circular $ref") || contains(msg, "depth exceeded"),
     "expected cycle or depth-cap message, got: " + msg,
@@ -81,8 +81,8 @@ pipeline test_f4_circular_ref_detected() {
 
 @test
 pipeline test_f5_all_of_branch_count_cap() {
-  let doc = parse(_long_all_of_doc(65))
-  let caught = try {
+  const doc = parse(_long_all_of_doc(65))
+  const caught = try {
     let _ignored = schema(doc, {"$ref": "#/components/schemas/Long"})
     nil
   } catch (e) {
@@ -101,17 +101,17 @@ pipeline test_f5_all_of_branch_count_cap() {
 pipeline test_f5_all_of_at_cap_succeeds() {
   // At exactly the cap (64), schema() must still succeed: caps should not
   // regress legitimate-but-large specs.
-  let doc = parse(_long_all_of_doc(64))
-  let resolved = schema(doc, {"$ref": "#/components/schemas/Long"})
+  const doc = parse(_long_all_of_doc(64))
+  const resolved = schema(doc, {"$ref": "#/components/schemas/Long"})
   assert(type_of(resolved) == "dict", "schema() at allOf cap should succeed")
   harness.stdio.println("f5 allOf at cap: ok")
 }
 
 @test
 pipeline test_f6_escape_string_rejects_nul() {
-  let doc = parse(_ctrl_char_doc())
+  const doc = parse(_ctrl_char_doc())
   assert(doc != nil, "ctrl-char doc should parse (JSON allows \\u0000 escapes)")
-  let caught = try {
+  const caught = try {
     let _src = codegen_module(doc, {module_name: "ctrl", client_name: "C"})
     nil
   } catch (e) {

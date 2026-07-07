@@ -5,14 +5,14 @@
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
   return "harn " + args
 }
 
-let _TINY_DOC = """
+const _TINY_DOC = """
   {
     "openapi": "3.1.0",
     "info": { "title": "Tiny API", "version": "1.0.0" },
@@ -132,8 +132,8 @@ fn _count_occurrences(haystack: string, needle: string) -> int {
 }
 
 pipeline test_main() {
-  let doc = parse(_TINY_DOC)
-  let src = codegen_module(
+  const doc = parse(_TINY_DOC)
+  const src = codegen_module(
     doc,
     {
       module_name: "tiny",
@@ -142,15 +142,15 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let out_path = harness.fs.temp_dir() + "/harn-openapi-response-types-smoke-" + uuid() + ".harn"
+  const out_path = harness.fs.temp_dir() + "/harn-openapi-response-types-smoke-" + uuid() + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote tiny module: ${out_path} (${len(src)} bytes)")
   // --- Acceptance 1: one alias per distinct response schema. ---
   // PageObject (2 ops share it) + SearchItemsResponse (inline) = 2
   // aliases; deletePage (204) and getRawBytes (non-JSON) emit no
   // aliases.
-  let page_alias_hits = _count_occurrences(src, "type PageObject = {")
-  let search_alias_hits = _count_occurrences(src, "type SearchItemsResponse = {")
+  const page_alias_hits = _count_occurrences(src, "type PageObject = {")
+  const search_alias_hits = _count_occurrences(src, "type SearchItemsResponse = {")
   assert(
     page_alias_hits == 1,
     "PageObject alias must be emitted exactly once, got ${page_alias_hits}",
@@ -191,7 +191,7 @@ pipeline test_main() {
     contains(src, "pub fn delete_page(client: dict, id) -> nil"),
     "delete_page (204) must return nil",
   )
-  let delete_block_start = _count_occurrences(src, "pub fn delete_page")
+  const delete_block_start = _count_occurrences(src, "pub fn delete_page")
   assert(delete_block_start == 1, "delete_page must be emitted once")
   // --- Acceptance 6: non-JSON success body -> untyped fallback dict,
   // no bogus alias emission. ---
@@ -199,10 +199,10 @@ pipeline test_main() {
     contains(src, "pub fn get_raw_bytes(client: dict) -> dict"),
     "non-JSON response body must fall back to dict",
   )
-  let raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
+  const raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
   // --- Acceptance 7: emitted module passes `harn check`. ---
-  let result = shell(harn_cmd(harness, "check " + out_path))
+  const result = shell(harn_cmd(harness, "check " + out_path))
   if !result.success {
     harness.stdio.println("harn check stderr:")
     harness.stdio.println(result.stderr)
@@ -212,9 +212,9 @@ pipeline test_main() {
   assert(result.success, "generated module must pass `harn check` (status ${result.status})")
   // --- Acceptance 8: on the Notion fixture, emit >=20 distinct type
   // aliases, and fn signatures reuse them by name. ---
-  let notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let notion_doc = parse(notion_raw)
-  let notion_src = codegen_module(
+  const notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const notion_doc = parse(notion_raw)
+  const notion_src = codegen_module(
     notion_doc,
     {
       module_name: "notion",
@@ -223,24 +223,24 @@ pipeline test_main() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let alias_count = _count_occurrences(notion_src, "\ntype ")
+  const alias_count = _count_occurrences(notion_src, "\ntype ")
   harness.stdio.println("notion aliases: ${alias_count}")
   assert(alias_count >= 20, "expected >=20 aliases on the Notion fixture, got ${alias_count}")
   // --- Acceptance 9: fileUploadObjectResponse is emitted once even
   // though four operations return it. ---
-  let file_alias_hits = _count_occurrences(notion_src, "type FileUploadObjectResponse = {")
+  const file_alias_hits = _count_occurrences(notion_src, "type FileUploadObjectResponse = {")
   assert(
     file_alias_hits == 1,
     "FileUploadObjectResponse alias must dedupe across ops, got ${file_alias_hits}",
   )
-  let file_return_hits = _count_occurrences(notion_src, "-> FileUploadObjectResponse")
+  const file_return_hits = _count_occurrences(notion_src, "-> FileUploadObjectResponse")
   assert(
     file_return_hits >= 4,
     "expected >=4 ops returning FileUploadObjectResponse, got ${file_return_hits}",
   )
   // --- Acceptance 10: user-object shared alias between get_self and
   // get_user. ---
-  let user_alias_hits = _count_occurrences(notion_src, "type UserObjectResponse = {")
+  const user_alias_hits = _count_occurrences(notion_src, "type UserObjectResponse = {")
   assert(
     user_alias_hits == 1,
     "UserObjectResponse alias must be emitted once, got ${user_alias_hits}",

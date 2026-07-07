@@ -3,7 +3,7 @@
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -11,7 +11,7 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  let root = source_dir() + "/../.harn/tmp"
+  const root = source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + uuid()
 }
@@ -35,10 +35,10 @@ fn require_not_contains(harness: Harness, haystack: string, needle: string, labe
 }
 
 fn check_generates(harness: Harness, src: string) -> string {
-  let module_stem = scratch_path(harness, "harn-openapi-connector-policy")
-  let module_path = module_stem + ".harn"
+  const module_stem = scratch_path(harness, "harn-openapi-connector-policy")
+  const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
-  let check_result = shell(harn_cmd(harness, "check " + module_path))
+  const check_result = shell(harn_cmd(harness, "check " + module_path))
   if !check_result.success {
     harness.stdio.println("---harn check stderr---")
     harness.stdio.println(check_result.stderr)
@@ -46,7 +46,7 @@ fn check_generates(harness: Harness, src: string) -> string {
     harness.stdio.println(check_result.stdout)
   }
   require check_result.success, "generated connector-policy SDK must pass `harn check`"
-  let fmt_result = shell(harn_cmd(harness, "fmt --check " + module_path))
+  const fmt_result = shell(harn_cmd(harness, "fmt --check " + module_path))
   if !fmt_result.success {
     harness.stdio.println("---harn fmt --check stderr---")
     harness.stdio.println(fmt_result.stderr)
@@ -58,7 +58,7 @@ fn check_generates(harness: Harness, src: string) -> string {
 }
 
 fn run_generated(harness: Harness, module_stem: string) {
-  let runner_path = scratch_path(harness, "harn-openapi-connector-policy-runtime") + ".harn"
+  const runner_path = scratch_path(harness, "harn-openapi-connector-policy-runtime") + ".harn"
   harness.fs
     .write_text(
     runner_path,
@@ -120,7 +120,7 @@ fn run_generated(harness: Harness, module_stem: string) {
       + "  harness.stdio.println(\"connector_policy runtime: ok\")\n"
       + "}\n",
   )
-  let result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
     harness.stdio.println("---connector-policy runtime stderr---")
     harness.stdio.println(result.stderr)
@@ -150,9 +150,9 @@ fn build_json_only_doc() -> string {
 
 @test
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/connector_policy.openapi.json")
-  let doc = parse(raw)
-  let src = codegen_module(doc, {module_name: "connector_policy", client_name: "Client"})
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_policy.openapi.json")
+  const doc = parse(raw)
+  const src = codegen_module(doc, {module_name: "connector_policy", client_name: "Client"})
   require_contains(
     harness,
     src,
@@ -172,9 +172,9 @@ pipeline test_main() {
   require_contains(harness, src, "retry: {max_attempts: 1}", "unsafe write no-retry option")
   require_not_contains(harness, src, "http_get(", "default GET transport should not use raw HTTP")
   require_not_contains(harness, src, "http_post(", "default POST transport should not use raw HTTP")
-  let module_stem = check_generates(harness, src)
+  const module_stem = check_generates(harness, src)
   run_generated(harness, module_stem)
-  let raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"})
+  const raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"})
   require_not_contains(
     harness,
     raw_src,
@@ -187,7 +187,7 @@ pipeline test_main() {
     "harness.net.request(\"GET\"",
     "explicit raw transport emits harness net GET",
   )
-  let json_only_src = codegen_module(
+  const json_only_src = codegen_module(
     parse(build_json_only_doc()),
     {module_name: "json_only_policy", client_name: "Client"},
   )

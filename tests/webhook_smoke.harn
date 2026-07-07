@@ -6,23 +6,23 @@
 import { component_path_items, parse, schema, webhook_operations } from "../src/lib"
 
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let doc = parse(raw)
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const doc = parse(raw)
   // parse() must surface the webhooks map.
-  let webhooks = doc.webhooks ?? {}
+  const webhooks = doc.webhooks ?? {}
   assert(type_of(webhooks) == "dict", "doc.webhooks must be a dict")
-  let webhook_count = len(webhooks)
+  const webhook_count = len(webhooks)
   harness.stdio.println("webhooks (raw): ${webhook_count}")
   assert(webhook_count >= 10, "expected >=10 webhooks in the Notion fixture, got ${webhook_count}")
   // parse() must surface components.pathItems as a dict, even if empty.
-  let path_items = doc.components?.pathItems ?? {}
+  const path_items = doc.components?.pathItems ?? {}
   assert(type_of(path_items) == "dict", "doc.components.pathItems must be a dict")
   // component_path_items(doc) is the passthrough accessor.
-  let comp_path_items = component_path_items(doc)
+  const comp_path_items = component_path_items(doc)
   assert(type_of(comp_path_items) == "dict", "component_path_items(doc) must return a dict")
   harness.stdio.println("components.pathItems: ${len(comp_path_items)}")
   // webhook_operations(doc) flattens webhook path items into a list.
-  let webhook_ops = webhook_operations(doc)
+  const webhook_ops = webhook_operations(doc)
   harness.stdio.println("webhook operations: ${len(webhook_ops)}")
   assert(len(webhook_ops) >= 10, "expected >=10 webhook operations, got ${len(webhook_ops)}")
   // Every entry must have the shape { name, method, path_item, operation, ... }.
@@ -33,7 +33,7 @@ pipeline test_main() {
     assert(type_of(wop.operation) == "dict", "webhook operation operation must be a dict")
   }
   // Locate the commentCreated webhook and verify its payload schema resolves.
-  var comment_created = nil
+  let comment_created = nil
   for wop in webhook_ops {
     if wop.name == "commentCreated" {
       comment_created = wop
@@ -42,25 +42,25 @@ pipeline test_main() {
   assert(comment_created != nil, "could not find commentCreated webhook")
   harness.stdio
     .println("commentCreated: ${comment_created.method} -> ${comment_created.operation_id}")
-  let req_body = comment_created.operation.get("requestBody")
+  const req_body = comment_created.operation.get("requestBody")
   assert(req_body != nil, "commentCreated webhook must declare a requestBody")
-  let payload_schema_raw = req_body.content["application/json"].schema
-  let resolved = schema(doc, payload_schema_raw)
+  const payload_schema_raw = req_body.content["application/json"].schema
+  const resolved = schema(doc, payload_schema_raw)
   assert(type_of(resolved) == "dict", "resolved webhook schema must be a dict")
   // The Notion webhook envelope shape should expose common event fields
   // once the $ref is resolved. Accept either `properties` or `allOf`
   // composed schemas — just assert we got something non-empty back.
-  let has_props = resolved.get("properties") != nil
-  let has_oneof = resolved.get("oneOf") != nil
-  let has_allof = resolved.get("allOf") != nil
-  let has_anyof = resolved.get("anyOf") != nil
-  let has_type = resolved.get("type") != nil
+  const has_props = resolved.get("properties") != nil
+  const has_oneof = resolved.get("oneOf") != nil
+  const has_allof = resolved.get("allOf") != nil
+  const has_anyof = resolved.get("anyOf") != nil
+  const has_type = resolved.get("type") != nil
   assert(
     has_props || has_oneof || has_allof || has_anyof || has_type,
     "resolved commentCreated payload schema must expose properties/oneOf/allOf/anyOf/type",
   )
   if has_props {
-    let field_names = resolved.properties.keys()
+    const field_names = resolved.properties.keys()
     harness.stdio.println("commentCreated payload fields: ${len(field_names)}")
   }
   harness.stdio.println("webhook_smoke: ok")

@@ -3,28 +3,28 @@ import "../src/lib"
 
 @test
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let doc: OpenApiDoc = parse(raw)
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const doc: OpenApiDoc = parse(raw)
   assert(is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard")
-  let ops: list<Operation> = operations(doc)
+  const ops: list<Operation> = operations(doc)
   assert(len(ops) > 40, "expected >40 typed operations")
   assert(ops[0].method != nil, "typed operation should expose method")
   assert(ops[0].path != nil, "typed operation should expose path")
   assert(ops[0].operation_id != nil, "typed operation should expose operation_id")
-  let ref_with_sibling = {"$ref": "#/components/schemas/annotationResponse", description: "sibling description"}
+  const ref_with_sibling = {"$ref": "#/components/schemas/annotationResponse", description: "sibling description"}
   assert(is_reference(ref_with_sibling), "is_reference should detect $ref dicts")
-  let resolved: Schema = schema(doc, ref_with_sibling)
+  const resolved: Schema = schema(doc, ref_with_sibling)
   assert(resolved.get("$ref") == nil, "schema() should resolve the control $ref keyword away")
   assert(resolved.description == "sibling description", "schema() should preserve non-$ref siblings")
-  let enum_schema: Schema = {type: "string", enum: ["a", "b"]}
-  let values = enum_values(enum_schema)
+  const enum_schema: Schema = {type: "string", enum: ["a", "b"]}
+  const values = enum_values(enum_schema)
   assert(values != nil && len(values ?? []) == 2, "enum_values should preserve typed enum lists")
-  let synthetic = parse(harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json"))
-  let helpers: list<AuthHelper> = auth_helpers(synthetic)
+  const synthetic = parse(harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json"))
+  const helpers: list<AuthHelper> = auth_helpers(synthetic)
   assert(helpers[0].scheme_name != nil, "AuthHelper should expose scheme_name")
-  let pages: list<PaginationPlan> = pagination_plans(synthetic)
+  const pages: list<PaginationPlan> = pagination_plans(synthetic)
   assert(pages[0].operation_id != nil, "PaginationPlan should expose operation_id")
-  let rates: list<RateLimitMetadata> = rate_limit_metadata(synthetic)
+  const rates: list<RateLimitMetadata> = rate_limit_metadata(synthetic)
   assert(
     rates[0].retry_after_header == "Retry-After",
     "RateLimitMetadata should expose retry headers",

@@ -6,11 +6,11 @@
 // Optional argv[0] overrides the metadata path for tests or one-off checks.
 // Optional argv[1] overrides the fixture path; otherwise it is derived from
 // the metadata path by stripping ".meta.toml".
-let _DEFAULT_META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
+const _DEFAULT_META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
 
-let _WARN_AFTER_DAYS = 90
+const _WARN_AFTER_DAYS = 90
 
-let _FAIL_AFTER_DAYS = 180
+const _FAIL_AFTER_DAYS = 180
 
 fn _repo_root() -> string {
   return source_dir() + "/.."
@@ -21,11 +21,11 @@ fn _default_meta_path() -> string {
 }
 
 fn _current_branch(harness: Harness) -> string {
-  let github_ref = harness.env.get("GITHUB_REF_NAME")
+  const github_ref = harness.env.get("GITHUB_REF_NAME")
   if github_ref != nil && github_ref != "" {
     return github_ref
   }
-  let result = try {
+  const result = try {
     harness.process
       .spawn_captured({cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root()})
   } catch (e) {
@@ -38,13 +38,13 @@ fn _current_branch(harness: Harness) -> string {
 }
 
 fn _fixture_age_days(harness: Harness, captured_at: string) -> int {
-  let captured_ts = date_parse(captured_at)
-  let now_ts = harness.clock.timestamp()
+  const captured_ts = date_parse(captured_at)
+  const now_ts = harness.clock.timestamp()
   return floor((now_ts - captured_ts) / 86400.0)
 }
 
 fn _fixture_path_for_meta(meta_path: string) -> string {
-  let suffix = ".meta.toml"
+  const suffix = ".meta.toml"
   if meta_path.ends_with(suffix) {
     return substring(meta_path, 0, len(meta_path) - len(suffix))
   }
@@ -55,16 +55,16 @@ fn _require_fixture_integrity(harness: Harness, meta_path: string, fixture_path:
   if !harness.fs.exists(fixture_path) {
     throw "check_fixture_staleness: missing fixture file " + fixture_path
   }
-  let expected_hash = meta.get("sha256")
+  const expected_hash = meta.get("sha256")
   if expected_hash == nil || expected_hash == "" {
     throw "check_fixture_staleness: metadata missing sha256"
   }
-  let expected_size = meta.get("byte_size")
+  const expected_size = meta.get("byte_size")
   if expected_size == nil {
     throw "check_fixture_staleness: metadata missing byte_size"
   }
-  let body = harness.fs.read_text(fixture_path)
-  let actual_hash = sha256(body)
+  const body = harness.fs.read_text(fixture_path)
+  const actual_hash = sha256(body)
   if actual_hash != expected_hash {
     throw "check_fixture_staleness: sha256 mismatch for "
       + fixture_path
@@ -72,7 +72,7 @@ fn _require_fixture_integrity(harness: Harness, meta_path: string, fixture_path:
       + meta_path
       + ")"
   }
-  let actual_size = harness.fs.stat(fixture_path).size
+  const actual_size = harness.fs.stat(fixture_path).size
   if actual_size != expected_size {
     throw "check_fixture_staleness: byte_size mismatch for "
       + fixture_path
@@ -85,7 +85,7 @@ fn _require_fixture_integrity(harness: Harness, meta_path: string, fixture_path:
 }
 
 pipeline default() {
-  let meta_path = if len(argv) > 0 {
+  const meta_path = if len(argv) > 0 {
     argv[0]
   } else {
     _default_meta_path()
@@ -93,20 +93,20 @@ pipeline default() {
   if !harness.fs.exists(meta_path) {
     throw "check_fixture_staleness: missing metadata file " + meta_path
   }
-  let fixture_path = if len(argv) > 1 {
+  const fixture_path = if len(argv) > 1 {
     argv[1]
   } else {
     _fixture_path_for_meta(meta_path)
   }
-  let meta = toml_parse(harness.fs.read_text(meta_path))
+  const meta = toml_parse(harness.fs.read_text(meta_path))
   _require_fixture_integrity(harness, meta_path, fixture_path, meta)
-  let captured_at = meta.get("captured_at")
+  const captured_at = meta.get("captured_at")
   if captured_at == nil || captured_at == "" {
     throw "check_fixture_staleness: metadata missing captured_at"
   }
-  let age_days = _fixture_age_days(harness, captured_at)
-  let upstream_url = meta.get("upstream_url") ?? "unknown upstream"
-  let branch = _current_branch(harness)
+  const age_days = _fixture_age_days(harness, captured_at)
+  const upstream_url = meta.get("upstream_url") ?? "unknown upstream"
+  const branch = _current_branch(harness)
   harness.stdio.println("fixture captured_at: ${captured_at}")
   harness.stdio.println("fixture upstream: ${upstream_url}")
   harness.stdio.println("fixture age: ${age_days} days")
@@ -121,7 +121,7 @@ pipeline default() {
     )
     return
   }
-  let message = "Pinned Notion OpenAPI fixture is " + to_string(age_days)
+  const message = "Pinned Notion OpenAPI fixture is " + to_string(age_days)
     + " days old; refresh it or file a periodic refresh issue."
   if branch == "main" {
     harness.stdio.println("::warning title=Notion OpenAPI fixture expired::${message}")

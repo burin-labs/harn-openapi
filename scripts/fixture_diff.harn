@@ -5,7 +5,7 @@
 import { operations, parse, schema } from "../src/lib"
 
 fn _sorted_keys(d) {
-  let ks = d.keys()
+  const ks = d.keys()
   ks.sort()
   return ks
 }
@@ -32,7 +32,7 @@ fn _operation_fingerprint(op) -> string {
 }
 
 fn _operation_index(doc) -> dict {
-  var out = {}
+  let out = {}
   for op in operations(doc) {
     out = {...out, [_operation_key(op)]: op}
   }
@@ -40,24 +40,24 @@ fn _operation_index(doc) -> dict {
 }
 
 fn _schema_names(doc) -> list<string> {
-  let schemas = (doc.components ?? {}).get("schemas") ?? {}
+  const schemas = (doc.components ?? {}).get("schemas") ?? {}
   return _sorted_keys(schemas)
 }
 
 fn _schema_fields(doc, name: string) -> list<string> {
-  let schemas = (doc.components ?? {}).get("schemas") ?? {}
-  let raw = schemas.get(name)
+  const schemas = (doc.components ?? {}).get("schemas") ?? {}
+  const raw = schemas.get(name)
   if raw == nil {
     return []
   }
-  let resolved = schema(doc, raw)
-  let props = resolved.get("properties") ?? {}
+  const resolved = schema(doc, raw)
+  const props = resolved.get("properties") ?? {}
   return _sorted_keys(props)
 }
 
 fn _schema_fingerprint(doc, name: string) -> string {
-  let schemas = (doc.components ?? {}).get("schemas") ?? {}
-  let raw = schemas.get(name)
+  const schemas = (doc.components ?? {}).get("schemas") ?? {}
+  const raw = schemas.get(name)
   if raw == nil {
     return ""
   }
@@ -65,8 +65,8 @@ fn _schema_fingerprint(doc, name: string) -> string {
 }
 
 fn _diff_list(old_items: list<string>, new_items: list<string>) -> dict {
-  var added = []
-  var removed = []
+  let added = []
+  let removed = []
   for item in new_items {
     if !old_items.contains(item) {
       added = added + [item]
@@ -98,10 +98,10 @@ fn _print_changed_operations(
   shared_keys: list<string>,
 ) {
   harness.stdio.println("changed operations:")
-  var count = 0
+  let count = 0
   for key in shared_keys {
-    let old_op = old_ops[key]
-    let new_op = new_ops[key]
+    const old_op = old_ops[key]
+    const new_op = new_ops[key]
     if _operation_fingerprint(old_op) != _operation_fingerprint(new_op) {
       count = count + 1
       harness.stdio.println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
@@ -125,15 +125,15 @@ fn _print_schema_name_section(harness: Harness, title: string, names: list<strin
 
 fn _print_changed_schemas(harness: Harness, old_doc, new_doc, shared_names: list<string>) {
   harness.stdio.println("changed schemas:")
-  var count = 0
+  let count = 0
   for name in shared_names {
-    let old_fields = _schema_fields(old_doc, name)
-    let new_fields = _schema_fields(new_doc, name)
-    let diff = _diff_list(old_fields, new_fields)
-    let schema_changed = _schema_fingerprint(old_doc, name) != _schema_fingerprint(new_doc, name)
+    const old_fields = _schema_fields(old_doc, name)
+    const new_fields = _schema_fields(new_doc, name)
+    const diff = _diff_list(old_fields, new_fields)
+    const schema_changed = _schema_fingerprint(old_doc, name) != _schema_fingerprint(new_doc, name)
     if len(diff.added) > 0 || len(diff.removed) > 0 || schema_changed {
       count = count + 1
-      let suffix = if len(diff.added) > 0 || len(diff.removed) > 0 {
+      const suffix = if len(diff.added) > 0 || len(diff.removed) > 0 {
         "(+" + to_string(len(diff.added)) + " fields, -" + to_string(len(diff.removed)) + " fields)"
       } else {
         "(schema changed)"
@@ -156,24 +156,24 @@ pipeline default() {
   if len(argv) != 2 {
     throw "usage: scripts/fixture_diff.harn <old.json> <new.json>"
   }
-  let old_doc = parse(harness.fs.read_text(argv[0]))
-  let new_doc = parse(harness.fs.read_text(argv[1]))
-  let old_ops = _operation_index(old_doc)
-  let new_ops = _operation_index(new_doc)
-  let op_diff = _diff_list(_sorted_keys(old_ops), _sorted_keys(new_ops))
+  const old_doc = parse(harness.fs.read_text(argv[0]))
+  const new_doc = parse(harness.fs.read_text(argv[1]))
+  const old_ops = _operation_index(old_doc)
+  const new_ops = _operation_index(new_doc)
+  const op_diff = _diff_list(_sorted_keys(old_ops), _sorted_keys(new_ops))
   _print_operation_section(harness, "added operations", op_diff.added, new_ops)
   _print_operation_section(harness, "removed operations", op_diff.removed, old_ops)
-  var shared_ops = []
+  let shared_ops = []
   for key in _sorted_keys(new_ops) {
     if _sorted_keys(old_ops).contains(key) {
       shared_ops = shared_ops + [key]
     }
   }
   _print_changed_operations(harness, old_ops, new_ops, shared_ops)
-  let schema_diff = _diff_list(_schema_names(old_doc), _schema_names(new_doc))
+  const schema_diff = _diff_list(_schema_names(old_doc), _schema_names(new_doc))
   _print_schema_name_section(harness, "added schemas", schema_diff.added)
   _print_schema_name_section(harness, "removed schemas", schema_diff.removed)
-  var shared_schemas = []
+  let shared_schemas = []
   for name in _schema_names(new_doc) {
     if _schema_names(old_doc).contains(name) {
       shared_schemas = shared_schemas + [name]
