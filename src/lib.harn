@@ -1692,8 +1692,8 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   const kind = _scheme_kind(def)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let token = _client_token(client)\n"
-      + "  var hs = "
+      + "  const token = _client_token(client)\n"
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if token != \"\" {\n"
@@ -1704,12 +1704,12 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   }
   if kind == "basic" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let basic = _client_basic(client)\n"
-      + "  var hs = "
+      + "  const basic = _client_basic(client)\n"
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
-      + "    let encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
+      + "    const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
       + "    hs = {...hs, Authorization: \"Basic \" + encoded}\n"
       + "  }\n"
       + "  return _with_extra_headers(hs, client)\n"
@@ -1718,10 +1718,10 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   if kind == "apiKey-header" {
     const header_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let api_key = _client_api_key(client, \""
+      + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1735,10 +1735,10 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   if kind == "apiKey-cookie" {
     const cookie_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let api_key = _client_api_key(client, \""
+      + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1755,7 +1755,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     // which is spread into each operation's query bindings.
     const query_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  var hs = "
+      + "  let hs = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  return _with_extra_headers(hs, client)\n"
@@ -1764,7 +1764,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "fn "
       + query_fn_name
       + "(client: dict) -> dict {\n"
-      + "  let v = _client_api_key(client, \""
+      + "  const v = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
       + "  if v == \"\" {\n"
@@ -2177,15 +2177,15 @@ fn _render_request_lines(
   if transport == "connector_policy" {
     if !has_body {
       const options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
-      return "let resp = " + _render_connector_call(method, ret, options, "  ")
+      return "const resp = " + _render_connector_call(method, ret, options, "  ")
     }
     if body_required {
       const options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
-      return body_prepare + "\n  let resp = " + _render_connector_call(method, ret, options, "  ")
+      return body_prepare + "\n  const resp = " + _render_connector_call(method, ret, options, "  ")
     }
     const no_body_options = _render_connector_options(method, fn_name, module_name, false, idempotency_key_param)
     const body_options = _render_connector_options(method, fn_name, module_name, true, idempotency_key_param)
-    return "var resp = nil\n"
+    return "let resp = nil\n"
       + "  if body == nil {\n"
       + "    resp = "
       + _render_connector_call(method, ret, no_body_options, "    ")
@@ -2201,17 +2201,17 @@ fn _render_request_lines(
   }
   const raw_method = to_string(method ?? "get").upper()
   if !has_body {
-    return "let resp = harness.net.request(\""
+    return "const resp = harness.net.request(\""
       + raw_method
       + "\", url, {headers: request_headers})"
   }
   if body_required {
     return body_prepare
-      + "\n  let resp = harness.net.request(\""
+      + "\n  const resp = harness.net.request(\""
       + raw_method
       + "\", url, {body: body_str, headers: request_headers})"
   }
-  return "var resp = nil\n"
+  return "let resp = nil\n"
     + "  if body == nil {\n"
     + "    resp = harness.net.request(\""
     + raw_method
@@ -2237,7 +2237,7 @@ fn _render_return_lines(fn_name, ret, transport) {
     if ret.response_mode == "json_any" {
       return "return resp.json"
     }
-    return "let raw = resp.json\n"
+    return "const raw = resp.json\n"
       + "  if type_of(raw) != \"dict\" {\n"
       + "    throw \""
       + fn_name
@@ -2248,7 +2248,7 @@ fn _render_return_lines(fn_name, ret, transport) {
   if ret.response_mode == "json_any" {
     return "return json_parse(resp.body)"
   }
-  return "let raw = json_parse(resp.body)\n"
+  return "const raw = json_parse(resp.body)\n"
     + "  if type_of(raw) != \"dict\" {\n"
     + "    throw \""
     + fn_name
@@ -2474,11 +2474,11 @@ fn _body_variant_tags(variants) {
 
 fn _render_body_prepare(fn_name, variants) {
   if len(variants) == 0 {
-    return "let body_str = json_stringify(body)"
+    return "const body_str = json_stringify(body)"
   }
   const tags = _render_string_list(_body_variant_tags(variants))
   const ctor_names = join(_body_variant_fn_names(variants), ", ")
-  return "let body_variant = if type_of(body) == \"dict\" {\n"
+  return "const body_variant = if type_of(body) == \"dict\" {\n"
     + "    body.get(\"_variant\")\n"
     + "  } else {\n"
     + "    nil\n"
@@ -2497,7 +2497,7 @@ fn _render_body_prepare(fn_name, variants) {
     + fn_name
     + ": unknown request body variant \" + to_string(body_variant)\n"
     + "  }\n"
-    + "  let body_str = json_stringify(_strip_codegen_variant(body))"
+    + "  const body_str = json_stringify(_strip_codegen_variant(body))"
 }
 
 fn _render_string_list(items) {
@@ -2564,7 +2564,7 @@ fn _render_body_variant_constructor(variant) {
     + "("
     + join(sig_parts, ", ")
     + ") -> dict {\n"
-  body = body + "  var body = " + _render_binding_dict(literal_entries) + "\n"
+  body = body + "  let body = " + _render_binding_dict(literal_entries) + "\n"
   for line in optional_lines {
     body = body + line + "\n"
   }

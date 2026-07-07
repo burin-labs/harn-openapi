@@ -175,7 +175,7 @@ pipeline test_main() {
       b_collect_public = true
     }
     if b_collect_public {
-      if contains(line, "var request_headers = ") {
+      if contains(line, "let request_headers = ") {
         b_public_line = line
         b_collect_public = false
       }
@@ -389,11 +389,11 @@ pipeline test_main() {
     if contains(line, "pub fn create_a_token") {
       h_collect_token = true
     }
-    if h_collect_me && contains(line, "var request_headers = ") {
+    if h_collect_me && contains(line, "let request_headers = ") {
       h_get_me_line = line
       h_collect_me = false
     }
-    if h_collect_token && contains(line, "var request_headers = ") {
+    if h_collect_token && contains(line, "let request_headers = ") {
       h_token_line = line
       h_collect_token = false
     }
