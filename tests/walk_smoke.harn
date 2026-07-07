@@ -4,14 +4,14 @@
 import { enum_values, operations, parse, schema } from "../src/lib"
 
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let doc = parse(raw)
-  let ops = operations(doc)
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const doc = parse(raw)
+  const ops = operations(doc)
   harness.stdio.println("operation count: ${len(ops)}")
   // Locate the query-a-data-source operation. Notion 2025-11 renamed
   // the classic "databases.query" endpoint to the data-sources URL,
   // so we look up the operation_id instead of the path.
-  var query_op = nil
+  let query_op = nil
   for op in ops {
     if op.operation_id == "post-database-query" {
       query_op = op
@@ -19,9 +19,9 @@ pipeline test_main() {
   }
   assert(query_op != nil, "could not find post-database-query operation")
   harness.stdio.println("query op: ${query_op.method} ${query_op.path}")
-  let body_schema_raw = query_op.request_body.content["application/json"].schema
-  let resolved = schema(doc, body_schema_raw)
-  let fields = resolved.properties.keys()
+  const body_schema_raw = query_op.request_body.content["application/json"].schema
+  const resolved = schema(doc, body_schema_raw)
+  const fields = resolved.properties.keys()
   fields.sort()
   harness.stdio.println("request body fields (${len(fields)}):")
   for f in fields {
@@ -29,12 +29,12 @@ pipeline test_main() {
   }
   assert(fields.contains("filter"), "expected 'filter' field on query request body")
   // Find any schema with an enum and verify enum_values returns a list.
-  var enum_name = ""
-  var enum_size = 0
-  let component_schemas = doc.components?.schemas ?? {}
+  let enum_name = ""
+  let enum_size = 0
+  const component_schemas = doc.components?.schemas ?? {}
   for entry in component_schemas {
     if enum_name == "" {
-      let vs = enum_values(entry.value) ?? []
+      const vs = enum_values(entry.value) ?? []
       if len(vs) > 0 {
         enum_name = entry.key
         enum_size = len(vs)

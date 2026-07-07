@@ -5,7 +5,7 @@
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -13,12 +13,12 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  let root = source_dir() + "/../.harn/tmp"
+  const root = source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + uuid()
 }
 
-let _POLY_DOC = """
+const _POLY_DOC = """
   {
     "openapi": "3.1.0",
     "info": { "title": "Polymorphic API", "version": "1.0.0" },
@@ -113,10 +113,10 @@ let _POLY_DOC = """
   """
 
 fn count_occurrences(haystack: string, needle: string) -> int {
-  var count = 0
-  var idx = 0
-  let hn = len(haystack)
-  let nn = len(needle)
+  let count = 0
+  let idx = 0
+  const hn = len(haystack)
+  const nn = len(needle)
   if nn == 0 {
     return 0
   }
@@ -141,7 +141,7 @@ fn require_contains(harness: Harness, haystack: string, needle: string, label: s
 }
 
 fn check_file(harness: Harness, path: string, label: string) {
-  let result = shell(harn_cmd(harness, "check " + path))
+  const result = shell(harn_cmd(harness, "check " + path))
   if !result.success {
     harness.stdio.println("---${label} harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -152,7 +152,7 @@ fn check_file(harness: Harness, path: string, label: string) {
 }
 
 fn run_file(harness: Harness, path: string, label: string) {
-  let result = shell(harn_cmd(harness, "run " + path))
+  const result = shell(harn_cmd(harness, "run " + path))
   if !result.success {
     harness.stdio.println("---${label} harn run stderr---")
     harness.stdio.println(result.stderr)
@@ -163,8 +163,8 @@ fn run_file(harness: Harness, path: string, label: string) {
 }
 
 pipeline test_main() {
-  let doc = parse(_POLY_DOC)
-  let src = codegen_module(
+  const doc = parse(_POLY_DOC)
+  const src = codegen_module(
     doc,
     {
       module_name: "poly",
@@ -173,8 +173,8 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  let module_stem = scratch_path(harness, "harn-openapi-polymorphic-generated")
-  let out_path = module_stem + ".harn"
+  const module_stem = scratch_path(harness, "harn-openapi-polymorphic-generated")
+  const out_path = module_stem + ".harn"
   harness.fs.write_text(out_path, src)
   require_contains(harness, src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
   require_contains(
@@ -205,7 +205,7 @@ pipeline test_main() {
     "anyOf ctor",
   )
   check_file(harness, out_path, "poly")
-  let runner_path = scratch_path(harness, "harn-openapi-polymorphic-runner") + ".harn"
+  const runner_path = scratch_path(harness, "harn-openapi-polymorphic-runner") + ".harn"
   harness.fs
     .write_text(
     runner_path,
@@ -237,8 +237,8 @@ pipeline test_main() {
     """,
   )
   run_file(harness, runner_path, "poly")
-  let notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let notion_src = codegen_module(
+  const notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const notion_src = codegen_module(
     parse(notion_raw),
     {
       module_name: "notion",
@@ -277,7 +277,7 @@ pipeline test_main() {
     "pub fn update_page_markdown_replace_content(replace_content: dict) -> dict",
     "notion replace_content ctor",
   )
-  let notion_ctors = count_occurrences(notion_src, "pub fn update_page_markdown_")
+  const notion_ctors = count_occurrences(notion_src, "pub fn update_page_markdown_")
   assert(notion_ctors == 4, "expected four Notion markdown constructors, got ${notion_ctors}")
   require_contains(harness, notion_src, "_strip_codegen_variant(body)", "notion strips _variant")
   harness.stdio.println("polymorphic_body_smoke: ok")

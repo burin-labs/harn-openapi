@@ -5,7 +5,7 @@
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -13,7 +13,7 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  let root = source_dir() + "/../.harn/tmp"
+  const root = source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + uuid()
 }
@@ -33,7 +33,7 @@ fn build_doc() -> string {
 
 @test
 pipeline test_main() {
-  let src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
+  const src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
   // The default transport should throw the shared connector envelope and
   // must NOT emit the legacy string format.
   assert(
@@ -47,12 +47,12 @@ pipeline test_main() {
   )
   // Drive the generated function against a mocked 404 and assert the
   // thrown payload's shape.
-  let module_stem = scratch_path(harness, "harn-openapi-error-throw-smoke")
-  let module_path = module_stem + ".harn"
-  let runner_path = scratch_path(harness, "harn-openapi-error-throw-runtime") + ".harn"
+  const module_stem = scratch_path(harness, "harn-openapi-error-throw-smoke")
+  const module_path = module_stem + ".harn"
+  const runner_path = scratch_path(harness, "harn-openapi-error-throw-runtime") + ".harn"
   harness.fs.write_text(module_path, src)
-  let body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
-  let runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
+  const body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
+  const runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
     + "\n"
     + "@test\n"
     + "pipeline default() {\n"
@@ -78,7 +78,7 @@ pipeline test_main() {
     + "  harness.stdio.println(\"error_throw runtime: ok\")\n"
     + "}\n"
   harness.fs.write_text(runner_path, runner)
-  let result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
     harness.stdio.println("---runtime stderr---")
     harness.stdio.println(result.stderr)

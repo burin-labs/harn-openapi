@@ -2,11 +2,11 @@
 //
 // Run from this checkout:
 //   harn run scripts/refresh_fixtures.harn
-let _NOTION_OPENAPI_URL = "https://developers.notion.com/openapi.json"
+const _NOTION_OPENAPI_URL = "https://developers.notion.com/openapi.json"
 
-let _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
+const _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
 
-let _META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
+const _META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
 
 fn _repo_root() -> string {
   return source_dir() + "/.."
@@ -39,20 +39,20 @@ fn _render_meta(captured_at: string, hash: string, byte_size: int) -> string {
 }
 
 pipeline default() {
-  let fixture_path = _fixture_path()
-  let meta_path = _meta_path()
-  let old_size = if harness.fs.exists(fixture_path) {
+  const fixture_path = _fixture_path()
+  const meta_path = _meta_path()
+  const old_size = if harness.fs.exists(fixture_path) {
     harness.fs.stat(fixture_path).size
   } else {
     0
   }
-  let old_hash = if harness.fs.exists(fixture_path) {
+  const old_hash = if harness.fs.exists(fixture_path) {
     sha256(harness.fs.read_text(fixture_path))
   } else {
     ""
   }
   harness.stdio.println("fetching ${_NOTION_OPENAPI_URL}")
-  let response = harness.net
+  const response = harness.net
     .get(
     _NOTION_OPENAPI_URL,
     {timeout_ms: 60000, headers: {"User-Agent": "harn-openapi-fixture-refresh"}},
@@ -60,13 +60,13 @@ pipeline default() {
   if !response.ok {
     throw "refresh_fixtures: upstream returned HTTP " + to_string(response.status)
   }
-  let captured_at = date_format(harness.clock.timestamp(), "%Y-%m-%dT%H:%M:%S%.3fZ", "UTC")
-  let body = response.body
-  let new_hash = sha256(body)
+  const captured_at = date_format(harness.clock.timestamp(), "%Y-%m-%dT%H:%M:%S%.3fZ", "UTC")
+  const body = response.body
+  const new_hash = sha256(body)
   harness.fs.write_text(fixture_path, body)
-  let new_size = harness.fs.stat(fixture_path).size
+  const new_size = harness.fs.stat(fixture_path).size
   harness.fs.write_text(meta_path, _render_meta(captured_at, new_hash, new_size))
-  let delta = new_size - old_size
+  const delta = new_size - old_size
   harness.stdio.println("wrote ${fixture_path}")
   harness.stdio.println("wrote ${meta_path}")
   harness.stdio.println("captured_at: ${captured_at}")

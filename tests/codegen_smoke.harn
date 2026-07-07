@@ -4,7 +4,7 @@
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -12,9 +12,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  let doc = parse(raw)
-  let src = codegen_module(
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const doc = parse(raw)
+  const src = codegen_module(
     doc,
     {
       module_name: "notion",
@@ -23,11 +23,11 @@ pipeline test_main() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
+  const out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote generated module: ${out_path} (${len(src)} bytes)")
-  let cmd = harn_cmd(harness, "check " + out_path)
-  let result = shell(cmd)
+  const cmd = harn_cmd(harness, "check " + out_path)
+  const result = shell(cmd)
   if !result.success {
     harness.stdio.println("harn check stderr:")
     harness.stdio.println(result.stderr)
@@ -35,8 +35,8 @@ pipeline test_main() {
     harness.stdio.println(result.stdout)
   }
   assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
-  let fmt_cmd = harn_cmd(harness, "fmt --check " + out_path)
-  let fmt_result = shell(fmt_cmd)
+  const fmt_cmd = harn_cmd(harness, "fmt --check " + out_path)
+  const fmt_result = shell(fmt_cmd)
   if !fmt_result.success {
     harness.stdio.println("harn fmt --check stderr:")
     harness.stdio.println(fmt_result.stderr)

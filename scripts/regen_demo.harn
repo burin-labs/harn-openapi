@@ -7,15 +7,15 @@
 import { codegen_module, operations, parse } from "../src/lib"
 
 pipeline default() {
-  let fixture = source_dir() + "/../tests/fixtures/notion.openapi.json"
-  let raw = harness.fs.read_text(fixture)
-  let doc = parse(raw)
-  let ops = operations(doc)
+  const fixture = source_dir() + "/../tests/fixtures/notion.openapi.json"
+  const raw = harness.fs.read_text(fixture)
+  const doc = parse(raw)
+  const ops = operations(doc)
   harness.stdio.println("parsed ${doc.info.title} (OpenAPI ${doc.openapi})")
   harness.stdio.println("  operations: ${len(ops)}")
-  let schemas = doc.components?.schemas ?? {}
+  const schemas = doc.components?.schemas ?? {}
   harness.stdio.println("  schemas:    ${len(schemas)}")
-  let src = codegen_module(
+  const src = codegen_module(
     doc,
     {
       module_name: "notion",
@@ -24,9 +24,9 @@ pipeline default() {
       header_overrides: {"Notion-Version": "2025-09-03"},
     },
   )
-  let out_dir = source_dir() + "/../.harn/tmp"
+  const out_dir = source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(out_dir)
-  let out = out_dir + "/harn-openapi-regen-demo-" + uuid() + ".harn"
+  const out = out_dir + "/harn-openapi-regen-demo-" + uuid() + ".harn"
   harness.fs.write_text(out, src)
   harness.stdio.println("  wrote:      ${out} (${len(src)} bytes)")
   harness.stdio.println("regen_demo: ok")

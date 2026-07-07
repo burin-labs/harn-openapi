@@ -10,7 +10,7 @@ import {
 } from "../src/lib"
 
 fn harn_cmd(harness: Harness, args: string) -> string {
-  let bin = harness.env.get("HARN_BIN")
+  const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -45,9 +45,9 @@ fn plan_by_id(plans, operation_id) {
 }
 
 fn check_generates(harness: Harness, src: string) {
-  let tmp_path = harness.fs.temp_dir() + "/harn-openapi-connector-helpers-smoke-" + uuid() + ".harn"
+  const tmp_path = harness.fs.temp_dir() + "/harn-openapi-connector-helpers-smoke-" + uuid() + ".harn"
   harness.fs.write_text(tmp_path, src)
-  let check_result = shell(harn_cmd(harness, "check " + tmp_path))
+  const check_result = shell(harn_cmd(harness, "check " + tmp_path))
   if !check_result.success {
     harness.stdio.println("---harn check stderr---")
     harness.stdio.println(check_result.stderr)
@@ -55,7 +55,7 @@ fn check_generates(harness: Harness, src: string) {
     harness.stdio.println(check_result.stdout)
   }
   require check_result.success, "generated SDK must pass `harn check`"
-  let fmt_result = shell(harn_cmd(harness, "fmt --check " + tmp_path))
+  const fmt_result = shell(harn_cmd(harness, "fmt --check " + tmp_path))
   if !fmt_result.success {
     harness.stdio.println("---harn fmt --check stderr---")
     harness.stdio.println(fmt_result.stderr)
@@ -67,33 +67,33 @@ fn check_generates(harness: Harness, src: string) {
 
 @test
 pipeline test_main() {
-  let raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
-  let doc = parse(raw)
-  let helpers = auth_helpers(doc)
-  let bearer = helper_by_name(helpers, "bearerAuth")
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
+  const doc = parse(raw)
+  const helpers = auth_helpers(doc)
+  const bearer = helper_by_name(helpers, "bearerAuth")
   assert(bearer != nil, "bearerAuth helper metadata should exist")
   assert(bearer.kind == "bearer", "bearerAuth should classify as bearer")
   assert(
     bearer.client_fields.contains("token_provider"),
     "bearerAuth should advertise token_provider",
   )
-  let oauth = helper_by_name(helpers, "oauth2Auth")
+  const oauth = helper_by_name(helpers, "oauth2Auth")
   assert(oauth != nil, "oauth2Auth helper metadata should exist")
   assert(oauth.kind == "oauth2", "oauth2Auth should classify as oauth2")
   assert(oauth.scopes.contains("items:read"), "oauth2Auth should surface scopes")
-  let query_key = helper_by_name(helpers, "queryKey")
+  const query_key = helper_by_name(helpers, "queryKey")
   assert(query_key != nil, "queryKey helper metadata should exist")
   assert(query_key.kind == "apiKey-query", "queryKey should classify as apiKey-query")
   assert(query_key.parameter_name == "api_key", "queryKey should preserve parameter name")
-  let plans = pagination_plans(doc)
-  let cursor = plan_by_id(plans, "listItems")
+  const plans = pagination_plans(doc)
+  const cursor = plan_by_id(plans, "listItems")
   assert(cursor != nil, "listItems should have a cursor pagination plan")
   assert(cursor.kind == "cursor", "listItems should be cursor-pagination")
   assert(cursor.cursor_param == "start_cursor", "cursor plan should preserve request cursor param")
   assert(cursor.cursor_location == "query", "cursor plan should preserve query cursor location")
   assert(cursor.cursor_response_field == "next_cursor", "cursor plan should preserve response cursor")
   assert(cursor.items_field == "results", "cursor plan should preserve items field")
-  let body_cursor = plan_by_id(plans, "listBodyItems")
+  const body_cursor = plan_by_id(plans, "listBodyItems")
   assert(body_cursor != nil, "listBodyItems should have a body cursor pagination plan")
   assert(body_cursor.kind == "cursor", "listBodyItems should be cursor-pagination")
   assert(body_cursor.cursor_param == "start_cursor", "body cursor plan should preserve cursor field")
@@ -106,17 +106,17 @@ pipeline test_main() {
     body_cursor.page_size_location == "body",
     "body cursor plan should preserve page size location",
   )
-  let templates = plan_by_id(plans, "listTemplateItems")
+  const templates = plan_by_id(plans, "listTemplateItems")
   assert(templates != nil, "listTemplateItems should have a cursor pagination plan")
   assert(templates.items_field == "templates", "template list should preserve templates item field")
-  let page = plan_by_id(plans, "listPageItems")
+  const page = plan_by_id(plans, "listPageItems")
   assert(page != nil && page.kind == "page", "listPageItems should have a page plan")
-  let next_link = plan_by_id(plans, "listNextLinkItems")
+  const next_link = plan_by_id(plans, "listNextLinkItems")
   assert(
     next_link != nil && next_link.kind == "next_link",
     "listNextLinkItems should have a next-link plan",
   )
-  let rates = rate_limit_metadata(doc)
+  const rates = rate_limit_metadata(doc)
   assert(len(rates) == 1, "synthetic fixture should expose one rate-limit metadata entry")
   assert(rates[0].operation_id == "listItems", "rate-limit metadata should be tied to listItems")
   assert(rates[0].retry_after_header == "Retry-After", "Retry-After should be modeled")
@@ -124,7 +124,7 @@ pipeline test_main() {
     rates[0].remaining_headers.contains("X-RateLimit-Remaining"),
     "remaining header should be modeled",
   )
-  let src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
+  const src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
   require_contains(harness, src, "pub fn token_from_secret", "generated token provider helper")
   require_contains(harness, src, "token_provider = nil", "generated client token-provider hook")
   require_contains(harness, src, "api_key_provider = nil", "generated client api-key-provider hook")
@@ -172,7 +172,7 @@ pipeline test_main() {
   )
   require_contains(harness, src, "Retry-After", "generated rate-limit header metadata")
   check_generates(harness, src)
-  let manifest = codegen_harn_toml(
+  const manifest = codegen_harn_toml(
     {
       package_name: "connector-helper-sdk",
       description: "Synthetic generated SDK.",
