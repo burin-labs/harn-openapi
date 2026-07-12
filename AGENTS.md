@@ -15,10 +15,10 @@ truth for coding-agent instructions in this repo.
 
 ## Harn references
 
-- For repo-wide Harn conventions, defer to
-  [`/Users/ksinder/projects/harn/AGENTS.md`](/Users/ksinder/projects/harn/AGENTS.md).
-- For syntax, use
-  [`/Users/ksinder/projects/harn/docs/llm/harn-quickref.md`](/Users/ksinder/projects/harn/docs/llm/harn-quickref.md).
+- For repo-wide Harn conventions, use the
+  [Harn agent guide](https://github.com/burin-labs/harn/blob/main/AGENTS.md).
+- For syntax, use the
+  [Harn quick reference](https://github.com/burin-labs/harn/blob/main/docs/llm/harn-quickref.md).
 - Before editing Harn code, run `harn skill list --json` and fetch the
   narrowest matching skill with `harn skill get <name> --full`.
 
