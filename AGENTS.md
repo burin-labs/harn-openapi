@@ -19,8 +19,8 @@ truth for coding-agent instructions in this repo.
   [`/Users/ksinder/projects/harn/AGENTS.md`](/Users/ksinder/projects/harn/AGENTS.md).
 - For syntax, use
   [`/Users/ksinder/projects/harn/docs/llm/harn-quickref.md`](/Users/ksinder/projects/harn/docs/llm/harn-quickref.md).
-- Before editing Harn code, run `harn skills list --json` and fetch the
-  narrowest matching skill with `harn skills get <name> --full`.
+- Before editing Harn code, run `harn skill list --json` and fetch the
+  narrowest matching skill with `harn skill get <name> --full`.
 
 ## Local gate
 
