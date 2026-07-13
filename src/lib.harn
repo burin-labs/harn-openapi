@@ -83,6 +83,7 @@
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
+import { filter_nil } from "std/collections"
 
 // -------------------------------------------------------------------------------------------------
 // Types
@@ -396,19 +397,6 @@ type RateLimitMetadata = {
   reset_headers: list<string>,
 }
 
-const _OPENAPI_DOC_SCHEMA = {
-  type: "dict",
-  properties: {
-    openapi: {type: "string"},
-    info: {
-      type: "dict",
-      properties: {title: {type: "string"}, version: {type: "string"}},
-      required: ["title", "version"],
-    },
-  },
-  required: ["openapi", "info"],
-}
-
 // -------------------------------------------------------------------------------------------------
 // Parsing
 // -------------------------------------------------------------------------------------------------
@@ -442,8 +430,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     tags: raw.get("tags") ?? [],
     externalDocs: raw.get("externalDocs"),
   }
-  schema_expect(doc, _OPENAPI_DOC_SCHEMA)
-  return doc
+  return schema_expect(filter_nil(doc), OpenApiDoc)
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -754,9 +741,9 @@ pub fn enum_values(sch: Schema) -> list? {
   return vs
 }
 
-/** True when a value matches the minimum normalized OpenApiDoc shape. */
+/** True when a value satisfies the complete normalized OpenApiDoc contract. */
 pub fn is_openapi_doc(value: unknown) -> bool {
-  return schema_is(value, _OPENAPI_DOC_SCHEMA)
+  return schema_is(value, OpenApiDoc)
 }
 
 /** True when a value is a local or remote OpenAPI Reference Object. */
@@ -1060,7 +1047,7 @@ const _MODULE_TEMPLATE = """
   }
 
   fn _no_auth_headers(client: dict) -> dict {
-    let hs = {"Content-Type": "application/json"}
+    let hs: dict = {"Content-Type": "application/json"}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
@@ -1693,7 +1680,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  const token = _client_token(client)\n"
-      + "  let hs = "
+      + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if token != \"\" {\n"
@@ -1705,7 +1692,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
   if kind == "basic" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  const basic = _client_basic(client)\n"
-      + "  let hs = "
+      + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
@@ -1721,7 +1708,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  let hs = "
+      + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1738,7 +1725,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
-      + "  let hs = "
+      + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
@@ -1755,7 +1742,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     // which is spread into each operation's query bindings.
     const query_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  let hs = "
+      + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  return _with_extra_headers(hs, client)\n"
