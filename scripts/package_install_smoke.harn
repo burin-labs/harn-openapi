@@ -83,11 +83,13 @@ version = "0.0.0"
 import { operations, parse } from "harn-openapi/default"
 
 pipeline default() {
-  let raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
-  let doc: OpenApiDoc = parse(raw)
-  let ops: list<Operation> = operations(doc)
+  const raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
+  const doc: OpenApiDoc = parse(raw)
+  const ops: list<Operation> = operations(doc)
   require len(ops) == 1, "package import should parse and walk one operation"
-  require ops[0].operation_id == "ping", "operation id should round-trip"
+  const op = ops[0]
+  require op != nil, "package import should expose the parsed operation"
+  require op.operation_id == "ping", "operation id should round-trip"
   harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,

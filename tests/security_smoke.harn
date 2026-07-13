@@ -164,6 +164,7 @@ pipeline test_main() {
     ],
   )
   const src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
+  require_contains(harness, src_b, "let hs: dict =", "B/dynamic-header-map-is-typed")
   // Authed op still uses the bearer helper.
   require_contains(harness, src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
   // The no-auth op must route through _no_auth_headers.
