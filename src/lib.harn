@@ -806,7 +806,7 @@ fn _oauth_scope_names(def) {
       }
     }
   }
-  scopes.sort()
+  scopes = scopes.sort()
   return scopes
 }
 
@@ -2414,7 +2414,7 @@ fn _variant_constructor_fields(doc, resolved) {
   for entry in props {
     keys = keys + [entry.key]
   }
-  keys.sort()
+  keys = keys.sort()
   let fields = []
   let taken_idents = []
   for key in keys {
@@ -2938,7 +2938,7 @@ fn _emit_struct_alias(doc, alias_name, resolved) {
   for entry in props {
     keys = keys + [entry.key]
   }
-  keys.sort()
+  keys = keys.sort()
   let fields = []
   for key in keys {
     const prop_schema = props.get(key)

@@ -6,8 +6,7 @@ import { operations, parse, schema } from "../src/lib"
 
 fn _sorted_keys(d) {
   const ks = d.keys()
-  ks.sort()
-  return ks
+  return ks.sort()
 }
 
 fn _operation_key(op) -> string {
