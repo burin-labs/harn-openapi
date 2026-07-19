@@ -1267,7 +1267,10 @@ const _MODULE_TEMPLATE = """
       limit: _header_ci(headers, "RateLimit-Limit")
         ?? _header_ci(headers, "X-RateLimit-Limit"),
       remaining: _header_ci(headers, "RateLimit-Remaining")
-        ?? _header_ci(headers, "X-RateLimit-Remaining"),
+        ?? _header_ci(
+        headers,
+        "X-RateLimit-Remaining",
+      ),
       reset: _header_ci(headers, "RateLimit-Reset")
         ?? _header_ci(headers, "X-RateLimit-Reset"),
     }
@@ -1660,7 +1663,7 @@ fn _render_new_client_return(fields) {
   }
   parts = parts + ["extra_headers: extra_headers"]
   const inline = "{" + join(parts, ", ") + "}"
-  if len(inline) + 2 <= 100 {
+  if len("  return " + inline) <= 100 {
     return "return " + inline
   }
   let out = "return {\n"
@@ -1677,8 +1680,7 @@ fn _render_pub_fn_decl(name, params, return_type) {
 
 fn _render_fn_decl_suffix(name, params, return_type) {
   const inline = name + "(" + join(params, ", ") + ") -> " + return_type
-  const params_width = len("pub fn " + name + "(" + join(params, ", ") + ")")
-  if params_width <= 100 {
+  if len("pub fn " + inline + " {") <= 100 {
     return inline
   }
   let out = name + "(\n"
@@ -2190,10 +2192,11 @@ fn _render_connector_options(method, fn_name, module_name, has_body, idempotency
   if idempotency_key_param != nil {
     parts = parts + [_harn_dict_entry("idempotency_key", idempotency_key_param)]
   }
-  return _render_binding_dict(parts)
+  return parts
 }
 
-fn _render_connector_call(method, ret, options_expr, indent) {
+fn _render_connector_call(method, ret, option_parts, indent) {
+  const options_expr = _render_binding_dict_for_column(option_parts, len(indent) + 2)
   return _connector_http_function(ret)
     + "(\n"
     + indent
@@ -2331,6 +2334,19 @@ fn _render_return_lines(fn_name, ret, transport) {
 fn _render_binding_dict(parts) {
   const inline = "{" + join(parts, ", ") + "}"
   if len(parts) == 0 || len(inline) <= 100 {
+    return inline
+  }
+  let out = "{\n"
+  for part in parts {
+    out = out + "    " + part + ",\n"
+  }
+  out = out + "  }"
+  return out
+}
+
+fn _render_binding_dict_for_column(parts, column) {
+  const inline = "{" + join(parts, ", ") + "}"
+  if column + len(inline) + 1 <= 100 {
     return inline
   }
   let out = "{\n"
@@ -2549,6 +2565,13 @@ fn _render_body_prepare(fn_name, variants) {
   }
   const tags = _render_string_list(_body_variant_tags(variants))
   const ctor_names = join(_body_variant_fn_names(variants), ", ")
+  const tag_check = if len("  if !" + tags + ".contains(body_variant) {") <= 100 {
+    "  if !" + tags + ".contains(body_variant) {\n"
+  } else {
+    "  if !" + tags + ".contains(\n"
+      + "    body_variant,\n"
+      + "  ) {\n"
+  }
   return "const body_variant = if type_of(body) == \"dict\" {\n"
     + "    body.get(\"_variant\")\n"
     + "  } else {\n"
@@ -2561,9 +2584,7 @@ fn _render_body_prepare(fn_name, variants) {
     + _escape_string(ctor_names)
     + "\"\n"
     + "  }\n"
-    + "  if !"
-    + tags
-    + ".contains(body_variant) {\n"
+    + tag_check
     + "    throw \""
     + fn_name
     + ": unknown request body variant \" + to_string(body_variant)\n"

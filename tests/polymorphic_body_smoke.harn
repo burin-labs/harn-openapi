@@ -254,7 +254,12 @@ pipeline test_main() {
   require_contains(
     harness,
     notion_src,
-    "pub fn update_page_markdown(client: dict, page_id, body, notion_version = nil) -> PageMarkdownResponse",
+    """pub fn update_page_markdown(
+  client: dict,
+  page_id,
+  body,
+  notion_version = nil,
+) -> PageMarkdownResponse""",
     "notion umbrella",
   )
   require_contains(
