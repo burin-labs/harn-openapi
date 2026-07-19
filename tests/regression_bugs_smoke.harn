@@ -59,8 +59,7 @@ fn run_generated(
   body: string,
 ) {
   const runner_path = scratch_path(harness, "harn-openapi-regression-runner-" + label) + ".harn"
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     runner_path,
     "import { "
       + imports
@@ -262,7 +261,10 @@ pipeline test_main() {
   const op = ops[0]
   assert(op.operation_id == "get-widget", "path item $ref operation id should survive")
   assert(op.deprecated, "operation metadata should not be dropped")
-  assert(op.externalDocs?.url == "https://docs.example.com/get", "externalDocs should not be dropped")
+  assert(
+    op.externalDocs?.url == "https://docs.example.com/get",
+    "externalDocs should not be dropped",
+  )
   assert(
     op.servers[0].url == "https://path.example.com",
     "path-level servers should become effective servers",
@@ -287,7 +289,10 @@ pipeline test_main() {
     rates[0].retry_after_header == "Retry-After",
     "Retry-After should be found through response ref",
   )
-  const ref_src = codegen_module(doc, {module_name: "ref_regression", client_name: "RefRegressionClient"})
+  const ref_src = codegen_module(
+    doc,
+    {module_name: "ref_regression", client_name: "RefRegressionClient"},
+  )
   require_contains(
     harness,
     ref_src,

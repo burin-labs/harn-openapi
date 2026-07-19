@@ -52,8 +52,7 @@ pipeline default() {
     ""
   }
   harness.stdio.println("fetching ${_NOTION_OPENAPI_URL}")
-  const response = harness.net
-    .get(
+  const response = harness.net.get(
     _NOTION_OPENAPI_URL,
     {timeout_ms: 60000, headers: {"User-Agent": "harn-openapi-fixture-refresh"}},
   )

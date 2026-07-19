@@ -55,8 +55,7 @@ pipeline default() {
   const harn_bin = _harn_bin(harness)
   const package_ref = _package_ref(harness, repo_root)
   harness.fs.mkdir(smoke_root)
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     smoke_root + "/harn.toml",
     """
 [package]
@@ -76,8 +75,7 @@ version = "0.0.0"
     "locked offline install",
     _sh_quote(harn_bin) + " install --locked --offline --json",
   )
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     smoke_root + "/smoke.harn",
     """
 import { operations, parse } from "harn-openapi/default"

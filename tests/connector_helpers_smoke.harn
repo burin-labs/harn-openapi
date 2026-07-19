@@ -45,7 +45,8 @@ fn plan_by_id(plans, operation_id) {
 }
 
 fn check_generates(harness: Harness, src: string) {
-  const tmp_path = harness.fs.temp_dir() + "/harn-openapi-connector-helpers-smoke-" + uuid() + ".harn"
+  const tmp_path = harness.fs.temp_dir() + "/harn-openapi-connector-helpers-smoke-" + uuid()
+    + ".harn"
   harness.fs.write_text(tmp_path, src)
   const check_result = shell(harn_cmd(harness, "check " + tmp_path))
   if !check_result.success {
@@ -91,12 +92,18 @@ pipeline test_main() {
   assert(cursor.kind == "cursor", "listItems should be cursor-pagination")
   assert(cursor.cursor_param == "start_cursor", "cursor plan should preserve request cursor param")
   assert(cursor.cursor_location == "query", "cursor plan should preserve query cursor location")
-  assert(cursor.cursor_response_field == "next_cursor", "cursor plan should preserve response cursor")
+  assert(
+    cursor.cursor_response_field == "next_cursor",
+    "cursor plan should preserve response cursor",
+  )
   assert(cursor.items_field == "results", "cursor plan should preserve items field")
   const body_cursor = plan_by_id(plans, "listBodyItems")
   assert(body_cursor != nil, "listBodyItems should have a body cursor pagination plan")
   assert(body_cursor.kind == "cursor", "listBodyItems should be cursor-pagination")
-  assert(body_cursor.cursor_param == "start_cursor", "body cursor plan should preserve cursor field")
+  assert(
+    body_cursor.cursor_param == "start_cursor",
+    "body cursor plan should preserve cursor field",
+  )
   assert(body_cursor.cursor_location == "body", "body cursor plan should preserve cursor location")
   assert(
     body_cursor.page_size_param == "page_size",

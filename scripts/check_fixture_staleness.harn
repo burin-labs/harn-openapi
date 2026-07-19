@@ -26,8 +26,9 @@ fn _current_branch(harness: Harness) -> string {
     return github_ref
   }
   const result = try {
-    harness.process
-      .spawn_captured({cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root()})
+    harness.process.spawn_captured(
+      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root()},
+    )
   } catch (e) {
     return ""
   }
@@ -51,7 +52,12 @@ fn _fixture_path_for_meta(meta_path: string) -> string {
   return meta_path + ".json"
 }
 
-fn _require_fixture_integrity(harness: Harness, meta_path: string, fixture_path: string, meta: dict) {
+fn _require_fixture_integrity(
+  harness: Harness,
+  meta_path: string,
+  fixture_path: string,
+  meta: dict,
+) {
   if !harness.fs.exists(fixture_path) {
     throw "check_fixture_staleness: missing fixture file " + fixture_path
   }
@@ -115,8 +121,7 @@ pipeline default() {
     return
   }
   if age_days < _FAIL_AFTER_DAYS {
-    harness.stdio
-      .println(
+    harness.stdio.println(
       "::warning title=Notion OpenAPI fixture stale::Pinned fixture is ${age_days} days old; run scripts/refresh_fixtures.harn and review scripts/fixture_diff.harn output.",
     )
     return

@@ -46,7 +46,10 @@ pipeline test_main() {
   assert(bare.title == "Base title", "bare $ref should preserve target title")
   assert(bare.description == "Base description", "bare $ref should preserve target description")
   assert(bare.properties.get("id") != nil, "bare $ref should preserve target properties")
-  const described = schema(doc, {"$ref": "#/components/schemas/BaseObject", description: "Caller description"})
+  const described = schema(
+    doc,
+    {"$ref": "#/components/schemas/BaseObject", description: "Caller description"},
+  )
   assert(described.get("$ref") == nil, "resolved schema should not keep the control $ref keyword")
   assert(
     described.description == "Caller description",
@@ -54,8 +57,14 @@ pipeline test_main() {
   )
   assert(described.title == "Base title", "unrelated target keywords should remain")
   const composed = schema(doc, {"$ref": "#/components/schemas/ComposedObject"})
-  assert(composed.title == "Branch title", "$ref sibling title on allOf branch should survive merge")
-  assert(composed.properties.get("id") != nil, "allOf merge should keep referenced branch properties")
+  assert(
+    composed.title == "Branch title",
+    "$ref sibling title on allOf branch should survive merge",
+  )
+  assert(
+    composed.properties.get("id") != nil,
+    "allOf merge should keep referenced branch properties",
+  )
   assert(composed.properties.get("name") != nil, "allOf merge should keep inline branch properties")
   assert(composed.required.contains("id"), "allOf merge should keep referenced branch requirements")
   assert(composed.required.contains("name"), "allOf merge should keep inline branch requirements")

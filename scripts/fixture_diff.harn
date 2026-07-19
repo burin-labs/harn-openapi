@@ -103,7 +103,9 @@ fn _print_changed_operations(
     const new_op = new_ops[key]
     if _operation_fingerprint(old_op) != _operation_fingerprint(new_op) {
       count = count + 1
-      harness.stdio.println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
+      harness.stdio.println(
+        "  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")",
+      )
     }
   }
   if count == 0 {

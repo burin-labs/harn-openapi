@@ -176,7 +176,12 @@ pipeline test_main() {
   const module_stem = scratch_path(harness, "harn-openapi-polymorphic-generated")
   const out_path = module_stem + ".harn"
   harness.fs.write_text(out_path, src)
-  require_contains(harness, src, "pub fn update_pet(client: dict, pet_id, body) -> dict", "umbrella")
+  require_contains(
+    harness,
+    src,
+    "pub fn update_pet(client: dict, pet_id, body) -> dict",
+    "umbrella",
+  )
   require_contains(
     harness,
     src,
@@ -206,8 +211,7 @@ pipeline test_main() {
   )
   check_file(harness, out_path, "poly")
   const runner_path = scratch_path(harness, "harn-openapi-polymorphic-runner") + ".harn"
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     runner_path,
     "import { new_client, update_pet, update_pet_cat_update } from \""
       + module_stem

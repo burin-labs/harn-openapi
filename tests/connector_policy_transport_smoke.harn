@@ -59,8 +59,7 @@ fn check_generates(harness: Harness, src: string) -> string {
 
 fn run_generated(harness: Harness, module_stem: string) {
   const runner_path = scratch_path(harness, "harn-openapi-connector-policy-runtime") + ".harn"
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     runner_path,
     "import {\n"
       + "  create_item,\n"
@@ -140,7 +139,9 @@ fn build_json_only_doc() -> string {
         "/items": {
           get: {
             operationId: "list-items",
-            responses: {"200": {description: "ok", content: {"application/json": {schema: {type: "object"}}}}},
+            responses: {
+              "200": {description: "ok", content: {"application/json": {schema: {type: "object"}}}},
+            },
           },
         },
       },
@@ -174,7 +175,10 @@ pipeline test_main() {
   require_not_contains(harness, src, "http_post(", "default POST transport should not use raw HTTP")
   const module_stem = check_generates(harness, src)
   run_generated(harness, module_stem)
-  const raw_src = codegen_module(doc, {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"})
+  const raw_src = codegen_module(
+    doc,
+    {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"},
+  )
   require_not_contains(
     harness,
     raw_src,

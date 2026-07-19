@@ -98,10 +98,22 @@ pipeline test_main() {
   }
   assert(diff.success, "fixture_diff.harn must run")
   assert(contains(diff.stdout, "added operations:"), "diff output must include added operations")
-  assert(contains(diff.stdout, "POST /widgets (create-widget)"), "diff output must include added op")
-  assert(contains(diff.stdout, "removed operations:"), "diff output must include removed operations")
-  assert(contains(diff.stdout, "PATCH /legacy (patch-legacy)"), "diff output must include removed op")
-  assert(contains(diff.stdout, "changed operations:"), "diff output must include changed operations")
+  assert(
+    contains(diff.stdout, "POST /widgets (create-widget)"),
+    "diff output must include added op",
+  )
+  assert(
+    contains(diff.stdout, "removed operations:"),
+    "diff output must include removed operations",
+  )
+  assert(
+    contains(diff.stdout, "PATCH /legacy (patch-legacy)"),
+    "diff output must include removed op",
+  )
+  assert(
+    contains(diff.stdout, "changed operations:"),
+    "diff output must include changed operations",
+  )
   assert(
     contains(diff.stdout, "GET /widgets/{id} (get-widget -> retrieve-widget)"),
     "diff output must include operationId changes",
@@ -129,8 +141,7 @@ pipeline test_main() {
   const fixture_path = scratch + "/integrity.json"
   const meta_path = fixture_path + ".meta.toml"
   harness.fs.write_text(fixture_path, "{\"ok\":true}\n")
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     meta_path,
     "upstream_url = \"https://example.com/openapi.json\"\n"
       + "captured_at = \""
@@ -145,7 +156,10 @@ pipeline test_main() {
   assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")
   assert(
     contains(bad_integrity.stderr, "sha256 mismatch")
-      || contains(bad_integrity.stdout, "sha256 mismatch"),
+      || contains(
+      bad_integrity.stdout,
+      "sha256 mismatch",
+    ),
     "integrity failure should mention sha256 mismatch",
   )
   harness.fs.delete(scratch)
