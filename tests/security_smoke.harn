@@ -85,8 +85,7 @@ fn run_generated(harness: Harness, src: string, label: string, imports: string, 
   const module_path = module_stem + ".harn"
   const runner_path = scratch_path(harness, "harn-openapi-security-runtime-${label}") + ".harn"
   harness.fs.write_text(module_path, src)
-  harness.fs
-    .write_text(
+  harness.fs.write_text(
     runner_path,
     "import { "
       + imports

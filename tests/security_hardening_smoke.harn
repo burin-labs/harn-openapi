@@ -91,7 +91,10 @@ pipeline test_f5_all_of_branch_count_cap() {
   assert(caught != nil, "expected oversize allOf branch count to throw")
   assert(
     contains(to_string(caught), "allOf branch count")
-      || contains(to_string(caught), "allOf chain length"),
+      || contains(
+      to_string(caught),
+      "allOf chain length",
+    ),
     "expected allOf cap message, got: " + to_string(caught),
   )
   harness.stdio.println("f5 allOf branch count cap: ok")

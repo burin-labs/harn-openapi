@@ -246,7 +246,10 @@ pipeline test_main() {
     "UserObjectResponse alias must be emitted once, got ${user_alias_hits}",
   )
   assert(
-    contains(notion_src, "pub fn get_self(client: dict, notion_version = nil) -> UserObjectResponse"),
+    contains(
+      notion_src,
+      "pub fn get_self(client: dict, notion_version = nil) -> UserObjectResponse",
+    ),
     "get_self must return UserObjectResponse",
   )
   assert(

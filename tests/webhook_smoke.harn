@@ -40,8 +40,9 @@ pipeline test_main() {
     }
   }
   assert(comment_created != nil, "could not find commentCreated webhook")
-  harness.stdio
-    .println("commentCreated: ${comment_created.method} -> ${comment_created.operation_id}")
+  harness.stdio.println(
+    "commentCreated: ${comment_created.method} -> ${comment_created.operation_id}",
+  )
   const req_body = comment_created.operation.get("requestBody")
   assert(req_body != nil, "commentCreated webhook must declare a requestBody")
   const payload_schema_raw = req_body.content["application/json"].schema
