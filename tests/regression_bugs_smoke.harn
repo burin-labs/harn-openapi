@@ -272,21 +272,21 @@ pipeline test_main() {
   assert(len(op.parameters) == 2, "path-level and operation parameters should merge")
   const webhooks = webhook_operations(doc)
   assert(len(webhooks) == 1, "referenced webhook path item should flatten")
-  assert(webhooks[0].operation_id == "widget-created", "webhook operation id should survive")
+  assert(webhooks[0]?.operation_id == "widget-created", "webhook operation id should survive")
   const resolved = schema(doc, {"$ref": "#/components/schemas/WidgetResponse"})
-  assert(resolved.properties.get("id") != nil, "chained $ref should keep base properties")
-  assert(resolved.properties.get("name") != nil, "$ref sibling properties should be additive")
-  assert(resolved.required.contains("id"), "chained $ref should keep base required fields")
-  assert(resolved.required.contains("name"), "$ref sibling required fields should be additive")
+  assert(resolved.properties?.get("id") != nil, "chained $ref should keep base properties")
+  assert(resolved.properties?.get("name") != nil, "$ref sibling properties should be additive")
+  assert(resolved.required?.contains("id"), "chained $ref should keep base required fields")
+  assert(resolved.required?.contains("name"), "$ref sibling required fields should be additive")
   const pages = pagination_plans(doc)
   assert(
-    len(pages) == 1 && pages[0].kind == "cursor",
+    len(pages) == 1 && pages[0]?.kind == "cursor",
     "pagination should resolve response refs and +json",
   )
   const rates = rate_limit_metadata(doc)
   assert(len(rates) == 1, "rate-limit metadata should resolve response refs")
   assert(
-    rates[0].retry_after_header == "Retry-After",
+    rates[0]?.retry_after_header == "Retry-After",
     "Retry-After should be found through response ref",
   )
   const ref_src = codegen_module(

@@ -45,7 +45,7 @@ pipeline test_main() {
   assert(bare.get("$ref") == nil, "bare $ref should resolve to the target schema")
   assert(bare.title == "Base title", "bare $ref should preserve target title")
   assert(bare.description == "Base description", "bare $ref should preserve target description")
-  assert(bare.properties.get("id") != nil, "bare $ref should preserve target properties")
+  assert(bare.properties?.get("id") != nil, "bare $ref should preserve target properties")
   const described = schema(
     doc,
     {"$ref": "#/components/schemas/BaseObject", description: "Caller description"},
@@ -62,11 +62,17 @@ pipeline test_main() {
     "$ref sibling title on allOf branch should survive merge",
   )
   assert(
-    composed.properties.get("id") != nil,
+    composed.properties?.get("id") != nil,
     "allOf merge should keep referenced branch properties",
   )
-  assert(composed.properties.get("name") != nil, "allOf merge should keep inline branch properties")
-  assert(composed.required.contains("id"), "allOf merge should keep referenced branch requirements")
-  assert(composed.required.contains("name"), "allOf merge should keep inline branch requirements")
+  assert(
+    composed.properties?.get("name") != nil,
+    "allOf merge should keep inline branch properties",
+  )
+  assert(
+    composed.required?.contains("id"),
+    "allOf merge should keep referenced branch requirements",
+  )
+  assert(composed.required?.contains("name"), "allOf merge should keep inline branch requirements")
   harness.stdio.println("ref_siblings_smoke: ok")
 }

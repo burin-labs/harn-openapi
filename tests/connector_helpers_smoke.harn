@@ -125,10 +125,10 @@ pipeline test_main() {
   )
   const rates = rate_limit_metadata(doc)
   assert(len(rates) == 1, "synthetic fixture should expose one rate-limit metadata entry")
-  assert(rates[0].operation_id == "listItems", "rate-limit metadata should be tied to listItems")
-  assert(rates[0].retry_after_header == "Retry-After", "Retry-After should be modeled")
+  assert(rates[0]?.operation_id == "listItems", "rate-limit metadata should be tied to listItems")
+  assert(rates[0]?.retry_after_header == "Retry-After", "Retry-After should be modeled")
   assert(
-    rates[0].remaining_headers.contains("X-RateLimit-Remaining"),
+    rates[0]?.remaining_headers?.contains("X-RateLimit-Remaining"),
     "remaining header should be modeled",
   )
   const src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
