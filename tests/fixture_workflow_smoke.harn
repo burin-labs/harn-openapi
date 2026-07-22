@@ -130,14 +130,39 @@ pipeline test_main() {
     contains(diff.stdout, "Stable (schema changed)"),
     "diff output must include schema changes that keep the same field names",
   )
-  const stale_cmd = harn_cmd(harness, "run " + repo_root + "/scripts/check_fixture_staleness.harn")
-  const stale = shell(stale_cmd)
+  // Assert the "ok" freshness path against a controlled, freshly captured
+  // fixture so this smoke test never depends on the committed fixture's
+  // wall-clock age. The committed fixture's real staleness is enforced by the
+  // dedicated fixture-staleness CI job.
+  const fresh_path = scratch + "/fresh.json"
+  const fresh_meta = fresh_path + ".meta.toml"
+  const fresh_body = "{\"ok\":true}\n"
+  harness.fs.write_text(fresh_path, fresh_body)
+  harness.fs.write_text(
+    fresh_meta,
+    "upstream_url = \"https://example.com/openapi.json\"\n"
+      + "captured_at = \""
+      + date_format(harness.clock.timestamp(), "%Y-%m-%dT%H:%M:%S%.3fZ", "UTC")
+      + "\"\n"
+      + "sha256 = \""
+      + sha256(fresh_body)
+      + "\"\n"
+      + "byte_size = "
+      + to_string(len(fresh_body))
+      + "\n",
+  )
+  const stale = shell(
+    harn_cmd(
+      harness,
+      "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + fresh_meta,
+    ),
+  )
   if !stale.success {
     harness.stdio.println(stale.stderr)
     harness.stdio.println(stale.stdout)
   }
-  assert(stale.success, "check_fixture_staleness.harn must pass for committed metadata")
-  assert(contains(stale.stdout, "fixture staleness: ok"), "fixture should not be stale yet")
+  assert(stale.success, "check_fixture_staleness.harn must pass for fresh valid metadata")
+  assert(contains(stale.stdout, "fixture staleness: ok"), "fresh fixture must report ok")
   const fixture_path = scratch + "/integrity.json"
   const meta_path = fixture_path + ".meta.toml"
   harness.fs.write_text(fixture_path, "{\"ok\":true}\n")

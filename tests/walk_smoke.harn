@@ -21,8 +21,7 @@ pipeline test_main() {
   harness.stdio.println("query op: ${query_op.method} ${query_op.path}")
   const body_schema_raw = query_op.request_body.content["application/json"].schema
   const resolved = schema(doc, body_schema_raw)
-  const fields = resolved.properties.keys()
-  fields.sort()
+  const fields = (resolved.properties?.keys() ?? []).sort()
   harness.stdio.println("request body fields (${len(fields)}):")
   for f in fields {
     harness.stdio.println("  - ${f}")
