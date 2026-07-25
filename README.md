@@ -47,7 +47,7 @@ CLI pinned by `.harn-version`.
 | `scripts/check_fixture_staleness.harn` | CI guard for fixture age. |
 | `scripts/package_install_smoke.harn` | Clean temp-project install/import smoke for package-manager consumption. |
 | `.harn-version` | Pinned Harn CLI version used by CI and local gates. |
-| `scripts/bump_harn_cli_version.harn` | Updates the pinned Harn CLI version and runs the local gate. |
+| `scripts/bump_harn_cli_version.harn` | Local/manual path: updates the pinned Harn CLI version and runs the full gate against that release. Routine bumps are automated by `.github/workflows/bump-harn.yml`. |
 | `.github/workflows/ci.yml` | Harn check/lint/fmt/package/test/demo/fixture workflow with an aggregate `CI status` job for branch rules and merge queue. |
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
@@ -419,8 +419,16 @@ between 90 and 180 days, and fails non-`main` branches once the fixture is over
 
 ### Harn CLI version bumps
 
-GitHub Actions reads the Harn version from `.harn-version`. When a new Harn
-release is published, update that pin and run the local gate with:
+GitHub Actions reads the Harn version from `.harn-version`, stored as bare
+semver (`0.10.39`, no leading `v`).
+
+Routine bumps are automated. `.github/workflows/bump-harn.yml` is a thin caller
+of Harn's reusable `workflow_call` workflow; it runs daily, rewrites the pin,
+refreshes the lockfile, runs this repo's validation command, and opens a signed
+auto-merging PR. Nothing needs to be done by hand.
+
+To bump by hand — trying a candidate release locally, or reproducing an
+automated failure without pushing — use:
 
 ```sh
 harn run scripts/bump_harn_cli_version.harn -- 0.9.22
@@ -429,8 +437,10 @@ harn run scripts/bump_harn_cli_version.harn -- 0.9.22
 The script accepts a leading `v` (`v0.9.22` is normalized to `0.9.22`),
 installs that `harn-cli` release into a temp directory, then runs check, lint,
 formatting, the smoke test suite, `scripts/regen_demo.harn`, and
-`scripts/package_install_smoke.harn`. Use `--no-verify` only when you
-intentionally want to edit the version pin without running the gate.
+`scripts/package_install_smoke.harn`. Unlike the workflow it pins a specific
+version you name and verifies against a from-crates.io install, so it stays the
+local-development path. Use `--no-verify` only when you intentionally want to
+edit the version pin without running the gate.
 
 ## License
 
