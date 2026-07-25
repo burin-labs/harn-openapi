@@ -1,5 +1,16 @@
 // Update the pinned harn-cli version used by local and CI gates.
 //
+// LOCAL/MANUAL PATH ONLY. Routine bumps are automated by
+// `.github/workflows/bump-harn.yml`, which calls Harn's reusable bump workflow
+// and writes `.harn-version` itself. This script is the hand-driven
+// counterpart, kept because it does something the automation cannot: pin an
+// arbitrary version you name and verify it against a real `cargo install
+// harn-cli` from crates.io on your machine, without pushing a branch. Use it to
+// try a candidate release or to reproduce an automated bump failure locally.
+//
+// Both writers normalize to bare semver (a leading "v" is stripped), so they
+// cannot disagree about the file format.
+//
 // Usage:
 //   harn run scripts/bump_harn_cli_version.harn -- 0.9.22
 //
