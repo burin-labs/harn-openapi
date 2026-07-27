@@ -13,6 +13,8 @@ permissions:
 jobs:
   package:
     uses: burin-labs/.github/.github/workflows/harn-package.yml@1acf9aba857a8eb512014d7097bfb22b2e751ff8
+    with:
+      test-jobs: 1
 
   generated-fixtures:
     name: Fixture integrity and install smoke
