@@ -23,6 +23,16 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
+  assert(contains(src, "pub fn token_from_secret"), "generated token provider helper")
+  assert(contains(src, "token_provider = nil"), "generated client token-provider hook")
+  assert(contains(src, "api_key_provider = nil"), "generated client api-key-provider hook")
+  assert(
+    contains(src, "_client_api_key(client, \"queryKey\")"),
+    "generated apiKey helpers use provider hook",
+  )
+  assert(contains(src, "pub fn pagination_plans() -> list"), "generated pagination metadata")
+  assert(contains(src, "pub fn rate_limit_metadata() -> list"), "generated rate-limit metadata")
+  assert(contains(src, "Retry-After"), "generated rate-limit header metadata")
   const out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote generated module: ${out_path} (${len(src)} bytes)")
