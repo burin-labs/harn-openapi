@@ -1,4 +1,4 @@
-/* Smoke coverage for the harn-cli workflow version bump helper. */
+/** Smoke coverage for the harn-cli workflow version bump helper. */
 fn harn_cmd(harness: Harness, args: string) -> string {
   const bin = harness.env.get("HARN_BIN")
   if bin != nil && bin != "" {

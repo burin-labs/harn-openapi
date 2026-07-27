@@ -65,7 +65,7 @@ fn _ctrl_char_doc() -> string {
 pipeline test_f4_circular_ref_detected() {
   const doc = parse(_circular_ref_doc())
   const caught = try {
-    let _ignored = schema(doc, {"$ref": "#/components/schemas/A"})
+    const _ = schema(doc, {"$ref": "#/components/schemas/A"})
     nil
   } catch (e) {
     e
@@ -83,7 +83,7 @@ pipeline test_f4_circular_ref_detected() {
 pipeline test_f5_all_of_branch_count_cap() {
   const doc = parse(_long_all_of_doc(65))
   const caught = try {
-    let _ignored = schema(doc, {"$ref": "#/components/schemas/Long"})
+    const _ = schema(doc, {"$ref": "#/components/schemas/Long"})
     nil
   } catch (e) {
     e
@@ -115,7 +115,7 @@ pipeline test_f6_escape_string_rejects_nul() {
   const doc = parse(_ctrl_char_doc())
   assert(doc != nil, "ctrl-char doc should parse (JSON allows \\u0000 escapes)")
   const caught = try {
-    let _src = codegen_module(doc, {module_name: "ctrl", client_name: "C"})
+    const _ = codegen_module(doc, {module_name: "ctrl", client_name: "C"})
     nil
   } catch (e) {
     e

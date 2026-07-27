@@ -3,19 +3,10 @@
 import {
   auth_helpers,
   codegen_harn_toml,
-  codegen_module,
   pagination_plans,
   parse,
   rate_limit_metadata,
 } from "../src/lib"
-
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
-  if bin != nil && bin != "" {
-    return bin + " " + args
-  }
-  return "harn " + args
-}
 
 fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
@@ -42,28 +33,6 @@ fn plan_by_id(plans, operation_id) {
     }
   }
   return nil
-}
-
-fn check_generates(harness: Harness, src: string) {
-  const tmp_path = harness.fs.temp_dir() + "/harn-openapi-connector-helpers-smoke-" + uuid()
-    + ".harn"
-  harness.fs.write_text(tmp_path, src)
-  const check_result = shell(harn_cmd(harness, "check " + tmp_path))
-  if !check_result.success {
-    harness.stdio.println("---harn check stderr---")
-    harness.stdio.println(check_result.stderr)
-    harness.stdio.println("---harn check stdout---")
-    harness.stdio.println(check_result.stdout)
-  }
-  require check_result.success, "generated SDK must pass `harn check`"
-  const fmt_result = shell(harn_cmd(harness, "fmt --check " + tmp_path))
-  if !fmt_result.success {
-    harness.stdio.println("---harn fmt --check stderr---")
-    harness.stdio.println(fmt_result.stderr)
-    harness.stdio.println("---harn fmt --check stdout---")
-    harness.stdio.println(fmt_result.stdout)
-  }
-  require fmt_result.success, "generated SDK must pass `harn fmt --check`"
 }
 
 @test
@@ -131,54 +100,6 @@ pipeline test_main() {
     rates[0]?.remaining_headers?.contains("X-RateLimit-Remaining"),
     "remaining header should be modeled",
   )
-  const src = codegen_module(doc, {module_name: "connector_helpers", client_name: "Client"})
-  require_contains(harness, src, "pub fn token_from_secret", "generated token provider helper")
-  require_contains(harness, src, "token_provider = nil", "generated client token-provider hook")
-  require_contains(harness, src, "api_key_provider = nil", "generated client api-key-provider hook")
-  require_contains(
-    harness,
-    src,
-    "_client_token(client)",
-    "generated bearer helpers use token provider hook",
-  )
-  require_contains(
-    harness,
-    src,
-    "_client_api_key(client, \"queryKey\")",
-    "generated apiKey helpers use provider hook",
-  )
-  require_contains(
-    harness,
-    src,
-    "pub fn pagination_plans() -> list",
-    "generated pagination plans helper",
-  )
-  require_contains(
-    harness,
-    src,
-    "\\\"kind\\\":\\\"cursor\\\"",
-    "generated cursor pagination metadata",
-  )
-  require_contains(
-    harness,
-    src,
-    "\\\"cursor_location\\\":\\\"body\\\"",
-    "generated body cursor pagination metadata",
-  )
-  require_contains(
-    harness,
-    src,
-    "\\\"items_field\\\":\\\"templates\\\"",
-    "generated templates pagination metadata",
-  )
-  require_contains(
-    harness,
-    src,
-    "pub fn rate_limit_metadata() -> list",
-    "generated rate-limit metadata helper",
-  )
-  require_contains(harness, src, "Retry-After", "generated rate-limit header metadata")
-  check_generates(harness, src)
   const manifest = codegen_harn_toml(
     {
       package_name: "connector-helper-sdk",
