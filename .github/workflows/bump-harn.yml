@@ -1,67 +1,23 @@
-# Bump Harn Runtime — thin caller of the reusable workflow (harn#5299).
-#
-# Replaces the ~267L copied shell/YAML state machine with a trigger wrapper that
-# calls burin-labs/harn's published `workflow_call` workflow. All orchestration
-# (pin resolve, readiness gate, lockfile refresh, signed commit, PR + auto-merge)
-# lives in Harn (`std/bump/runtime`/`std/bump/live`), not here. The only
-# repo-specific parts are the schedule and the single validate-command.
 name: Bump Harn Runtime
+
+# fleet.toml in harn-bump-fleet owns the schedule and dispatches this adapter.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Optional Harn tag (vX.Y.Z). Defaults to latest release."
+        description: "Optional exact Harn tag (vX.Y.Z). Defaults to latest."
         required: false
         type: string
-  schedule:
-    - cron: "37 9 * * *"
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
-    # PIN: v0.10.34 release commit of burin-labs/harn.
-    uses: burin-labs/harn/.github/workflows/bump-harn.yml@e9e1ac66009672132267261a47cdcd19705e40f1
+    uses: burin-labs/harn/.github/workflows/bump-harn.yml@e7898bd182a38422f9e012c63c8cd4c61d254932
     with:
       version: ${{ inputs.version }}
-      # This repo's single declared validation entrypoint. Runs after the pin +
-      # lockfile refresh; non-zero exit blocks the commit. POSIX-sh only — the
-      # runtime executes this through the host default shell (std/command shell
-      # mode), which on a runner may resolve to /bin/sh (dash), not bash. No
-      # bashisms (mapfile/pipefail/(( ))): keep this portable regardless of
-      # runner shell.
-      #
-      # This mirrors the `harn` job in `.github/workflows/ci.yml`. The previous
-      # hand-rolled bump workflow only ran `harn fmt`, so it could green-light a
-      # runtime bump that broke codegen, the package manifest, or install; every
-      # one of those gates now runs before the commit.
-      #
-      # Deliberately NOT folded in: `scripts/check_fixture_staleness.harn` (the
-      # `fixture-staleness` CI job). Despite the name it is not a Harn-version
-      # gate — it compares `tests/fixtures/notion.openapi.json.meta.toml`'s
-      # `captured_at` against a 90-day warn / 180-day fail calendar budget for a
-      # pinned third-party spec. Folding it in would hard-fail the daily bump on
-      # a date unrelated to Harn (the pin is already past the warn threshold),
-      # and the only fix — `scripts/refresh_fixtures.harn` — refetches live
-      # upstream content, which must not land in an unattended signed commit. It
-      # stays in ci.yml, where it gates PRs and pushes as intended.
-      #
-      # Deviation from ci.yml, deliberate: ci.yml runs `harn fmt --check`
-      # because it verifies a PR; here `harn fmt` REWRITES, so a formatter
-      # change in the new runtime lands in the bump commit and the PR's own
-      # ci.yml `--check` then passes. Verifying here would instead wedge the
-      # daily bump permanently on any formatter change.
-      validate-command: |
-        set -eu
-        harn check src scripts
-        harn lint src scripts
-        harn fmt src scripts tests
-        harn package check
-        harn test tests --parallel --timing
-        harn run scripts/regen_demo.harn
-        harn run --no-sandbox scripts/package_install_smoke.harn
+      validate-command: harn package verify .
     secrets:
       app-client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
       app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
