@@ -5,26 +5,68 @@
 // Tracks burin-labs/harn-openapi#2.
 import { component_path_items, parse, schema, webhook_operations } from "../src/lib"
 
+const _WEBHOOK_DOC = """
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Webhook fixture", "version": "1.0.0"},
+  "paths": {},
+  "webhooks": {
+    "commentCreated": {
+      "post": {
+        "operationId": "webhook-comment-created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CommentCreated"}
+            }
+          }
+        },
+        "responses": {"200": {"description": "accepted"}}
+      }
+    }
+  },
+  "components": {
+    "pathItems": {
+      "ReusableWebhook": {
+        "post": {
+          "operationId": "reusable-webhook",
+          "responses": {"200": {"description": "accepted"}}
+        }
+      }
+    },
+    "schemas": {
+      "CommentCreated": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"type": "string"}
+        }
+      }
+    }
+  }
+}
+"""
+
 pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  const doc = parse(raw)
+  const doc = parse(_WEBHOOK_DOC)
   // parse() must surface the webhooks map.
   const webhooks = doc.webhooks ?? {}
   assert(type_of(webhooks) == "dict", "doc.webhooks must be a dict")
   const webhook_count = len(webhooks)
   harness.stdio.println("webhooks (raw): ${webhook_count}")
-  assert(webhook_count >= 10, "expected >=10 webhooks in the Notion fixture, got ${webhook_count}")
+  assert(webhook_count == 1, "expected one focused webhook, got ${webhook_count}")
   // parse() must surface components.pathItems as a dict, even if empty.
   const path_items = doc.components?.pathItems ?? {}
   assert(type_of(path_items) == "dict", "doc.components.pathItems must be a dict")
   // component_path_items(doc) is the passthrough accessor.
   const comp_path_items = component_path_items(doc)
   assert(type_of(comp_path_items) == "dict", "component_path_items(doc) must return a dict")
+  assert(len(comp_path_items) == 1, "component_path_items(doc) must preserve entries")
   harness.stdio.println("components.pathItems: ${len(comp_path_items)}")
   // webhook_operations(doc) flattens webhook path items into a list.
   const webhook_ops = webhook_operations(doc)
   harness.stdio.println("webhook operations: ${len(webhook_ops)}")
-  assert(len(webhook_ops) >= 10, "expected >=10 webhook operations, got ${len(webhook_ops)}")
+  assert(len(webhook_ops) == 1, "expected one webhook operation, got ${len(webhook_ops)}")
   // Every entry must have the shape { name, method, path_item, operation, ... }.
   for wop in webhook_ops {
     assert(wop.name != nil && wop.name != "", "webhook operation missing name")
@@ -48,9 +90,7 @@ pipeline test_main() {
   const payload_schema_raw = req_body.content["application/json"].schema
   const resolved = schema(doc, payload_schema_raw)
   assert(type_of(resolved) == "dict", "resolved webhook schema must be a dict")
-  // The Notion webhook envelope shape should expose common event fields
-  // once the $ref is resolved. Accept either `properties` or `allOf`
-  // composed schemas — just assert we got something non-empty back.
+  // The focused webhook envelope should retain its resolved object shape.
   const has_props = resolved.get("properties") != nil
   const has_oneof = resolved.get("oneOf") != nil
   const has_allof = resolved.get("allOf") != nil

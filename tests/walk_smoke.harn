@@ -3,21 +3,50 @@
 // exercise enum_values() on a known enum schema.
 import { enum_values, operations, parse, schema } from "../src/lib"
 
+const _WALK_DOC = """
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Walk fixture", "version": "1.0.0"},
+  "paths": {
+    "/items/query": {
+      "post": {
+        "operationId": "queryItems",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/Query"}
+            }
+          }
+        },
+        "responses": {"200": {"description": "ok"}}
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Query": {
+        "type": "object",
+        "properties": {
+          "filter": {"$ref": "#/components/schemas/FilterMode"}
+        }
+      },
+      "FilterMode": {"type": "string", "enum": ["all", "active"]}
+    }
+  }
+}
+"""
+
 pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  const doc = parse(raw)
+  const doc = parse(_WALK_DOC)
   const ops = operations(doc)
   harness.stdio.println("operation count: ${len(ops)}")
-  // Locate the query-a-data-source operation. Notion 2025-11 renamed
-  // the classic "databases.query" endpoint to the data-sources URL,
-  // so we look up the operation_id instead of the path.
   let query_op = nil
   for op in ops {
-    if op.operation_id == "post-database-query" {
+    if op.operation_id == "queryItems" {
       query_op = op
     }
   }
-  assert(query_op != nil, "could not find post-database-query operation")
+  assert(query_op != nil, "could not find queryItems operation")
   harness.stdio.println("query op: ${query_op.method} ${query_op.path}")
   const body_schema_raw = query_op.request_body.content["application/json"].schema
   const resolved = schema(doc, body_schema_raw)

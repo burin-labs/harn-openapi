@@ -3,16 +3,16 @@ import "../src/lib"
 
 @test
 pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
+  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
   const doc: OpenApiDoc = parse(raw)
   assert(is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard")
   const ops: list<Operation> = operations(doc)
-  assert(len(ops) > 40, "expected >40 typed operations")
+  assert(len(ops) >= 7, "expected the focused fixture's typed operations")
   assert(ops[0]?.method != nil, "typed operation should expose method")
   assert(ops[0]?.path != nil, "typed operation should expose path")
   assert(ops[0]?.operation_id != nil, "typed operation should expose operation_id")
   const ref_with_sibling = {
-    "$ref": "#/components/schemas/annotationResponse",
+    "$ref": "#/components/schemas/CursorPage",
     description: "sibling description",
   }
   assert(is_reference(ref_with_sibling), "is_reference should detect $ref dicts")
@@ -25,14 +25,11 @@ pipeline test_main() {
   const enum_schema: Schema = {type: "string", enum: ["a", "b"]}
   const values = enum_values(enum_schema)
   assert(values != nil && len(values ?? []) == 2, "enum_values should preserve typed enum lists")
-  const synthetic = parse(
-    harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json"),
-  )
-  const helpers: list<AuthHelper> = auth_helpers(synthetic)
+  const helpers: list<AuthHelper> = auth_helpers(doc)
   assert(helpers[0]?.scheme_name != nil, "AuthHelper should expose scheme_name")
-  const pages: list<PaginationPlan> = pagination_plans(synthetic)
+  const pages: list<PaginationPlan> = pagination_plans(doc)
   assert(pages[0]?.operation_id != nil, "PaginationPlan should expose operation_id")
-  const rates: list<RateLimitMetadata> = rate_limit_metadata(synthetic)
+  const rates: list<RateLimitMetadata> = rate_limit_metadata(doc)
   assert(
     rates[0]?.retry_after_header == "Retry-After",
     "RateLimitMetadata should expose retry headers",

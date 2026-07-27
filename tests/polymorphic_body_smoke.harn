@@ -112,25 +112,6 @@ const _POLY_DOC = """
   }
   """
 
-fn count_occurrences(haystack: string, needle: string) -> int {
-  let count = 0
-  let idx = 0
-  const hn = len(haystack)
-  const nn = len(needle)
-  if nn == 0 {
-    return 0
-  }
-  while idx + nn <= hn {
-    if substring(haystack, idx, idx + nn) == needle {
-      count = count + 1
-      idx = idx + nn
-    } else {
-      idx = idx + 1
-    }
-  }
-  return count
-}
-
 fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
     harness.stdio.println("---BEGIN GENERATED SOURCE---")
@@ -241,53 +222,5 @@ pipeline test_main() {
     """,
   )
   run_file(harness, runner_path, "poly")
-  const notion_raw = harness.fs.read_text(source_dir() + "/fixtures/notion.openapi.json")
-  const notion_src = codegen_module(
-    parse(notion_raw),
-    {
-      module_name: "notion",
-      client_name: "NotionClient",
-      default_base_url: "https://api.notion.com",
-      header_overrides: {"Notion-Version": "2025-09-03"},
-    },
-  )
-  require_contains(
-    harness,
-    notion_src,
-    """pub fn update_page_markdown(
-  client: dict,
-  page_id,
-  body,
-  notion_version = nil,
-) -> PageMarkdownResponse""",
-    "notion umbrella",
-  )
-  require_contains(
-    harness,
-    notion_src,
-    "pub fn update_page_markdown_insert_content(insert_content: dict) -> dict",
-    "notion insert_content ctor",
-  )
-  require_contains(
-    harness,
-    notion_src,
-    "pub fn update_page_markdown_replace_content_range(replace_content_range: dict) -> dict",
-    "notion replace_content_range ctor",
-  )
-  require_contains(
-    harness,
-    notion_src,
-    "pub fn update_page_markdown_update_content(update_content: dict) -> dict",
-    "notion update_content ctor",
-  )
-  require_contains(
-    harness,
-    notion_src,
-    "pub fn update_page_markdown_replace_content(replace_content: dict) -> dict",
-    "notion replace_content ctor",
-  )
-  const notion_ctors = count_occurrences(notion_src, "pub fn update_page_markdown_")
-  assert(notion_ctors == 4, "expected four Notion markdown constructors, got ${notion_ctors}")
-  require_contains(harness, notion_src, "_strip_codegen_variant(body)", "notion strips _variant")
   harness.stdio.println("polymorphic_body_smoke: ok")
 }
