@@ -36,7 +36,7 @@ const _WALK_DOC = """
 }
 """
 
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const doc = parse(_WALK_DOC)
   const ops = operations(doc)
   harness.stdio.println("operation count: ${len(ops)}")

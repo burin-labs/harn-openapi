@@ -18,8 +18,8 @@
 // release from crates.io into a temp root, and runs the local gate.
 const _VERSION_REL_PATH = ".harn-version"
 
-fn _repo_root() -> string {
-  return source_dir() + "/.."
+fn _repo_root(harness: Harness) -> string {
+  return harness.fs.source_dir() + "/.."
 }
 
 fn _usage() -> string {
@@ -54,14 +54,14 @@ fn _normalize_version(raw: string) -> string {
 
 fn _parse_args(harness: Harness) -> dict {
   let version = ""
-  let repo_root = _repo_root()
+  let repo_root = _repo_root(harness)
   let verify = true
   let i = 0
   while i < len(argv) {
     const arg = argv[i]
     if arg == "--help" || arg == "-h" {
       harness.stdio.println(_usage())
-      exit(0)
+      harness.runtime.exit(0)
     } else if arg == "--no-verify" {
       verify = false
       i = i + 1
@@ -95,7 +95,7 @@ fn _sh_quote(value: string) -> string {
 
 fn _run(harness: Harness, repo_root: string, label: string, cmd: string) {
   harness.stdio.println("running: ${label}")
-  const result = shell_at(repo_root, cmd)
+  const result = harness.process.shell_at(repo_root, cmd)
   if result.stdout != "" {
     harness.stdio.println(result.stdout.trim())
   }
@@ -108,7 +108,7 @@ fn _run(harness: Harness, repo_root: string, label: string, cmd: string) {
 }
 
 fn _version_slug(version: string) -> string {
-  return regex_replace_all("[^A-Za-z0-9._-]+", "_", version)
+  return regex_replace("[^A-Za-z0-9._-]+", "_", version)
 }
 
 fn _replace_version_file(harness: Harness, repo_root: string, new_version: string) -> dict {
@@ -190,7 +190,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
   )
 }
 
-pipeline default() {
+pipeline default(harness: Harness) {
   const args = _parse_args(harness)
   _replace_version_file(harness, args.repo_root, args.version)
   if args.verify {

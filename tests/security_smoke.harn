@@ -14,9 +14,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  const root = source_dir() + "/../.harn/tmp"
+  const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
-  return root + "/" + label + "-" + uuid()
+  return root + "/" + label + "-" + harness.random.uuid()
 }
 
 fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
@@ -62,7 +62,7 @@ fn require_not_contains(harness: Harness, haystack: string, needle: string, labe
 fn check_generates(harness: Harness, src: string, label: string) {
   const tmp_path = scratch_path(harness, "harn-openapi-security-smoke-${label}") + ".harn"
   harness.fs.write_text(tmp_path, src)
-  const result = shell(harn_cmd(harness, "check " + tmp_path))
+  const result = harness.process.shell(harn_cmd(harness, "check " + tmp_path))
   if !result.success {
     harness.stdio.println("---harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -70,7 +70,7 @@ fn check_generates(harness: Harness, src: string, label: string) {
     harness.stdio.println(result.stdout)
   }
   require result.success, "${label}: generated SDK must pass \\`harn check\\`"
-  const fmt_result = shell(harn_cmd(harness, "fmt --check " + tmp_path))
+  const fmt_result = harness.process.shell(harn_cmd(harness, "fmt --check " + tmp_path))
   if !fmt_result.success {
     harness.stdio.println("---harn fmt --check stderr---")
     harness.stdio.println(fmt_result.stderr)
@@ -91,11 +91,13 @@ fn run_generated(harness: Harness, src: string, label: string, imports: string, 
       + imports
       + " } from \""
       + module_stem
-      + "\"\n\npipeline default() {\n  egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+      + "\"\n\npipeline default(harness: Harness) {\n  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
       + body
       + "\n}\n",
   )
-  const result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = harness.process.shell(
+    harn_cmd(harness, "run --allow-process-network " + runner_path),
+  )
   if !result.success {
     harness.stdio.println("---${label} runtime stderr---")
     harness.stdio.println(result.stderr)
@@ -106,7 +108,7 @@ fn run_generated(harness: Harness, src: string, label: string, imports: string, 
 }
 
 @test
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   // ------------------------------------------------------------------
   // Scenario A: http bearer at the doc level, inherited by all ops.
   // ------------------------------------------------------------------
@@ -115,7 +117,7 @@ pipeline test_main() {
     [{bearerAuth: []}],
     [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
   )
-  const src_a = codegen_module(parse(doc_a), {module_name: "a", client_name: "A"})
+  const src_a = codegen_module(harness, parse(doc_a), {module_name: "a", client_name: "A"})
   require_contains(harness, src_a, "_headers_bearer_auth(client)", "A/dispatch")
   require_contains(harness, src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
   require_contains(harness, src_a, "token: string = \"\"", "A/client-has-token")
@@ -129,11 +131,11 @@ pipeline test_main() {
     "A",
     "new_client, get_self",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "bearer-token")
-      get_self(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      get_self(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer bearer-token")
     """,
   )
@@ -143,11 +145,11 @@ pipeline test_main() {
     "A-empty-token",
     "new_client, get_self",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com")
-      get_self(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      get_self(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.get("authorization"), nil)
     """,
   )
@@ -162,7 +164,7 @@ pipeline test_main() {
       {operation_id: "public-ping", method: "get", path: "/health", security: []},
     ],
   )
-  const src_b = codegen_module(parse(doc_b), {module_name: "b", client_name: "B"})
+  const src_b = codegen_module(harness, parse(doc_b), {module_name: "b", client_name: "B"})
   require_contains(harness, src_b, "let hs: dict =", "B/dynamic-header-map-is-typed")
   // Authed op still uses the bearer helper.
   require_contains(harness, src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
@@ -196,13 +198,13 @@ pipeline test_main() {
     "B",
     "new_client, get_self, public_ping",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
-      http_mock("GET", "https://api.example.com/health", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock("GET", "https://api.example.com/health", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "bearer-token")
-      get_self(client)
-      public_ping(client)
-      let calls = http_mock_calls({include_sensitive: true})
+      get_self(harness, client)
+      public_ping(harness, client)
+      let calls = harness.testing.http_mock_calls({include_sensitive: true})
       assert_eq(calls[0].headers.authorization, "Bearer bearer-token")
       assert_eq(calls[1].headers.get("authorization"), nil)
     """,
@@ -215,7 +217,7 @@ pipeline test_main() {
     [{basicAuth: []}],
     [{operation_id: "login", method: "post", path: "/login"}],
   )
-  const src_c = codegen_module(parse(doc_c), {module_name: "c", client_name: "C"})
+  const src_c = codegen_module(harness, parse(doc_c), {module_name: "c", client_name: "C"})
   require_contains(harness, src_c, "_headers_basic_auth(client)", "C/dispatch")
   require_contains(harness, src_c, "base64_encode", "C/basic-uses-base64")
   require_contains(harness, src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
@@ -229,11 +231,11 @@ pipeline test_main() {
     "C",
     "new_client, login",
     """
-      http_mock_clear()
-      http_mock("POST", "https://api.example.com/login", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("POST", "https://api.example.com/login", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "basic-user", "basic-pass")
-      login(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      login(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
     """,
   )
@@ -245,7 +247,7 @@ pipeline test_main() {
     [{xApiKey: []}],
     [{operation_id: "get-thing", method: "get", path: "/thing"}],
   )
-  const src_d = codegen_module(parse(doc_d), {module_name: "d", client_name: "D"})
+  const src_d = codegen_module(harness, parse(doc_d), {module_name: "d", client_name: "D"})
   require_contains(harness, src_d, "_headers_x_api_key(client)", "D/dispatch")
   require_contains(harness, src_d, "\"X-Api-Key\":", "D/header-name-emitted")
   require_contains(harness, src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
@@ -259,11 +261,11 @@ pipeline test_main() {
     "D",
     "new_client, get_thing",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {xApiKey: "header-key"})
-      get_thing(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      get_thing(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers["x-api-key"], "header-key")
     """,
   )
@@ -275,7 +277,7 @@ pipeline test_main() {
     [{qKey: []}],
     [{operation_id: "list-things", method: "get", path: "/things"}],
   )
-  const src_e = codegen_module(parse(doc_e), {module_name: "e", client_name: "E"})
+  const src_e = codegen_module(harness, parse(doc_e), {module_name: "e", client_name: "E"})
   require_contains(harness, src_e, "_headers_q_key(client)", "E/headers-dispatch")
   require_contains(harness, src_e, "_query_q_key_dict(client)", "E/query-spread-in-op")
   require_contains(harness, src_e, "api_key: v", "E/query-name-emitted")
@@ -287,11 +289,11 @@ pipeline test_main() {
     "E",
     "new_client, list_things",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/things?api_key=query-key", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/things?api_key=query-key", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {qKey: "query-key"})
-      list_things(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      list_things(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.url, "https://api.example.com/things?api_key=query-key")
     """,
   )
@@ -303,7 +305,7 @@ pipeline test_main() {
     [{sessId: []}],
     [{operation_id: "me", method: "get", path: "/me"}],
   )
-  const src_f = codegen_module(parse(doc_f), {module_name: "f", client_name: "F"})
+  const src_f = codegen_module(harness, parse(doc_f), {module_name: "f", client_name: "F"})
   require_contains(harness, src_f, "_headers_sess_id(client)", "F/dispatch")
   require_contains(harness, src_f, "_append_cookie_header(hs, \"sid\", api_key)", "F/cookie-header")
   require_contains(harness, src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
@@ -314,11 +316,11 @@ pipeline test_main() {
     "F",
     "new_client, me",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {sessId: "cookie key;admin=true"})
-      me(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      me(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.cookie, "sid=cookie%20key%3Badmin%3Dtrue")
     """,
   )
@@ -335,7 +337,7 @@ pipeline test_main() {
     [{oauth2Auth: []}],
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
-  const src_g = codegen_module(parse(doc_g), {module_name: "g", client_name: "G"})
+  const src_g = codegen_module(harness, parse(doc_g), {module_name: "g", client_name: "G"})
   require_contains(harness, src_g, "_headers_oauth2_auth(client)", "G/dispatch")
   require_contains(harness, src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
   require_contains(harness, src_g, "token: string = \"\"", "G/client-has-token")
@@ -347,11 +349,11 @@ pipeline test_main() {
     "G",
     "new_client, do_thing",
     """
-      http_mock_clear()
-      http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "oauth-token")
-      do_thing(client)
-      let call = http_mock_calls({include_sensitive: true})[0]
+      do_thing(harness, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer oauth-token")
     """,
   )
@@ -372,7 +374,7 @@ pipeline test_main() {
       },
     ],
   )
-  const src_h = codegen_module(parse(doc_h), {module_name: "h", client_name: "H"})
+  const src_h = codegen_module(harness, parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
   require_contains(harness, src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
   require_contains(harness, src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
@@ -419,7 +421,7 @@ pipeline test_main() {
     [{mtls: []}],
     [{operation_id: "mtls-op", method: "get", path: "/secure"}],
   )
-  const src_i = codegen_module(parse(doc_i), {module_name: "i", client_name: "I"})
+  const src_i = codegen_module(harness, parse(doc_i), {module_name: "i", client_name: "I"})
   require_contains(harness, src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
   require_contains(harness, src_i, "_headers_mtls(client)", "I/fallback-helper-called")
   require_contains(harness, src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
@@ -433,7 +435,7 @@ pipeline test_main() {
     [{bearerAuth: []}, {basicAuth: []}],
     [{operation_id: "either-auth", method: "get", path: "/either"}],
   )
-  const src_j = codegen_module(parse(doc_j), {module_name: "j", client_name: "J"})
+  const src_j = codegen_module(harness, parse(doc_j), {module_name: "j", client_name: "J"})
   require_contains(
     harness,
     src_j,

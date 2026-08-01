@@ -36,8 +36,10 @@ fn plan_by_id(plans, operation_id) {
 }
 
 @test
-pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
+pipeline test_main(harness: Harness) {
+  const raw = harness.fs.read_text(
+    harness.fs.source_dir() + "/fixtures/connector_helpers.openapi.json",
+  )
   const doc = parse(raw)
   const helpers = auth_helpers(doc)
   const bearer = helper_by_name(helpers, "bearerAuth")

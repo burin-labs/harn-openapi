@@ -12,12 +12,12 @@ const _WARN_AFTER_DAYS = 90
 
 const _FAIL_AFTER_DAYS = 180
 
-fn _repo_root() -> string {
-  return source_dir() + "/.."
+fn _repo_root(harness: Harness) -> string {
+  return harness.fs.source_dir() + "/.."
 }
 
-fn _default_meta_path() -> string {
-  return _repo_root() + "/" + _DEFAULT_META_REL_PATH
+fn _default_meta_path(harness: Harness) -> string {
+  return _repo_root(harness) + "/" + _DEFAULT_META_REL_PATH
 }
 
 fn _current_branch(harness: Harness) -> string {
@@ -27,7 +27,7 @@ fn _current_branch(harness: Harness) -> string {
   }
   const result = try {
     harness.process.spawn_captured(
-      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root()},
+      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root(harness)},
     )
   } catch (e) {
     return ""
@@ -90,11 +90,11 @@ fn _require_fixture_integrity(
   }
 }
 
-pipeline default() {
+pipeline default(harness: Harness) {
   const meta_path = if len(argv) > 0 {
     argv[0]
   } else {
-    _default_meta_path()
+    _default_meta_path(harness)
   }
   if !harness.fs.exists(meta_path) {
     throw "check_fixture_staleness: missing metadata file " + meta_path

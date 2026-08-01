@@ -552,8 +552,8 @@ fn _resolve_param_list(params, doc) {
 }
 
 fn _synth_operation_id(method, path) {
-  const cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", path)
-  const trimmed = regex_replace_all("^_+|_+$", "", cleaned)
+  const cleaned = regex_replace("[^a-zA-Z0-9]+", "_", path)
+  const trimmed = regex_replace("^_+|_+$", "", cleaned)
   return method + "_" + trimmed
 }
 
@@ -1119,9 +1119,9 @@ const _MODULE_TEMPLATE = """
   }
 
   /** Build a token-provider hook backed by the active connector SecretProvider. */
-  pub fn token_from_secret(secret_id: string) {
+  pub fn token_from_secret(secrets: HarnessSecrets, secret_id: string) {
     return fn() {
-      let value = secret_get(secret_id)
+      let value = secrets.read(secret_id)
       if value == nil {
         return ""
       }
@@ -1130,13 +1130,13 @@ const _MODULE_TEMPLATE = """
   }
 
   /** Build an api-key-provider hook backed by the active connector SecretProvider. */
-  pub fn api_key_from_secret(secret_ids: dict) {
+  pub fn api_key_from_secret(secrets: HarnessSecrets, secret_ids: dict) {
     return fn(scheme_name) {
       let secret_id = secret_ids.get(scheme_name)
       if secret_id == nil {
         return ""
       }
-      let value = secret_get(secret_id)
+      let value = secrets.read(secret_id)
       if value == nil {
         return ""
       }
@@ -1354,7 +1354,7 @@ const _MODULE_TEMPLATE = """
   """
 
 /** Emit a Harn SDK module as source code. */
-pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
+pub fn codegen_module(harness: Harness, doc: OpenApiDoc, options: dict) -> string {
   const module_name = options.get("module_name") ?? "generated_sdk"
   const client_name = options.get("client_name") ?? "Client"
   const default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
@@ -1453,7 +1453,10 @@ pub fn codegen_module(doc: OpenApiDoc, options: dict) -> string {
     pagination_plan_literal: _render_json_parse_expr(pagination_plans(doc)),
     rate_limit_metadata_literal: _render_json_parse_expr(rate_limit_metadata(doc)),
   }
-  return _normalize_generated_source(render_string(_MODULE_TEMPLATE, bindings), module_name)
+  return _normalize_generated_source(
+    harness.fs.render_template(_MODULE_TEMPLATE, bindings),
+    module_name,
+  )
 }
 
 /** Emit a harn.toml manifest for a generated SDK package. */
@@ -1950,7 +1953,9 @@ fn _build_op_model(
     cookie_params,
     header_overrides,
   )
-  const sig_parts = sig.required + sig.optional
+  // Every operation performs a request, so it leads with the handle that
+  // carries that authority.
+  const sig_parts = ["harness: Harness"] + sig.required + sig.optional
   const has_body = sig.has_body
   const body_required = sig.body_required
   const path_bindings_parts = sig.path_bindings_parts
@@ -2199,6 +2204,10 @@ fn _render_connector_call(method, ret, option_parts, indent) {
   const options_expr = _render_binding_dict_for_column(option_parts, len(indent) + 2)
   return _connector_http_function(ret)
     + "(\n"
+    + indent
+    + "  harness.clock,\n"
+    + indent
+    + "  harness.net,\n"
     + indent
     + "  \""
     + to_string(method ?? "get").upper()
@@ -3037,7 +3046,7 @@ fn _pascal_case(raw) {
   if raw == nil || raw == "" {
     return "T"
   }
-  const segments = split(regex_replace_all("[^a-zA-Z0-9]+", "_", raw), "_")
+  const segments = split(regex_replace("[^a-zA-Z0-9]+", "_", raw), "_")
   let out = ""
   for seg in segments {
     if seg != "" {
@@ -3209,7 +3218,7 @@ fn _snake_case_base(raw, fallback) {
   if raw == nil || raw == "" {
     return fallback
   }
-  const cleaned = regex_replace_all("[^a-zA-Z0-9]+", "_", raw)
+  const cleaned = regex_replace("[^a-zA-Z0-9]+", "_", raw)
   let out = ""
   let i = 0
   while i < len(cleaned) {
@@ -3226,7 +3235,7 @@ fn _snake_case_base(raw, fallback) {
     }
     i = i + 1
   }
-  out = regex_replace_all("^_+|_+$", "", out)
+  out = regex_replace("^_+|_+$", "", out)
   if out == "" {
     return fallback
   }

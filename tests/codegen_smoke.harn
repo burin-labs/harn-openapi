@@ -11,10 +11,13 @@ fn harn_cmd(harness: Harness, args: string) -> string {
   return "harn " + args
 }
 
-pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
+pipeline test_main(harness: Harness) {
+  const raw = harness.fs.read_text(
+    harness.fs.source_dir() + "/fixtures/connector_helpers.openapi.json",
+  )
   const doc = parse(raw)
   const src = codegen_module(
+    harness,
     doc,
     {
       module_name: "connector_helpers",
@@ -33,11 +36,12 @@ pipeline test_main() {
   assert(contains(src, "pub fn pagination_plans() -> list"), "generated pagination metadata")
   assert(contains(src, "pub fn rate_limit_metadata() -> list"), "generated rate-limit metadata")
   assert(contains(src, "Retry-After"), "generated rate-limit header metadata")
-  const out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + uuid() + ".harn"
+  const out_path = harness.fs.temp_dir() + "/harn-openapi-codegen-smoke-" + harness.random.uuid()
+    + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote generated module: ${out_path} (${len(src)} bytes)")
   const cmd = harn_cmd(harness, "check " + out_path)
-  const result = shell(cmd)
+  const result = harness.process.shell(cmd)
   if !result.success {
     harness.stdio.println("harn check stderr:")
     harness.stdio.println(result.stderr)
@@ -46,7 +50,7 @@ pipeline test_main() {
   }
   assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
   const fmt_cmd = harn_cmd(harness, "fmt --check " + out_path)
-  const fmt_result = shell(fmt_cmd)
+  const fmt_result = harness.process.shell(fmt_cmd)
   if !fmt_result.success {
     harness.stdio.println("harn fmt --check stderr:")
     harness.stdio.println(fmt_result.stderr)

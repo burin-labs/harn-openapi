@@ -236,18 +236,20 @@ new_client(
 ```
 
 For connector packages, prefer provider hooks over static token strings. The
-generated module includes `token_from_secret(secret_id)` and
-`api_key_from_secret(secret_ids)` helpers that call Harn's active
-`secret_get(...)` connector primitive at request time. Callers can also pass
-custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
+generated module includes `token_from_secret(secrets, secret_id)` and
+`api_key_from_secret(secrets, secret_ids)` helpers that read from the connector's
+secret store at request time. Both take a `HarnessSecrets` handle, so a caller
+passes `harness.secrets`. Callers can also pass custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
 
 When an operation declares multiple security requirement alternatives
 (`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
 `NOTE` comment above the generated function listing the alternatives so
 a human can retarget manually.
 
-Generated operation functions include OpenAPI `path`, `query`, `header`, and
-`cookie` parameters in their signatures. Path values are URL-encoded during
+Every generated operation function takes `harness: Harness` first, because
+sending a request needs network authority and Harn only grants that through a
+handle. After it come the OpenAPI `path`, `query`, `header`, and
+`cookie` parameters. Path values are URL-encoded during
 interpolation, query values are encoded in the query string, header parameters
 are merged into the request headers, and cookie parameters are appended to the
 `Cookie` header.
@@ -325,7 +327,7 @@ the umbrella, while static callers can use the variant constructor directly:
 let body = update_page_markdown_insert_content({
   content: "## New section",
 })
-let page = update_page_markdown(client, page_id, body)
+let page = update_page_markdown(harness, client, page_id, body)
 ```
 
 The constructor adds an internal `_variant` tag so the umbrella can validate

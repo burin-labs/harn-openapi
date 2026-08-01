@@ -22,9 +22,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  const root = source_dir() + "/../.harn/tmp"
+  const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
-  return root + "/" + label + "-" + uuid()
+  return root + "/" + label + "-" + harness.random.uuid()
 }
 
 fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
@@ -40,7 +40,7 @@ fn check_generated(harness: Harness, src: string, label: string) -> string {
   const module_stem = scratch_path(harness, "harn-openapi-regression-" + label)
   const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
-  const result = shell(harn_cmd(harness, "check " + module_path))
+  const result = harness.process.shell(harn_cmd(harness, "check " + module_path))
   if !result.success {
     harness.stdio.println("---${label} harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -65,11 +65,13 @@ fn run_generated(
       + imports
       + " } from \""
       + module_stem
-      + "\"\n\npipeline default() {\n  egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+      + "\"\n\npipeline default(harness: Harness) {\n  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
       + body
       + "\n}\n",
   )
-  const result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = harness.process.shell(
+    harn_cmd(harness, "run --allow-process-network " + runner_path),
+  )
   if !result.success {
     harness.stdio.println("---${label} runtime stderr---")
     harness.stdio.println(result.stderr)
@@ -229,7 +231,7 @@ const _GENERATED_DOC = """
   }
   """
 
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const bad_numeric = try {
     parse(json_stringify({openapi: 3.1, info: {title: "bad", version: "0"}, paths: {}}))
     nil
@@ -290,6 +292,7 @@ pipeline test_main() {
     "Retry-After should be found through response ref",
   )
   const ref_src = codegen_module(
+    harness,
     doc,
     {module_name: "ref_regression", client_name: "RefRegressionClient"},
   )
@@ -300,6 +303,7 @@ pipeline test_main() {
     "optional response fields should remain optional",
   )
   const src = codegen_module(
+    harness,
     parse(_GENERATED_DOC),
     {
       module_name: "regression",
@@ -333,30 +337,30 @@ pipeline test_main() {
     "generated",
     "new_client, return_, upload_file, secure_op",
     """
-      http_mock_clear()
+      harness.testing.http_mock_clear()
       let client = new_client("https://api.example.com/", "token", nil, {["query-key"]: "query-secret"}, nil, {})
-      http_mock(
+      harness.testing.http_mock(
         "GET",
         "https://api.example.com/things/a%20b%2Fc",
         {status: 200, body: "[]", headers: {}},
       )
-      let list_value = return_(client, "a b/c", "req-123", "cookie value")
+      let list_value = return_(harness, client, "a b/c", "req-123", "cookie value")
       assert(type_of(list_value) == "list", "array JSON responses should return a list")
-      let first_call = http_mock_calls({include_sensitive: true})[0]
+      let first_call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(first_call.headers["x-request-id"], "req-123")
       assert_eq(first_call.headers.cookie, "session=cookie%20value")
 
-      http_mock("POST", "https://api.example.com/upload", {status: 200, body: "plain", headers: {}})
-      let opaque = upload_file(client)
+      harness.testing.http_mock("POST", "https://api.example.com/upload", {status: 200, body: "plain", headers: {}})
+      let opaque = upload_file(harness, client)
       assert_eq(opaque.body, "plain")
 
-      http_mock(
+      harness.testing.http_mock(
         "GET",
         "https://api.example.com/secure?api_key=query-secret",
         {status: 204, body: "", headers: {}},
       )
-      secure_op(client)
-      let secure_call = http_mock_calls({include_sensitive: true})[2]
+      secure_op(harness, client)
+      let secure_call = harness.testing.http_mock_calls({include_sensitive: true})[2]
       assert_eq(secure_call.headers.authorization, "Bearer token")
       assert_eq(secure_call.url, "https://api.example.com/secure?api_key=query-secret")
     """,

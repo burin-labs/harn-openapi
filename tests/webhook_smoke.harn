@@ -47,7 +47,7 @@ const _WEBHOOK_DOC = """
 }
 """
 
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const doc = parse(_WEBHOOK_DOC)
   // parse() must surface the webhooks map.
   const webhooks = doc.webhooks ?? {}

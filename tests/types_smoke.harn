@@ -2,8 +2,10 @@
 import "../src/lib"
 
 @test
-pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
+pipeline test_main(harness: Harness) {
+  const raw = harness.fs.read_text(
+    harness.fs.source_dir() + "/fixtures/connector_helpers.openapi.json",
+  )
   const doc: OpenApiDoc = parse(raw)
   assert(is_openapi_doc(doc), "parse(raw) should satisfy the OpenApiDoc guard")
   const ops: list<Operation> = operations(doc)

@@ -1,8 +1,10 @@
 // parse_smoke — M1 acceptance: parse a representative OpenAPI fixture.
 import { operations, parse } from "../src/lib"
 
-pipeline test_main() {
-  const raw = harness.fs.read_text(source_dir() + "/fixtures/connector_helpers.openapi.json")
+pipeline test_main(harness: Harness) {
+  const raw = harness.fs.read_text(
+    harness.fs.source_dir() + "/fixtures/connector_helpers.openapi.json",
+  )
   const doc = parse(raw)
   assert(starts_with(doc.openapi, "3.1"), "openapi version must be 3.1.x")
   assert(doc.info.title != "", "info.title must be present")

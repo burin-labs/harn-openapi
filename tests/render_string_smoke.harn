@@ -3,14 +3,14 @@
  * engine used by codegen_module. codegen_smoke exercises it indirectly;
  * this keeps the package pinned to the runtime feature it depends on.
  */
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const template = """
     Hello {{ user.name }}
     {{ if show }}shown{{ else }}hidden{{ end }}
     {{ for item in items }}[{{ item.label }}={{ item.value }}]{{ end }}
     {{ if missing }}bad{{ elif fallback }}fallback{{ else }}none{{ end }}
     """
-  const out = render_string(
+  const out = harness.fs.render_template(
     template,
     {
       user: {name: "Ada"},
@@ -25,9 +25,12 @@ pipeline test_main() {
   assert(contains(out, "[alpha=1][beta=2]"), "for loop should render every list item in order")
   assert(contains(out, "fallback"), "else-if branch should render when first condition is false")
   assert(!contains(out, "bad"), "falsey first branch should not render")
-  const empty_loop = render_string("{{ for item in items }}x{{ end }}", {items: []})
+  const empty_loop = harness.fs.render_template("{{ for item in items }}x{{ end }}", {items: []})
   assert(empty_loop == "", "empty loops should render nothing")
-  const false_branch = render_string("{{ if zero }}bad{{ else }}ok{{ end }}", {zero: 0})
+  const false_branch = harness.fs.render_template(
+    "{{ if zero }}bad{{ else }}ok{{ end }}",
+    {zero: 0},
+  )
   assert(false_branch == "ok", "numeric zero should be falsey")
   harness.stdio.println("render_string_smoke: ok")
 }
