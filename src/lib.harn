@@ -54,7 +54,7 @@
 //       Surface per-operation 429 / Retry-After / X-RateLimit-* response
 //       header conventions for connector retry and backoff code.
 //
-//   codegen_module(doc, options) -> string
+//   codegen_module(fs, doc, options) -> string
 //       Emit a complete typed Harn SDK module source string. Options:
 //       { module_name, client_name, default_base_url?, header_overrides?,
 //       transport? }. The default `connector_policy` transport emits calls
@@ -445,6 +445,14 @@ const _HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch
 
 /** Flatten every operation in the doc's `paths` dict. */
 pub fn operations(doc: OpenApiDoc) -> list<Operation> {
+  return _operations(doc)
+}
+
+/**
+ * Call this after a public function validates the document. It avoids
+ * validating a large document again for each derived view.
+ */
+fn _operations(doc) {
   return _flatten_path_item_map(doc.get("paths") ?? {}, doc, "path")
 }
 
@@ -565,6 +573,10 @@ const _MAX_REF_DEPTH = 32
 
 /** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
 pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
+  return _schema(doc, ref_or_inline)
+}
+
+fn _schema(doc, ref_or_inline) {
   return _schema_inner(doc, ref_or_inline, [])
 }
 
@@ -829,8 +841,12 @@ fn _oauth_scope_names(def) {
 
 /** Detect reusable pagination patterns from operation params and responses. */
 pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
+  return _pagination_plans(doc)
+}
+
+fn _pagination_plans(doc) {
   let out = []
-  for op in operations(doc) {
+  for op in _operations(doc) {
     const plan = _pagination_plan_for_op(doc, op)
     if plan != nil {
       out = out + [plan]
@@ -861,7 +877,7 @@ fn _pagination_plan_for_op(doc, op) {
   if picked == nil || picked.kind != "json" {
     return nil
   }
-  const full = schema(doc, picked.schema)
+  const full = _schema(doc, picked.schema)
   const props = full.get("properties") ?? {}
   const items_field = _first_present_key(
     props,
@@ -921,7 +937,7 @@ fn _request_body_json_properties(doc, op) -> dict {
   if request_schema == nil {
     return {}
   }
-  const full = schema(doc, request_schema)
+  const full = _schema(doc, request_schema)
   const props = full.get("properties")
   if type_of(props) == "dict" {
     return props
@@ -992,8 +1008,12 @@ fn _header_name_case_insensitive(headers, wanted) {
 
 /** Surface response header conventions used by retry/backoff code. */
 pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
+  return _rate_limit_metadata(doc)
+}
+
+fn _rate_limit_metadata(doc) {
   let out = []
-  for op in operations(doc) {
+  for op in _operations(doc) {
     const meta = _rate_limit_metadata_for_op(doc, op)
     if meta != nil {
       out = out + [meta]
@@ -1354,7 +1374,7 @@ const _MODULE_TEMPLATE = """
   """
 
 /** Emit a Harn SDK module as source code. */
-pub fn codegen_module(harness: Harness, doc: OpenApiDoc, options: dict) -> string {
+pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const module_name = options.get("module_name") ?? "generated_sdk"
   const client_name = options.get("client_name") ?? "Client"
   const default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
@@ -1362,7 +1382,7 @@ pub fn codegen_module(harness: Harness, doc: OpenApiDoc, options: dict) -> strin
   const transport = _transport_kind(options.get("transport") ?? "connector_policy")
   const schemes = doc.get("security_schemes") ?? {}
   const doc_security = doc.get("security") ?? []
-  const ops_raw = operations(doc)
+  const ops_raw = _operations(doc)
   // First pass (security): resolve each op's security choice so we can
   // collect the set of schemes actually referenced. An explicit
   // `security: []` at either the operation or document level means
@@ -1450,13 +1470,10 @@ pub fn codegen_module(harness: Harness, doc: OpenApiDoc, options: dict) -> strin
     auth_helpers: auth_helpers,
     operations: ops,
     response_aliases: alias_entries,
-    pagination_plan_literal: _render_json_parse_expr(pagination_plans(doc)),
-    rate_limit_metadata_literal: _render_json_parse_expr(rate_limit_metadata(doc)),
+    pagination_plan_literal: _render_json_parse_expr(_pagination_plans(doc)),
+    rate_limit_metadata_literal: _render_json_parse_expr(_rate_limit_metadata(doc)),
   }
-  return _normalize_generated_source(
-    harness.fs.render_template(_MODULE_TEMPLATE, bindings),
-    module_name,
-  )
+  return _normalize_generated_source(fs.render_template(_MODULE_TEMPLATE, bindings), module_name)
 }
 
 /** Emit a harn.toml manifest for a generated SDK package. */
@@ -2399,7 +2416,7 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
   if raw_schema == nil {
     return []
   }
-  const root = schema(doc, raw_schema)
+  const root = _schema(doc, raw_schema)
   const variant_nodes = if root.get("oneOf") != nil {
     root.get("oneOf")
   } else {
@@ -2419,7 +2436,7 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
   let taken_fn_names = taken_names + [fn_name]
   for entry in variant_nodes.enumerate() {
     const raw_variant = entry.value
-    const resolved = schema(doc, raw_variant)
+    const resolved = _schema(doc, raw_variant)
     const mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
     const display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
     const tag = _variant_tag(discriminator_property, resolved, display_name, mapping_tag)
@@ -2791,7 +2808,7 @@ fn _resolve_response_type(doc, op, cache) {
   // For classification we always work off the fully-resolved (allOf-
   // merged) schema, since components often declare the interesting
   // shape inside `allOf: [...]`.
-  const full = schema(doc, schema_raw)
+  const full = _schema(doc, schema_raw)
   const shape = _schema_shape_kind(full)
   if shape == "nil" {
     return {
@@ -3115,7 +3132,7 @@ fn _harn_type_for_property(doc, prop_schema, depth) {
   }
   const ref = prop_schema.get("$ref")
   if ref != nil {
-    const resolved = schema(doc, prop_schema)
+    const resolved = _schema(doc, prop_schema)
     const kind = _schema_shape_kind(resolved)
     if kind == "dict" {
       const ty = resolved.get("type")

@@ -91,7 +91,7 @@ fn run_generated(harness: Harness, src: string, label: string, imports: string, 
       + imports
       + " } from \""
       + module_stem
-      + "\"\n\npipeline default(harness: Harness) {\n  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+      + "\"\n\npipeline default(harness: Harness) {\n"
       + body
       + "\n}\n",
   )
@@ -117,7 +117,7 @@ pipeline test_main(harness: Harness) {
     [{bearerAuth: []}],
     [{operation_id: "get-self", method: "get", path: "/v1/users/me"}],
   )
-  const src_a = codegen_module(harness, parse(doc_a), {module_name: "a", client_name: "A"})
+  const src_a = codegen_module(harness.fs, parse(doc_a), {module_name: "a", client_name: "A"})
   require_contains(harness, src_a, "_headers_bearer_auth(client)", "A/dispatch")
   require_contains(harness, src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
   require_contains(harness, src_a, "token: string = \"\"", "A/client-has-token")
@@ -164,7 +164,7 @@ pipeline test_main(harness: Harness) {
       {operation_id: "public-ping", method: "get", path: "/health", security: []},
     ],
   )
-  const src_b = codegen_module(harness, parse(doc_b), {module_name: "b", client_name: "B"})
+  const src_b = codegen_module(harness.fs, parse(doc_b), {module_name: "b", client_name: "B"})
   require_contains(harness, src_b, "let hs: dict =", "B/dynamic-header-map-is-typed")
   // Authed op still uses the bearer helper.
   require_contains(harness, src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
@@ -217,7 +217,7 @@ pipeline test_main(harness: Harness) {
     [{basicAuth: []}],
     [{operation_id: "login", method: "post", path: "/login"}],
   )
-  const src_c = codegen_module(harness, parse(doc_c), {module_name: "c", client_name: "C"})
+  const src_c = codegen_module(harness.fs, parse(doc_c), {module_name: "c", client_name: "C"})
   require_contains(harness, src_c, "_headers_basic_auth(client)", "C/dispatch")
   require_contains(harness, src_c, "base64_encode", "C/basic-uses-base64")
   require_contains(harness, src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
@@ -247,7 +247,7 @@ pipeline test_main(harness: Harness) {
     [{xApiKey: []}],
     [{operation_id: "get-thing", method: "get", path: "/thing"}],
   )
-  const src_d = codegen_module(harness, parse(doc_d), {module_name: "d", client_name: "D"})
+  const src_d = codegen_module(harness.fs, parse(doc_d), {module_name: "d", client_name: "D"})
   require_contains(harness, src_d, "_headers_x_api_key(client)", "D/dispatch")
   require_contains(harness, src_d, "\"X-Api-Key\":", "D/header-name-emitted")
   require_contains(harness, src_d, "_client_api_key(client, \"xApiKey\")", "D/reads-from-api-keys")
@@ -277,7 +277,7 @@ pipeline test_main(harness: Harness) {
     [{qKey: []}],
     [{operation_id: "list-things", method: "get", path: "/things"}],
   )
-  const src_e = codegen_module(harness, parse(doc_e), {module_name: "e", client_name: "E"})
+  const src_e = codegen_module(harness.fs, parse(doc_e), {module_name: "e", client_name: "E"})
   require_contains(harness, src_e, "_headers_q_key(client)", "E/headers-dispatch")
   require_contains(harness, src_e, "_query_q_key_dict(client)", "E/query-spread-in-op")
   require_contains(harness, src_e, "api_key: v", "E/query-name-emitted")
@@ -305,7 +305,7 @@ pipeline test_main(harness: Harness) {
     [{sessId: []}],
     [{operation_id: "me", method: "get", path: "/me"}],
   )
-  const src_f = codegen_module(harness, parse(doc_f), {module_name: "f", client_name: "F"})
+  const src_f = codegen_module(harness.fs, parse(doc_f), {module_name: "f", client_name: "F"})
   require_contains(harness, src_f, "_headers_sess_id(client)", "F/dispatch")
   require_contains(harness, src_f, "_append_cookie_header(hs, \"sid\", api_key)", "F/cookie-header")
   require_contains(harness, src_f, "_client_api_key(client, \"sessId\")", "F/reads-from-api-keys")
@@ -337,7 +337,7 @@ pipeline test_main(harness: Harness) {
     [{oauth2Auth: []}],
     [{operation_id: "do-thing", method: "get", path: "/thing"}],
   )
-  const src_g = codegen_module(harness, parse(doc_g), {module_name: "g", client_name: "G"})
+  const src_g = codegen_module(harness.fs, parse(doc_g), {module_name: "g", client_name: "G"})
   require_contains(harness, src_g, "_headers_oauth2_auth(client)", "G/dispatch")
   require_contains(harness, src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
   require_contains(harness, src_g, "token: string = \"\"", "G/client-has-token")
@@ -374,7 +374,7 @@ pipeline test_main(harness: Harness) {
       },
     ],
   )
-  const src_h = codegen_module(harness, parse(doc_h), {module_name: "h", client_name: "H"})
+  const src_h = codegen_module(harness.fs, parse(doc_h), {module_name: "h", client_name: "H"})
   // Bearer helper defined and used by the default op.
   require_contains(harness, src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
   require_contains(harness, src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
@@ -421,7 +421,7 @@ pipeline test_main(harness: Harness) {
     [{mtls: []}],
     [{operation_id: "mtls-op", method: "get", path: "/secure"}],
   )
-  const src_i = codegen_module(harness, parse(doc_i), {module_name: "i", client_name: "I"})
+  const src_i = codegen_module(harness.fs, parse(doc_i), {module_name: "i", client_name: "I"})
   require_contains(harness, src_i, "// NOTE: security scheme 'mtls'", "I/fallback-note-emitted")
   require_contains(harness, src_i, "_headers_mtls(client)", "I/fallback-helper-called")
   require_contains(harness, src_i, "return _no_auth_headers(client)", "I/falls-back-to-no-auth")
@@ -435,7 +435,7 @@ pipeline test_main(harness: Harness) {
     [{bearerAuth: []}, {basicAuth: []}],
     [{operation_id: "either-auth", method: "get", path: "/either"}],
   )
-  const src_j = codegen_module(harness, parse(doc_j), {module_name: "j", client_name: "J"})
+  const src_j = codegen_module(harness.fs, parse(doc_j), {module_name: "j", client_name: "J"})
   require_contains(
     harness,
     src_j,

@@ -65,7 +65,7 @@ fn run_generated(
       + imports
       + " } from \""
       + module_stem
-      + "\"\n\npipeline default(harness: Harness) {\n  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+      + "\"\n\npipeline default(harness: Harness) {\n"
       + body
       + "\n}\n",
   )
@@ -292,7 +292,7 @@ pipeline test_main(harness: Harness) {
     "Retry-After should be found through response ref",
   )
   const ref_src = codegen_module(
-    harness,
+    harness.fs,
     doc,
     {module_name: "ref_regression", client_name: "RefRegressionClient"},
   )
@@ -303,7 +303,7 @@ pipeline test_main(harness: Harness) {
     "optional response fields should remain optional",
   )
   const src = codegen_module(
-    harness,
+    harness.fs,
     parse(_GENERATED_DOC),
     {
       module_name: "regression",

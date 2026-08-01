@@ -16,7 +16,7 @@ pipeline default(harness: Harness) {
   const schemas = doc.components?.schemas ?? {}
   harness.stdio.println("  schemas:    ${len(schemas)}")
   const src = codegen_module(
-    harness,
+    harness.fs,
     doc,
     {
       module_name: "notion",

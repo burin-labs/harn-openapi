@@ -50,6 +50,7 @@ CLI pinned by `.harn-version`.
 | `scripts/bump_harn_cli_version.harn` | Local/manual path: updates the pinned Harn CLI version and runs the full gate against that release. Routine bumps are automated by `.github/workflows/bump-harn.yml`. |
 | `.github/workflows/ci.yml` | Harn check/lint/fmt/package/test/demo/fixture workflow with an aggregate `CI status` job for branch rules and merge queue. |
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
+| `docs/migration-codegen-fs.md` | How to update `codegen_module` callers to pass `HarnessFs`. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
 
 ## Install
@@ -76,60 +77,29 @@ HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.1.1-rc.2 \
   harn run scripts/package_install_smoke.harn
 ```
 
-## Usage
+## Quick start
 
-With either package install path, import the named functions you use:
+This example reads an OpenAPI document, inspects it, and writes a generated SDK.
+File access stays explicit through the filesystem capability.
 
 ```harn
-import {
-  parse,
-  operations,
-  webhook_operations,
-  component_path_items,
-  auth_helpers,
-  pagination_plans,
-  rate_limit_metadata,
-  codegen_module,
-  codegen_harn_toml,
-} from "harn-openapi/default"
+import { codegen_module, operations, parse } from "harn-openapi/default"
 
-let raw = read_file("./notion.openapi.json")
-let doc = parse(raw)
+fn main(harness: Harness) {
+  const raw = harness.fs.read_text("./notion.openapi.json")
+  const doc = parse(raw)
 
-// Walk operations
-let ops = operations(doc)
-for op in ops {
-  println("${op.method} ${op.path} -> ${op.operation_id}")
+  for op in operations(doc) {
+    harness.stdio.println("${op.method} ${op.path} -> ${op.operation_id}")
+  }
+
+  const source = codegen_module(harness.fs, doc, {
+    module_name: "notion",
+    client_name: "Client",
+    transport: "connector_policy",
+  })
+  harness.fs.write_text("./src/lib.harn", source)
 }
-
-// Walk OAS 3.1 webhooks (inbound payloads)
-for wop in webhook_operations(doc) {
-  println("webhook ${wop.name} (${wop.method}) -> ${wop.operation_id}")
-}
-
-// Passthrough accessor for the 3.1-new components.pathItems map
-let shared_path_items = component_path_items(doc)
-
-// Connector-facing helper metadata
-let auth = auth_helpers(doc)
-let pages = pagination_plans(doc)
-let limits = rate_limit_metadata(doc)
-
-// Generate Harn SDK source from the parsed document
-let src = codegen_module(doc, {
-  module_name: "notion",
-  client_name: "Client",
-  // Optional. Defaults to raw http_get/post/... calls.
-  transport: "connector_policy",
-})
-write_file("./src/lib.harn", src)
-write_file(
-  "./harn.toml",
-  codegen_harn_toml({
-    package_name: "notion-sdk-harn",
-    dependencies: {["harn-openapi"]: {path: "../harn-openapi"}},
-  }),
-)
 ```
 
 When running examples or tests directly from this repository checkout, use the
@@ -174,26 +144,18 @@ import { parse } from "../src/lib"
 - `rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata>` — surface
   per-operation 429, `Retry-After`, and `X-RateLimit-*` response header
   conventions for downstream retry/backoff code.
-- `codegen_module(doc: OpenApiDoc, options: dict) -> string` — emit a typed Harn SDK
+- `codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string` — emit a typed Harn SDK
   module source string with per-scheme security dispatch, credential-provider
   hooks, optional connector-policy transport, pagination metadata, and
   rate-limit metadata (see below).
 - `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
   generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`.
 
-### Compatibility policy
+### Pre-1.0 change policy
 
-The v0.1.0 public API is the set of `harn.toml` exports plus the named
-functions and types listed above. Patch releases in the `0.1.x` line should not
-remove exports, rename fields in normalized parser output, or change generated
-client function names for equivalent OpenAPI inputs. New helpers, extra
-normalized fields, and stricter diagnostics are acceptable patch changes when
-existing callers continue to check and run.
-
-Breaking API changes before a stable 1.0 release require a new minor version,
-a migration note under `docs/`, and fixture-backed smoke coverage showing the
-new behavior. The supported Harn CLI floor is the version pinned in
-`.harn-version`; CI installs that exact `harn-cli` release from crates.io.
+The package may make breaking changes before 1.0. Each change must update this
+reference, include a migration note when callers need to change, and have a
+fixture-backed test. CI uses the exact Harn CLI version in `.harn-version`.
 
 ### Security handling in generated clients
 
@@ -264,7 +226,7 @@ ambient HTTP builtins in generated code and routes requests through the shared
 retry, idempotency, JSON parse, and rate-limit policy layer:
 
 ```harn
-let src = codegen_module(doc, {
+let src = codegen_module(harness.fs, doc, {
   module_name: "example_sdk",
   client_name: "ExampleClient",
   transport: "connector_policy",
@@ -290,7 +252,7 @@ Generated packages that still need the historical direct-HTTP shape can opt in
 explicitly:
 
 ```harn
-let src = codegen_module(doc, {
+let src = codegen_module(harness.fs, doc, {
   module_name: "example_sdk",
   client_name: "ExampleClient",
   transport: "raw",
