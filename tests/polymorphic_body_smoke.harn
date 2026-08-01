@@ -133,7 +133,7 @@ fn check_file(harness: Harness, path: string, label: string) {
 }
 
 fn run_file(harness: Harness, path: string, label: string) {
-  const result = harness.process.shell(harn_cmd(harness, "run " + path))
+  const result = harness.process.shell(harn_cmd(harness, "run --allow-process-network " + path))
   if !result.success {
     harness.stdio.println("---${label} harn run stderr---")
     harness.stdio.println(result.stderr)
@@ -161,7 +161,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness,
     src,
-    "pub fn update_pet(client: dict, pet_id, body) -> dict",
+    "pub fn update_pet(harness: Harness, client: dict, pet_id, body) -> dict",
     "umbrella",
   )
   require_contains(
@@ -200,10 +200,10 @@ pipeline test_main(harness: Harness) {
       + "\"\n"
       + """
 
-    pipeline default() {
-      egress_policy({allow: ["api.example.com"], default: "deny"})
-      http_mock_clear()
-      http_mock("PATCH", "https://api.example.com/pets/p1", {
+    pipeline default(harness: Harness) {
+      harness.net.egress_policy({allow: ["api.example.com"], default: "deny"})
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("PATCH", "https://api.example.com/pets/p1", {
         status: 200,
         body: "{}",
         headers: {},
@@ -211,8 +211,8 @@ pipeline test_main(harness: Harness) {
       let client = new_client()
       let body = update_pet_cat_update("mew", 9)
       assert(body._variant == "cat", "constructor must tag cat body")
-      update_pet(client, "p1", body)
-      let calls = http_mock_calls()
+      update_pet(harness, client, "p1", body)
+      let calls = harness.testing.http_mock_calls()
       assert(len(calls) == 1, "expected one mocked call")
       let sent = json_parse(calls[0].body)
       assert(sent.kind == "cat", "outbound body keeps discriminator")

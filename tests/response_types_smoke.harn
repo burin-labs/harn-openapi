@@ -173,17 +173,17 @@ pipeline test_main(harness: Harness) {
   // --- Acceptance 3: both operations sharing PageObject return the
   // same typed alias and use idiomatic snake_case function names. ---
   assert(
-    contains(src, "pub fn get_page(client: dict, id) -> PageObject"),
+    contains(src, "pub fn get_page(harness: Harness, client: dict, id) -> PageObject"),
     "get_page must return PageObject",
   )
   assert(
-    contains(src, "pub fn get_page_by_slug(client: dict, slug) -> PageObject"),
+    contains(src, "pub fn get_page_by_slug(harness: Harness, client: dict, slug) -> PageObject"),
     "get_page_by_slug must return PageObject",
   )
   // --- Acceptance 4: inline search response gets a synthesized alias
   // named after its operation. ---
   assert(
-    contains(src, "pub fn search_items(client: dict) -> SearchItemsResponse"),
+    contains(src, "pub fn search_items(harness: Harness, client: dict) -> SearchItemsResponse"),
     "search_items must return SearchItemsResponse",
   )
   assert(contains(src, "has_more?: bool"), "inline alias must type optional has_more")
@@ -191,7 +191,7 @@ pipeline test_main(harness: Harness) {
   assert(contains(src, "results?: list"), "inline alias must type optional results")
   // --- Acceptance 5: 204 No Content -> nil return type, no json_parse. ---
   assert(
-    contains(src, "pub fn delete_page(client: dict, id) -> nil"),
+    contains(src, "pub fn delete_page(harness: Harness, client: dict, id) -> nil"),
     "delete_page (204) must return nil",
   )
   const delete_block_start = _count_occurrences(src, "pub fn delete_page")
@@ -199,7 +199,7 @@ pipeline test_main(harness: Harness) {
   // --- Acceptance 6: non-JSON success body -> untyped fallback dict,
   // no bogus alias emission. ---
   assert(
-    contains(src, "pub fn get_raw_bytes(client: dict) -> dict"),
+    contains(src, "pub fn get_raw_bytes(harness: Harness, client: dict) -> dict"),
     "non-JSON response body must fall back to dict",
   )
   const raw_alias = _count_occurrences(src, "type GetRawBytesResponse")

@@ -1953,7 +1953,9 @@ fn _build_op_model(
     cookie_params,
     header_overrides,
   )
-  const sig_parts = sig.required + sig.optional
+  // Every operation performs a request, so it leads with the handle that
+  // carries that authority.
+  const sig_parts = ["harness: Harness"] + sig.required + sig.optional
   const has_body = sig.has_body
   const body_required = sig.body_required
   const path_bindings_parts = sig.path_bindings_parts
@@ -2202,6 +2204,10 @@ fn _render_connector_call(method, ret, option_parts, indent) {
   const options_expr = _render_binding_dict_for_column(option_parts, len(indent) + 2)
   return _connector_http_function(ret)
     + "(\n"
+    + indent
+    + "  harness.clock,\n"
+    + indent
+    + "  harness.net,\n"
     + indent
     + "  \""
     + to_string(method ?? "get").upper()

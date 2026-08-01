@@ -61,16 +61,16 @@ pipeline test_main(harness: Harness) {
   const runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
     + "\n"
     + "@test\n"
-    + "pipeline default() {\n"
-    + "  egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
-    + "  http_mock_clear()\n"
-    + "  http_mock(\"GET\", \"https://api.example.com/v1/thing\", "
+    + "pipeline default(harness: Harness) {\n"
+    + "  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
+    + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.com/v1/thing\", "
     + "{status: 404, body: "
     + json_stringify(body_lit)
     + ", "
     + "headers: {\"x-request-id\": \"req-123\", \"content-type\": \"application/json\"}})\n"
     + "  let client = new_client(\"https://api.example.com\", \"tok\")\n"
-    + "  let caught = try { get_thing(client); nil } catch (e) { e }\n"
+    + "  let caught = try { get_thing(harness, client); nil } catch (e) { e }\n"
     + "  assert(type_of(caught) == \"dict\", \"expected dict throw\")\n"
     + "  assert_eq(caught.operation, \"get_thing\")\n"
     + "  assert_eq(caught.status, 404)\n"
@@ -84,7 +84,9 @@ pipeline test_main(harness: Harness) {
     + "  harness.stdio.println(\"error_throw runtime: ok\")\n"
     + "}\n"
   harness.fs.write_text(runner_path, runner)
-  const result = harness.process.shell(harn_cmd(harness, "run " + runner_path))
+  const result = harness.process.shell(
+    harn_cmd(harness, "run --allow-process-network " + runner_path),
+  )
   if !result.success {
     harness.stdio.println("---runtime stderr---")
     harness.stdio.println(result.stderr)

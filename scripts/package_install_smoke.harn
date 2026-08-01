@@ -80,7 +80,7 @@ version = "0.0.0"
     """
 import { operations, parse } from "harn-openapi/default"
 
-pipeline default() {
+pipeline default(harness: Harness) {
   const raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
   const doc: OpenApiDoc = parse(raw)
   const ops: list<Operation> = operations(doc)
