@@ -36,7 +36,7 @@ fn build_doc() -> string {
 @test
 pipeline test_main(harness: Harness) {
   const src = codegen_module(
-    harness,
+    harness.fs,
     parse(build_doc()),
     {module_name: "throw_t", client_name: "T"},
   )
@@ -62,7 +62,6 @@ pipeline test_main(harness: Harness) {
     + "\n"
     + "@test\n"
     + "pipeline default(harness: Harness) {\n"
-    + "  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
     + "  harness.testing.http_mock_clear()\n"
     + "  harness.testing.http_mock(\"GET\", \"https://api.example.com/v1/thing\", "
     + "{status: 404, body: "

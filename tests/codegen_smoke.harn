@@ -17,7 +17,7 @@ pipeline test_main(harness: Harness) {
   )
   const doc = parse(raw)
   const src = codegen_module(
-    harness,
+    harness.fs,
     doc,
     {
       module_name: "connector_helpers",

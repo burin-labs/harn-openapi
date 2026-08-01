@@ -74,7 +74,6 @@ fn run_generated(harness: Harness, module_stem: string) {
       + "\"\n\n"
       + "@test\n"
       + "pipeline default(harness: Harness) {\n"
-      + "  harness.net.egress_policy({allow: [\"api.example.com\"], default: \"deny\"})\n"
       + "  let client = new_client(\"https://api.example.com\")\n"
       + "  let rates = rate_limit_metadata()\n"
       + "  assert_eq(rates[0].operation_id, \"listItems\")\n"
@@ -157,7 +156,11 @@ pipeline test_main(harness: Harness) {
     harness.fs.source_dir() + "/fixtures/connector_policy.openapi.json",
   )
   const doc = parse(raw)
-  const src = codegen_module(harness, doc, {module_name: "connector_policy", client_name: "Client"})
+  const src = codegen_module(
+    harness.fs,
+    doc,
+    {module_name: "connector_policy", client_name: "Client"},
+  )
   require_contains(
     harness,
     src,
@@ -190,7 +193,7 @@ pipeline test_main(harness: Harness) {
   const module_stem = check_generates(harness, src)
   run_generated(harness, module_stem)
   const raw_src = codegen_module(
-    harness,
+    harness.fs,
     doc,
     {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"},
   )
@@ -207,7 +210,7 @@ pipeline test_main(harness: Harness) {
     "explicit raw transport emits harness net GET",
   )
   const json_only_src = codegen_module(
-    harness,
+    harness.fs,
     parse(build_json_only_doc()),
     {module_name: "json_only_policy", client_name: "Client"},
   )

@@ -115,7 +115,7 @@ pipeline test_f6_escape_string_rejects_nul(harness: Harness) {
   const doc = parse(_ctrl_char_doc())
   assert(doc != nil, "ctrl-char doc should parse (JSON allows \\u0000 escapes)")
   const caught = try {
-    const _ = codegen_module(harness, doc, {module_name: "ctrl", client_name: "C"})
+    const _ = codegen_module(harness.fs, doc, {module_name: "ctrl", client_name: "C"})
     nil
   } catch (e) {
     e

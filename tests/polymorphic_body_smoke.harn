@@ -146,7 +146,7 @@ fn run_file(harness: Harness, path: string, label: string) {
 pipeline test_main(harness: Harness) {
   const doc = parse(_POLY_DOC)
   const src = codegen_module(
-    harness,
+    harness.fs,
     doc,
     {
       module_name: "poly",
@@ -201,7 +201,6 @@ pipeline test_main(harness: Harness) {
       + """
 
     pipeline default(harness: Harness) {
-      harness.net.egress_policy({allow: ["api.example.com"], default: "deny"})
       harness.testing.http_mock_clear()
       harness.testing.http_mock("PATCH", "https://api.example.com/pets/p1", {
         status: 200,
