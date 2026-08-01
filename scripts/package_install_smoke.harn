@@ -7,8 +7,8 @@
  * to test a published ref such as
  * `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
  */
-fn _repo_root() -> string {
-  return source_dir() + "/.."
+fn _repo_root(harness: Harness) -> string {
+  return harness.fs.source_dir() + "/.."
 }
 
 fn _sh_quote(value: string) -> string {
@@ -31,13 +31,13 @@ fn _package_ref(harness: Harness, repo_root: string) -> string {
   return repo_root
 }
 
-fn _scratch_root(repo_root: string, label: string) -> string {
-  return repo_root + "/.harn/tmp/" + label + "-" + uuid()
+fn _scratch_root(harness: Harness, repo_root: string, label: string) -> string {
+  return repo_root + "/.harn/tmp/" + label + "-" + harness.random.uuid()
 }
 
 fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
   harness.stdio.println("running: ${label}")
-  const result = shell_at(cwd, cmd)
+  const result = harness.process.shell_at(cwd, cmd)
   if result.stdout != "" {
     harness.stdio.println(result.stdout.trim())
   }
@@ -49,9 +49,9 @@ fn _run(harness: Harness, cwd: string, label: string, cmd: string) {
   }
 }
 
-pipeline default() {
-  const repo_root = _repo_root()
-  const smoke_root = _scratch_root(repo_root, "harn-openapi-install-smoke")
+pipeline default(harness: Harness) {
+  const repo_root = _repo_root(harness)
+  const smoke_root = _scratch_root(harness, repo_root, "harn-openapi-install-smoke")
   const harn_bin = _harn_bin(harness)
   const package_ref = _package_ref(harness, repo_root)
   harness.fs.mkdir(smoke_root)

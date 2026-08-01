@@ -236,10 +236,10 @@ new_client(
 ```
 
 For connector packages, prefer provider hooks over static token strings. The
-generated module includes `token_from_secret(secret_id)` and
-`api_key_from_secret(secret_ids)` helpers that call Harn's active
-`secret_get(...)` connector primitive at request time. Callers can also pass
-custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
+generated module includes `token_from_secret(secrets, secret_id)` and
+`api_key_from_secret(secrets, secret_ids)` helpers that read from the connector's
+secret store at request time. Both take a `HarnessSecrets` handle, so a caller
+passes `harness.secrets`. Callers can also pass custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
 
 When an operation declares multiple security requirement alternatives
 (`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a

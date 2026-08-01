@@ -131,9 +131,10 @@ fn _count_occurrences(haystack: string, needle: string) -> int {
   return len(split(haystack, needle)) - 1
 }
 
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const doc = parse(_TINY_DOC)
   const src = codegen_module(
+    harness,
     doc,
     {
       module_name: "tiny",
@@ -142,7 +143,9 @@ pipeline test_main() {
       header_overrides: {},
     },
   )
-  const out_path = harness.fs.temp_dir() + "/harn-openapi-response-types-smoke-" + uuid() + ".harn"
+  const out_path = harness.fs.temp_dir() + "/harn-openapi-response-types-smoke-"
+    + harness.random.uuid()
+    + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote tiny module: ${out_path} (${len(src)} bytes)")
   // --- Acceptance 1: one alias per distinct response schema. ---
@@ -202,7 +205,7 @@ pipeline test_main() {
   const raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
   // --- Acceptance 7: emitted module passes `harn check`. ---
-  const result = shell(harn_cmd(harness, "check " + out_path))
+  const result = harness.process.shell(harn_cmd(harness, "check " + out_path))
   if !result.success {
     harness.stdio.println("harn check stderr:")
     harness.stdio.println(result.stderr)

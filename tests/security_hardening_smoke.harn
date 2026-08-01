@@ -62,7 +62,7 @@ fn _ctrl_char_doc() -> string {
 }
 
 @test
-pipeline test_f4_circular_ref_detected() {
+pipeline test_f4_circular_ref_detected(harness: Harness) {
   const doc = parse(_circular_ref_doc())
   const caught = try {
     const _ = schema(doc, {"$ref": "#/components/schemas/A"})
@@ -80,7 +80,7 @@ pipeline test_f4_circular_ref_detected() {
 }
 
 @test
-pipeline test_f5_all_of_branch_count_cap() {
+pipeline test_f5_all_of_branch_count_cap(harness: Harness) {
   const doc = parse(_long_all_of_doc(65))
   const caught = try {
     const _ = schema(doc, {"$ref": "#/components/schemas/Long"})
@@ -101,7 +101,7 @@ pipeline test_f5_all_of_branch_count_cap() {
 }
 
 @test
-pipeline test_f5_all_of_at_cap_succeeds() {
+pipeline test_f5_all_of_at_cap_succeeds(harness: Harness) {
   // At exactly the cap (64), schema() must still succeed: caps should not
   // regress legitimate-but-large specs.
   const doc = parse(_long_all_of_doc(64))
@@ -111,11 +111,11 @@ pipeline test_f5_all_of_at_cap_succeeds() {
 }
 
 @test
-pipeline test_f6_escape_string_rejects_nul() {
+pipeline test_f6_escape_string_rejects_nul(harness: Harness) {
   const doc = parse(_ctrl_char_doc())
   assert(doc != nil, "ctrl-char doc should parse (JSON allows \\u0000 escapes)")
   const caught = try {
-    const _ = codegen_module(doc, {module_name: "ctrl", client_name: "C"})
+    const _ = codegen_module(harness, doc, {module_name: "ctrl", client_name: "C"})
     nil
   } catch (e) {
     e

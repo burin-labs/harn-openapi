@@ -15,9 +15,9 @@ fn cat_file(harness: Harness, path: string) -> string {
   return harness.fs.read_text(path)
 }
 
-pipeline test_main() {
-  const repo_root = source_dir() + "/.."
-  const fake_root = repo_root + "/.harn/tmp/harn-openapi-bump-smoke-" + uuid()
+pipeline test_main(harness: Harness) {
+  const repo_root = harness.fs.source_dir() + "/.."
+  const fake_root = repo_root + "/.harn/tmp/harn-openapi-bump-smoke-" + harness.random.uuid()
   harness.fs.mkdir(fake_root)
   harness.fs.write_text(fake_root + "/.harn-version", "0.0.1\n")
   const cmd = harn_cmd(
@@ -28,7 +28,7 @@ pipeline test_main() {
       + sh_quote(fake_root)
       + " --no-verify",
   )
-  const result = shell(cmd)
+  const result = harness.process.shell(cmd)
   if !result.success {
     harness.stdio.println(result.stderr)
     harness.stdio.println(result.stdout)

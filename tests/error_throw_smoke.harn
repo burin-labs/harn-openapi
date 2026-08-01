@@ -13,9 +13,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  const root = source_dir() + "/../.harn/tmp"
+  const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
-  return root + "/" + label + "-" + uuid()
+  return root + "/" + label + "-" + harness.random.uuid()
 }
 
 fn build_doc() -> string {
@@ -34,8 +34,12 @@ fn build_doc() -> string {
 }
 
 @test
-pipeline test_main() {
-  const src = codegen_module(parse(build_doc()), {module_name: "throw_t", client_name: "T"})
+pipeline test_main(harness: Harness) {
+  const src = codegen_module(
+    harness,
+    parse(build_doc()),
+    {module_name: "throw_t", client_name: "T"},
+  )
   // The default transport should throw the shared connector envelope and
   // must NOT emit the legacy string format.
   assert(
@@ -80,7 +84,7 @@ pipeline test_main() {
     + "  harness.stdio.println(\"error_throw runtime: ok\")\n"
     + "}\n"
   harness.fs.write_text(runner_path, runner)
-  const result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = harness.process.shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
     harness.stdio.println("---runtime stderr---")
     harness.stdio.println(result.stderr)

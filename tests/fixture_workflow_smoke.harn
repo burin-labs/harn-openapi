@@ -7,9 +7,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
   return "harn " + args
 }
 
-pipeline test_main() {
-  const repo_root = source_dir() + "/.."
-  const unique = to_string(to_int(harness.clock.timestamp())) + "-" + uuid()
+pipeline test_main(harness: Harness) {
+  const repo_root = harness.fs.source_dir() + "/.."
+  const unique = to_string(to_int(harness.clock.timestamp())) + "-" + harness.random.uuid()
   const scratch = repo_root + "/.harn/tmp/harn-openapi-fixture-workflow-" + unique
   harness.fs.mkdir(scratch)
   const old_path = scratch + "/old.json"
@@ -91,7 +91,7 @@ pipeline test_main() {
       + " "
       + new_path,
   )
-  const diff = shell(diff_cmd)
+  const diff = harness.process.shell(diff_cmd)
   if !diff.success {
     harness.stdio.println(diff.stderr)
     harness.stdio.println(diff.stdout)
@@ -151,7 +151,7 @@ pipeline test_main() {
       + to_string(len(fresh_body))
       + "\n",
   )
-  const stale = shell(
+  const stale = harness.process.shell(
     harn_cmd(
       harness,
       "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + fresh_meta,
@@ -175,7 +175,7 @@ pipeline test_main() {
       + "sha256 = \"definitely-wrong\"\n"
       + "byte_size = 1\n",
   )
-  const bad_integrity = shell(
+  const bad_integrity = harness.process.shell(
     harn_cmd(harness, "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path),
   )
   assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")

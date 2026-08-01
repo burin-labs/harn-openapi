@@ -22,9 +22,9 @@ fn harn_cmd(harness: Harness, args: string) -> string {
 }
 
 fn scratch_path(harness: Harness, label: string) -> string {
-  const root = source_dir() + "/../.harn/tmp"
+  const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
-  return root + "/" + label + "-" + uuid()
+  return root + "/" + label + "-" + harness.random.uuid()
 }
 
 fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
@@ -40,7 +40,7 @@ fn check_generated(harness: Harness, src: string, label: string) -> string {
   const module_stem = scratch_path(harness, "harn-openapi-regression-" + label)
   const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
-  const result = shell(harn_cmd(harness, "check " + module_path))
+  const result = harness.process.shell(harn_cmd(harness, "check " + module_path))
   if !result.success {
     harness.stdio.println("---${label} harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -69,7 +69,7 @@ fn run_generated(
       + body
       + "\n}\n",
   )
-  const result = shell(harn_cmd(harness, "run " + runner_path))
+  const result = harness.process.shell(harn_cmd(harness, "run " + runner_path))
   if !result.success {
     harness.stdio.println("---${label} runtime stderr---")
     harness.stdio.println(result.stderr)
@@ -229,7 +229,7 @@ const _GENERATED_DOC = """
   }
   """
 
-pipeline test_main() {
+pipeline test_main(harness: Harness) {
   const bad_numeric = try {
     parse(json_stringify({openapi: 3.1, info: {title: "bad", version: "0"}, paths: {}}))
     nil
@@ -290,6 +290,7 @@ pipeline test_main() {
     "Retry-After should be found through response ref",
   )
   const ref_src = codegen_module(
+    harness,
     doc,
     {module_name: "ref_regression", client_name: "RefRegressionClient"},
   )
@@ -300,6 +301,7 @@ pipeline test_main() {
     "optional response fields should remain optional",
   )
   const src = codegen_module(
+    harness,
     parse(_GENERATED_DOC),
     {
       module_name: "regression",
