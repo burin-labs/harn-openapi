@@ -1,6 +1,6 @@
 /** Smoke coverage for issue #7 fixture refresh support scripts. */
-fn harn_cmd(harness: HarnessEnv, args: string) -> string {
-  const bin = harness.get("HARN_BIN")
+fn harn_cmd(env: HarnessEnv, args: string) -> string {
+  const bin = env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }

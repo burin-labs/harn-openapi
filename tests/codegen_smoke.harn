@@ -3,8 +3,8 @@
 // to assert the emitted source parses cleanly.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: HarnessEnv, args: string) -> string {
-  const bin = harness.get("HARN_BIN")
+fn harn_cmd(env: HarnessEnv, args: string) -> string {
+  const bin = env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }

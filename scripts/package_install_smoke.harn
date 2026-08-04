@@ -7,32 +7,32 @@
  * to test a published ref such as
  * `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
  */
-fn _repo_root(harness: HarnessFs) -> string {
-  return harness.source_dir() + "/.."
+fn _repo_root(fs: HarnessFs) -> string {
+  return fs.source_dir() + "/.."
 }
 
 fn _sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn _harn_bin(harness: HarnessEnv) -> string {
-  const bin = harness.get("HARN_BIN")
+fn _harn_bin(env: HarnessEnv) -> string {
+  const bin = env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin
   }
   return "harn"
 }
 
-fn _package_ref(harness: HarnessEnv, repo_root: string) -> string {
-  const package_ref = harness.get("HARN_PACKAGE_REF")
+fn _package_ref(env: HarnessEnv, repo_root: string) -> string {
+  const package_ref = env.get("HARN_PACKAGE_REF")
   if package_ref != nil && package_ref != "" {
     return package_ref
   }
   return repo_root
 }
 
-fn _scratch_root(harness: HarnessRandom, repo_root: string, label: string) -> string {
-  return repo_root + "/.harn/tmp/" + label + "-" + harness.uuid()
+fn _scratch_root(random: HarnessRandom, repo_root: string, label: string) -> string {
+  return repo_root + "/.harn/tmp/" + label + "-" + random.uuid()
 }
 
 fn _run(
