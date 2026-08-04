@@ -18,8 +18,8 @@
 // release from crates.io into a temp root, and runs the local gate.
 const _VERSION_REL_PATH = ".harn-version"
 
-fn _repo_root(harness: HarnessFs) -> string {
-  return harness.source_dir() + "/.."
+fn _repo_root(fs: HarnessFs) -> string {
+  return fs.source_dir() + "/.."
 }
 
 fn _usage() -> string {

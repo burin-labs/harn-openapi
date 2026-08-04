@@ -4,8 +4,8 @@
 // mapping values as tags.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: HarnessEnv, args: string) -> string {
-  const bin = harness.get("HARN_BIN")
+fn harn_cmd(env: HarnessEnv, args: string) -> string {
+  const bin = env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -112,11 +112,11 @@ const _POLY_DOC = """
   }
   """
 
-fn require_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
+fn require_contains(stdio: HarnessStdio, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    harness.println("---BEGIN GENERATED SOURCE---")
-    harness.println(haystack)
-    harness.println("---END GENERATED SOURCE---")
+    stdio.println("---BEGIN GENERATED SOURCE---")
+    stdio.println(haystack)
+    stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected generated source to contain ${needle}"
   }
 }

@@ -1,6 +1,6 @@
 /** Smoke coverage for the harn-cli workflow version bump helper. */
-fn harn_cmd(harness: HarnessEnv, args: string) -> string {
-  const bin = harness.get("HARN_BIN")
+fn harn_cmd(env: HarnessEnv, args: string) -> string {
+  const bin = env.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -11,8 +11,8 @@ fn sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn cat_file(harness: HarnessFs, path: string) -> string {
-  return harness.read_text(path)
+fn cat_file(fs: HarnessFs, path: string) -> string {
+  return fs.read_text(path)
 }
 
 pipeline test_main(harness: Harness) {

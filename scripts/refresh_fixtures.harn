@@ -8,16 +8,16 @@ const _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
 
 const _META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
 
-fn _repo_root(harness: HarnessFs) -> string {
-  return harness.source_dir() + "/.."
+fn _repo_root(fs: HarnessFs) -> string {
+  return fs.source_dir() + "/.."
 }
 
-fn _fixture_path(harness: HarnessFs) -> string {
-  return _repo_root(harness) + "/" + _FIXTURE_REL_PATH
+fn _fixture_path(fs: HarnessFs) -> string {
+  return _repo_root(fs) + "/" + _FIXTURE_REL_PATH
 }
 
-fn _meta_path(harness: HarnessFs) -> string {
-  return _repo_root(harness) + "/" + _META_REL_PATH
+fn _meta_path(fs: HarnessFs) -> string {
+  return _repo_root(fs) + "/" + _META_REL_PATH
 }
 
 fn _toml_quote(value: string) -> string {

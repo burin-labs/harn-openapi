@@ -8,11 +8,11 @@ import {
   rate_limit_metadata,
 } from "../src/lib"
 
-fn require_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
+fn require_contains(stdio: HarnessStdio, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    harness.println("---BEGIN GENERATED SOURCE---")
-    harness.println(haystack)
-    harness.println("---END GENERATED SOURCE---")
+    stdio.println("---BEGIN GENERATED SOURCE---")
+    stdio.println(haystack)
+    stdio.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source to contain \"${needle}\""
   }
 }

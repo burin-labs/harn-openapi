@@ -79,51 +79,51 @@ fn _diff_list(old_items: list<string>, new_items: list<string>) -> dict {
   return {added: added, removed: removed}
 }
 
-fn _print_operation_section(harness: HarnessStdio, title: string, keys: list<string>, index: dict) {
-  harness.println(title + ":")
+fn _print_operation_section(stdio: HarnessStdio, title: string, keys: list<string>, index: dict) {
+  stdio.println(title + ":")
   if len(keys) == 0 {
-    harness.println("  (none)")
+    stdio.println("  (none)")
     return
   }
   for key in keys {
-    harness.println("  " + _operation_label(index[key]))
+    stdio.println("  " + _operation_label(index[key]))
   }
 }
 
 fn _print_changed_operations(
-  harness: HarnessStdio,
+  stdio: HarnessStdio,
   old_ops: dict,
   new_ops: dict,
   shared_keys: list<string>,
 ) {
-  harness.println("changed operations:")
+  stdio.println("changed operations:")
   let count = 0
   for key in shared_keys {
     const old_op = old_ops[key]
     const new_op = new_ops[key]
     if _operation_fingerprint(old_op) != _operation_fingerprint(new_op) {
       count = count + 1
-      harness.println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
+      stdio.println("  " + key + " (" + old_op.operation_id + " -> " + new_op.operation_id + ")")
     }
   }
   if count == 0 {
-    harness.println("  (none)")
+    stdio.println("  (none)")
   }
 }
 
-fn _print_schema_name_section(harness: HarnessStdio, title: string, names: list<string>) {
-  harness.println(title + ":")
+fn _print_schema_name_section(stdio: HarnessStdio, title: string, names: list<string>) {
+  stdio.println(title + ":")
   if len(names) == 0 {
-    harness.println("  (none)")
+    stdio.println("  (none)")
     return
   }
   for name in names {
-    harness.println("  " + name)
+    stdio.println("  " + name)
   }
 }
 
-fn _print_changed_schemas(harness: HarnessStdio, old_doc, new_doc, shared_names: list<string>) {
-  harness.println("changed schemas:")
+fn _print_changed_schemas(stdio: HarnessStdio, old_doc, new_doc, shared_names: list<string>) {
+  stdio.println("changed schemas:")
   let count = 0
   for name in shared_names {
     const old_fields = _schema_fields(old_doc, name)
@@ -137,17 +137,17 @@ fn _print_changed_schemas(harness: HarnessStdio, old_doc, new_doc, shared_names:
       } else {
         "(schema changed)"
       }
-      harness.println("  " + name + " " + suffix)
+      stdio.println("  " + name + " " + suffix)
       if len(diff.added) > 0 {
-        harness.println("    added: " + join(diff.added, ", "))
+        stdio.println("    added: " + join(diff.added, ", "))
       }
       if len(diff.removed) > 0 {
-        harness.println("    removed: " + join(diff.removed, ", "))
+        stdio.println("    removed: " + join(diff.removed, ", "))
       }
     }
   }
   if count == 0 {
-    harness.println("  (none)")
+    stdio.println("  (none)")
   }
 }
 
