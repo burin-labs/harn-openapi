@@ -4,8 +4,8 @@
 // `harn check`.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -205,7 +205,7 @@ pipeline test_main(harness: Harness) {
   const raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")
   // --- Acceptance 7: emitted module passes `harn check`. ---
-  const result = harness.process.shell(harn_cmd(harness, "check " + out_path))
+  const result = harness.process.shell(harn_cmd(harness.env, "check " + out_path))
   if !result.success {
     harness.stdio.println("harn check stderr:")
     harness.stdio.println(result.stderr)

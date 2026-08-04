@@ -8,15 +8,15 @@ const _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
 
 const _META_REL_PATH = "tests/fixtures/notion.openapi.json.meta.toml"
 
-fn _repo_root(harness: Harness) -> string {
-  return harness.fs.source_dir() + "/.."
+fn _repo_root(harness: HarnessFs) -> string {
+  return harness.source_dir() + "/.."
 }
 
-fn _fixture_path(harness: Harness) -> string {
+fn _fixture_path(harness: HarnessFs) -> string {
   return _repo_root(harness) + "/" + _FIXTURE_REL_PATH
 }
 
-fn _meta_path(harness: Harness) -> string {
+fn _meta_path(harness: HarnessFs) -> string {
   return _repo_root(harness) + "/" + _META_REL_PATH
 }
 
@@ -39,8 +39,8 @@ fn _render_meta(captured_at: string, hash: string, byte_size: int) -> string {
 }
 
 pipeline default(harness: Harness) {
-  const fixture_path = _fixture_path(harness)
-  const meta_path = _meta_path(harness)
+  const fixture_path = _fixture_path(harness.fs)
+  const meta_path = _meta_path(harness.fs)
   const old_size = if harness.fs.exists(fixture_path) {
     harness.fs.stat(fixture_path).size
   } else {

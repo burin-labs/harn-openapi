@@ -12,11 +12,11 @@ const _WARN_AFTER_DAYS = 90
 
 const _FAIL_AFTER_DAYS = 180
 
-fn _repo_root(harness: Harness) -> string {
-  return harness.fs.source_dir() + "/.."
+fn _repo_root(harness: HarnessFs) -> string {
+  return harness.source_dir() + "/.."
 }
 
-fn _default_meta_path(harness: Harness) -> string {
+fn _default_meta_path(harness: HarnessFs) -> string {
   return _repo_root(harness) + "/" + _DEFAULT_META_REL_PATH
 }
 
@@ -27,7 +27,7 @@ fn _current_branch(harness: Harness) -> string {
   }
   const result = try {
     harness.process.spawn_captured(
-      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root(harness)},
+      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root(harness.fs)},
     )
   } catch (e) {
     return ""
@@ -38,9 +38,9 @@ fn _current_branch(harness: Harness) -> string {
   return ""
 }
 
-fn _fixture_age_days(harness: Harness, captured_at: string) -> int {
+fn _fixture_age_days(harness: HarnessClock, captured_at: string) -> int {
   const captured_ts = date_parse(captured_at)
-  const now_ts = harness.clock.timestamp()
+  const now_ts = harness.timestamp()
   return floor((now_ts - captured_ts) / 86400.0)
 }
 
@@ -53,12 +53,12 @@ fn _fixture_path_for_meta(meta_path: string) -> string {
 }
 
 fn _require_fixture_integrity(
-  harness: Harness,
+  harness: HarnessFs,
   meta_path: string,
   fixture_path: string,
   meta: dict,
 ) {
-  if !harness.fs.exists(fixture_path) {
+  if !harness.exists(fixture_path) {
     throw "check_fixture_staleness: missing fixture file " + fixture_path
   }
   const expected_hash = meta.get("sha256")
@@ -69,7 +69,7 @@ fn _require_fixture_integrity(
   if expected_size == nil {
     throw "check_fixture_staleness: metadata missing byte_size"
   }
-  const body = harness.fs.read_text(fixture_path)
+  const body = harness.read_text(fixture_path)
   const actual_hash = sha256(body)
   if actual_hash != expected_hash {
     throw "check_fixture_staleness: sha256 mismatch for "
@@ -78,7 +78,7 @@ fn _require_fixture_integrity(
       + meta_path
       + ")"
   }
-  const actual_size = harness.fs.stat(fixture_path).size
+  const actual_size = harness.stat(fixture_path).size
   if actual_size != expected_size {
     throw "check_fixture_staleness: byte_size mismatch for "
       + fixture_path
@@ -94,7 +94,7 @@ pipeline default(harness: Harness) {
   const meta_path = if len(argv) > 0 {
     argv[0]
   } else {
-    _default_meta_path(harness)
+    _default_meta_path(harness.fs)
   }
   if !harness.fs.exists(meta_path) {
     throw "check_fixture_staleness: missing metadata file " + meta_path
@@ -105,12 +105,12 @@ pipeline default(harness: Harness) {
     _fixture_path_for_meta(meta_path)
   }
   const meta = toml_parse(harness.fs.read_text(meta_path))
-  _require_fixture_integrity(harness, meta_path, fixture_path, meta)
+  _require_fixture_integrity(harness.fs, meta_path, fixture_path, meta)
   const captured_at = meta.get("captured_at")
   if captured_at == nil || captured_at == "" {
     throw "check_fixture_staleness: metadata missing captured_at"
   }
-  const age_days = _fixture_age_days(harness, captured_at)
+  const age_days = _fixture_age_days(harness.clock, captured_at)
   const upstream_url = meta.get("upstream_url") ?? "unknown upstream"
   const branch = _current_branch(harness)
   harness.stdio.println("fixture captured_at: ${captured_at}")

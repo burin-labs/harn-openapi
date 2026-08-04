@@ -3,8 +3,8 @@
 // to assert the emitted source parses cleanly.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -40,7 +40,7 @@ pipeline test_main(harness: Harness) {
     + ".harn"
   harness.fs.write_text(out_path, src)
   harness.stdio.println("wrote generated module: ${out_path} (${len(src)} bytes)")
-  const cmd = harn_cmd(harness, "check " + out_path)
+  const cmd = harn_cmd(harness.env, "check " + out_path)
   const result = harness.process.shell(cmd)
   if !result.success {
     harness.stdio.println("harn check stderr:")
@@ -49,7 +49,7 @@ pipeline test_main(harness: Harness) {
     harness.stdio.println(result.stdout)
   }
   assert(result.success, "generated SDK must pass `harn check` (status ${result.status})")
-  const fmt_cmd = harn_cmd(harness, "fmt --check " + out_path)
+  const fmt_cmd = harn_cmd(harness.env, "fmt --check " + out_path)
   const fmt_result = harness.process.shell(fmt_cmd)
   if !fmt_result.success {
     harness.stdio.println("harn fmt --check stderr:")

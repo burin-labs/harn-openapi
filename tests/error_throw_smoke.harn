@@ -4,15 +4,15 @@
 // strings.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
   return "harn " + args
 }
 
-fn scratch_path(harness: Harness, label: string) -> string {
+fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) -> string {
   const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + harness.random.uuid()
@@ -53,9 +53,16 @@ pipeline test_main(harness: Harness) {
   )
   // Drive the generated function against a mocked 404 and assert the
   // thrown payload's shape.
-  const module_stem = scratch_path(harness, "harn-openapi-error-throw-smoke")
+  const module_stem = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-error-throw-smoke",
+  )
   const module_path = module_stem + ".harn"
-  const runner_path = scratch_path(harness, "harn-openapi-error-throw-runtime") + ".harn"
+  const runner_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-error-throw-runtime",
+  )
+    + ".harn"
   harness.fs.write_text(module_path, src)
   const body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
   const runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
@@ -84,7 +91,7 @@ pipeline test_main(harness: Harness) {
     + "}\n"
   harness.fs.write_text(runner_path, runner)
   const result = harness.process.shell(
-    harn_cmd(harness, "run --allow-process-network " + runner_path),
+    harn_cmd(harness.env, "run --allow-process-network " + runner_path),
   )
   if !result.success {
     harness.stdio.println("---runtime stderr---")
