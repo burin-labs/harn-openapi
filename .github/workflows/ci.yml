@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   package:
-    uses: burin-labs/.github/.github/workflows/harn-package.yml@c5c3362bd344a549d6e5ed5418d5932405443738
+    uses: burin-labs/.github/.github/workflows/harn-package.yml@c3d3025db6297d736400911029f34f7983744deb
     with:
       test-jobs: 1
 
