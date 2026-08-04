@@ -1,6 +1,6 @@
 /** Smoke coverage for issue #7 fixture refresh support scripts. */
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -83,7 +83,7 @@ pipeline test_main(harness: Harness) {
   harness.fs.write_text(old_path, old_doc)
   harness.fs.write_text(new_path, new_doc)
   const diff_cmd = harn_cmd(
-    harness,
+    harness.env,
     "run "
       + repo_root
       + "/scripts/fixture_diff.harn -- "
@@ -153,7 +153,7 @@ pipeline test_main(harness: Harness) {
   )
   const stale = harness.process.shell(
     harn_cmd(
-      harness,
+      harness.env,
       "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + fresh_meta,
     ),
   )
@@ -176,7 +176,10 @@ pipeline test_main(harness: Harness) {
       + "byte_size = 1\n",
   )
   const bad_integrity = harness.process.shell(
-    harn_cmd(harness, "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path),
+    harn_cmd(
+      harness.env,
+      "run " + repo_root + "/scripts/check_fixture_staleness.harn -- " + meta_path,
+    ),
   )
   assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")
   assert(

@@ -8,11 +8,11 @@ import {
   rate_limit_metadata,
 } from "../src/lib"
 
-fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
+fn require_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    harness.stdio.println("---BEGIN GENERATED SOURCE---")
-    harness.stdio.println(haystack)
-    harness.stdio.println("---END GENERATED SOURCE---")
+    harness.println("---BEGIN GENERATED SOURCE---")
+    harness.println(haystack)
+    harness.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source to contain \"${needle}\""
   }
 }
@@ -110,10 +110,20 @@ pipeline test_main(harness: Harness) {
       dependencies: {"harn-openapi": {path: "../harn-openapi"}},
     },
   )
-  require_contains(harness, manifest, "name = \"connector-helper-sdk\"", "generated package name")
-  require_contains(harness, manifest, "default = \"src/lib.harn\"", "generated default export")
   require_contains(
-    harness,
+    harness.stdio,
+    manifest,
+    "name = \"connector-helper-sdk\"",
+    "generated package name",
+  )
+  require_contains(
+    harness.stdio,
+    manifest,
+    "default = \"src/lib.harn\"",
+    "generated default export",
+  )
+  require_contains(
+    harness.stdio,
     manifest,
     "harn-openapi = { path = \"../harn-openapi\" }",
     "generated dependency declaration",

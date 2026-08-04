@@ -1,6 +1,6 @@
 /** Smoke coverage for the harn-cli workflow version bump helper. */
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
@@ -11,8 +11,8 @@ fn sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn cat_file(harness: Harness, path: string) -> string {
-  return harness.fs.read_text(path)
+fn cat_file(harness: HarnessFs, path: string) -> string {
+  return harness.read_text(path)
 }
 
 pipeline test_main(harness: Harness) {
@@ -21,7 +21,7 @@ pipeline test_main(harness: Harness) {
   harness.fs.mkdir(fake_root)
   harness.fs.write_text(fake_root + "/.harn-version", "0.0.1\n")
   const cmd = harn_cmd(
-    harness,
+    harness.env,
     "run "
       + sh_quote(repo_root + "/scripts/bump_harn_cli_version.harn")
       + " -- v9.8.7 --repo-root "
@@ -36,7 +36,7 @@ pipeline test_main(harness: Harness) {
   assert(result.success, "bump_harn_cli_version.harn must run")
   assert(contains(result.stdout, "0.0.1 -> 9.8.7"), "script should report version update")
   assert(contains(result.stdout, "skipped verification"), "test path should skip the full gate")
-  const version = cat_file(harness, fake_root + "/.harn-version")
+  const version = cat_file(harness.fs, fake_root + "/.harn-version")
   assert_eq(version, "9.8.7\n")
   harness.fs.delete(fake_root)
   harness.stdio.println("bump_harn_cli_version_smoke: ok")

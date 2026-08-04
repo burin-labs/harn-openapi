@@ -4,15 +4,15 @@
 // mapping values as tags.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
   return "harn " + args
 }
 
-fn scratch_path(harness: Harness, label: string) -> string {
+fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) -> string {
   const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + harness.random.uuid()
@@ -112,17 +112,17 @@ const _POLY_DOC = """
   }
   """
 
-fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
+fn require_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    harness.stdio.println("---BEGIN GENERATED SOURCE---")
-    harness.stdio.println(haystack)
-    harness.stdio.println("---END GENERATED SOURCE---")
+    harness.println("---BEGIN GENERATED SOURCE---")
+    harness.println(haystack)
+    harness.println("---END GENERATED SOURCE---")
     require false, "${label}: expected generated source to contain ${needle}"
   }
 }
 
 fn check_file(harness: Harness, path: string, label: string) {
-  const result = harness.process.shell(harn_cmd(harness, "check " + path))
+  const result = harness.process.shell(harn_cmd(harness.env, "check " + path))
   if !result.success {
     harness.stdio.println("---${label} harn check stderr---")
     harness.stdio.println(result.stderr)
@@ -133,7 +133,7 @@ fn check_file(harness: Harness, path: string, label: string) {
 }
 
 fn run_file(harness: Harness, path: string, label: string) {
-  const result = harness.process.shell(harn_cmd(harness, "run --allow-process-network " + path))
+  const result = harness.process.shell(harn_cmd(harness.env, "run --allow-process-network " + path))
   if !result.success {
     harness.stdio.println("---${label} harn run stderr---")
     harness.stdio.println(result.stderr)
@@ -155,44 +155,56 @@ pipeline test_main(harness: Harness) {
       header_overrides: {},
     },
   )
-  const module_stem = scratch_path(harness, "harn-openapi-polymorphic-generated")
+  const module_stem = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-polymorphic-generated",
+  )
   const out_path = module_stem + ".harn"
   harness.fs.write_text(out_path, src)
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "pub fn update_pet(harness: Harness, client: dict, pet_id, body) -> dict",
     "umbrella",
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict",
     "cat ctor",
   )
-  require_contains(harness, src, "pub fn update_pet_dog_update(bark: bool) -> dict", "dog ctor")
   require_contains(
-    harness,
+    harness.stdio,
+    src,
+    "pub fn update_pet_dog_update(bark: bool) -> dict",
+    "dog ctor",
+  )
+  require_contains(
+    harness.stdio,
     src,
     "if ![\"cat\", \"dog\"].contains(body_variant)",
     "discriminator tags",
   )
-  require_contains(harness, src, "kind: \"cat\"", "cat const discriminator")
-  require_contains(harness, src, "_variant: \"cat\"", "cat internal tag")
+  require_contains(harness.stdio, src, "kind: \"cat\"", "cat const discriminator")
+  require_contains(harness.stdio, src, "_variant: \"cat\"", "cat internal tag")
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "pub fn submit_shape_circle_shape(radius: float) -> dict",
     "anyOf ctor",
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "pub fn submit_shape_square_shape(side: float) -> dict",
     "anyOf ctor",
   )
   check_file(harness, out_path, "poly")
-  const runner_path = scratch_path(harness, "harn-openapi-polymorphic-runner") + ".harn"
+  const runner_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-polymorphic-runner",
+  )
+    + ".harn"
   harness.fs.write_text(
     runner_path,
     "import { new_client, update_pet, update_pet_cat_update } from \""

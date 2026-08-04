@@ -18,8 +18,8 @@
 // release from crates.io into a temp root, and runs the local gate.
 const _VERSION_REL_PATH = ".harn-version"
 
-fn _repo_root(harness: Harness) -> string {
-  return harness.fs.source_dir() + "/.."
+fn _repo_root(harness: HarnessFs) -> string {
+  return harness.source_dir() + "/.."
 }
 
 fn _usage() -> string {
@@ -54,7 +54,7 @@ fn _normalize_version(raw: string) -> string {
 
 fn _parse_args(harness: Harness) -> dict {
   let version = ""
-  let repo_root = _repo_root(harness)
+  let repo_root = _repo_root(harness.fs)
   let verify = true
   let i = 0
   while i < len(argv) {
@@ -93,7 +93,12 @@ fn _sh_quote(value: string) -> string {
   return "'" + replace(value, "'", "'\"'\"'") + "'"
 }
 
-fn _run(harness: Harness, repo_root: string, label: string, cmd: string) {
+fn _run(
+  harness: {stdio: HarnessStdio, process: HarnessProcess},
+  repo_root: string,
+  label: string,
+  cmd: string,
+) {
   harness.stdio.println("running: ${label}")
   const result = harness.process.shell_at(repo_root, cmd)
   if result.stdout != "" {
@@ -111,7 +116,11 @@ fn _version_slug(version: string) -> string {
   return regex_replace("[^A-Za-z0-9._-]+", "_", version)
 }
 
-fn _replace_version_file(harness: Harness, repo_root: string, new_version: string) -> dict {
+fn _replace_version_file(
+  harness: {stdio: HarnessStdio, fs: HarnessFs},
+  repo_root: string,
+  new_version: string,
+) -> dict {
   const path = repo_root + "/" + _VERSION_REL_PATH
   const old_version = if harness.fs.exists(path) {
     trim(harness.fs.read_text(path))
@@ -137,7 +146,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
   const harn_bin = install_root + "/bin/harn"
   if !harness.fs.exists(harn_bin) {
     _run(
-      harness,
+      {stdio: harness.stdio, process: harness.process},
       repo_root,
       "install harn-cli " + version,
       "CARGO_TARGET_DIR="
@@ -151,39 +160,44 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
     harness.stdio.println("using cached harn-cli ${version}: ${harn_bin}")
   }
   const env_prefix = "HARN_ROOT=" + _sh_quote(repo_root) + " HARN_BIN=" + _sh_quote(harn_bin) + " "
-  _run(harness, repo_root, "harn version", _sh_quote(harn_bin) + " version")
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
+    repo_root,
+    "harn version",
+    _sh_quote(harn_bin) + " version",
+  )
+  _run(
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "check Harn sources",
     env_prefix + _sh_quote(harn_bin) + " check src scripts",
   )
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "lint Harn sources",
     env_prefix + _sh_quote(harn_bin) + " lint src scripts",
   )
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "check Harn formatting",
     env_prefix + _sh_quote(harn_bin) + " fmt --check src scripts tests",
   )
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "run smoke tests",
     env_prefix + _sh_quote(harn_bin) + " test tests --parallel --timing",
   )
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "run regen demo",
     env_prefix + _sh_quote(harn_bin) + " run scripts/regen_demo.harn",
   )
   _run(
-    harness,
+    {stdio: harness.stdio, process: harness.process},
     repo_root,
     "run package install smoke",
     env_prefix + _sh_quote(harn_bin) + " run scripts/package_install_smoke.harn",
@@ -192,7 +206,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
 
 pipeline default(harness: Harness) {
   const args = _parse_args(harness)
-  _replace_version_file(harness, args.repo_root, args.version)
+  _replace_version_file({stdio: harness.stdio, fs: harness.fs}, args.repo_root, args.version)
   if args.verify {
     _verify_version(harness, args.repo_root, args.version)
   } else {

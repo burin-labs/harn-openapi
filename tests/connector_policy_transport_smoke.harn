@@ -2,43 +2,46 @@
 // generated transport that routes SDK calls through std/connectors/shared.
 import { codegen_module, parse } from "../src/lib"
 
-fn harn_cmd(harness: Harness, args: string) -> string {
-  const bin = harness.env.get("HARN_BIN")
+fn harn_cmd(harness: HarnessEnv, args: string) -> string {
+  const bin = harness.get("HARN_BIN")
   if bin != nil && bin != "" {
     return bin + " " + args
   }
   return "harn " + args
 }
 
-fn scratch_path(harness: Harness, label: string) -> string {
+fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) -> string {
   const root = harness.fs.source_dir() + "/../.harn/tmp"
   harness.fs.mkdir(root)
   return root + "/" + label + "-" + harness.random.uuid()
 }
 
-fn require_contains(harness: Harness, haystack: string, needle: string, label: string) {
+fn require_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
   if !contains(haystack, needle) {
-    harness.stdio.println("---BEGIN GENERATED SOURCE---")
-    harness.stdio.println(haystack)
-    harness.stdio.println("---END GENERATED SOURCE---")
+    harness.println("---BEGIN GENERATED SOURCE---")
+    harness.println(haystack)
+    harness.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source to contain \"${needle}\""
   }
 }
 
-fn require_not_contains(harness: Harness, haystack: string, needle: string, label: string) {
+fn require_not_contains(harness: HarnessStdio, haystack: string, needle: string, label: string) {
   if contains(haystack, needle) {
-    harness.stdio.println("---BEGIN GENERATED SOURCE---")
-    harness.stdio.println(haystack)
-    harness.stdio.println("---END GENERATED SOURCE---")
+    harness.println("---BEGIN GENERATED SOURCE---")
+    harness.println(haystack)
+    harness.println("---END GENERATED SOURCE---")
     require false, "${label}: expected source NOT to contain \"${needle}\""
   }
 }
 
 fn check_generates(harness: Harness, src: string) -> string {
-  const module_stem = scratch_path(harness, "harn-openapi-connector-policy")
+  const module_stem = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-connector-policy",
+  )
   const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
-  const check_result = harness.process.shell(harn_cmd(harness, "check " + module_path))
+  const check_result = harness.process.shell(harn_cmd(harness.env, "check " + module_path))
   if !check_result.success {
     harness.stdio.println("---harn check stderr---")
     harness.stdio.println(check_result.stderr)
@@ -46,7 +49,7 @@ fn check_generates(harness: Harness, src: string) -> string {
     harness.stdio.println(check_result.stdout)
   }
   require check_result.success, "generated connector-policy SDK must pass `harn check`"
-  const fmt_result = harness.process.shell(harn_cmd(harness, "fmt --check " + module_path))
+  const fmt_result = harness.process.shell(harn_cmd(harness.env, "fmt --check " + module_path))
   if !fmt_result.success {
     harness.stdio.println("---harn fmt --check stderr---")
     harness.stdio.println(fmt_result.stderr)
@@ -58,7 +61,11 @@ fn check_generates(harness: Harness, src: string) -> string {
 }
 
 fn run_generated(harness: Harness, module_stem: string) {
-  const runner_path = scratch_path(harness, "harn-openapi-connector-policy-runtime") + ".harn"
+  const runner_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-connector-policy-runtime",
+  )
+    + ".harn"
   harness.fs.write_text(
     runner_path,
     "import {\n"
@@ -119,7 +126,7 @@ fn run_generated(harness: Harness, module_stem: string) {
       + "}\n",
   )
   const result = harness.process.shell(
-    harn_cmd(harness, "run --allow-process-network " + runner_path),
+    harn_cmd(harness.env, "run --allow-process-network " + runner_path),
   )
   if !result.success {
     harness.stdio.println("---connector-policy runtime stderr---")
@@ -162,34 +169,44 @@ pipeline test_main(harness: Harness) {
     {module_name: "connector_policy", client_name: "Client"},
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "import { connector_http_json, connector_http_request } from \"std/connectors/shared\"",
     "connector helper import",
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "connector_http_json(\n    harness.clock,\n    harness.net,\n    \"GET\"",
     "GET connector transport",
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "connector_http_json(\n    harness.clock,\n    harness.net,\n    \"POST\"",
     "POST connector transport",
   )
   require_contains(
-    harness,
+    harness.stdio,
     src,
     "connector_http_request(\n      harness.clock,\n      harness.net,\n      \"POST\"",
     "opaque connector transport",
   )
-  require_contains(harness, src, "idempotency_key: idempotency_key", "idempotency option")
-  require_contains(harness, src, "retry: {max_attempts: 3}", "bounded retry option")
-  require_contains(harness, src, "retry: {max_attempts: 1}", "unsafe write no-retry option")
-  require_not_contains(harness, src, "http_get(", "default GET transport should not use raw HTTP")
-  require_not_contains(harness, src, "http_post(", "default POST transport should not use raw HTTP")
+  require_contains(harness.stdio, src, "idempotency_key: idempotency_key", "idempotency option")
+  require_contains(harness.stdio, src, "retry: {max_attempts: 3}", "bounded retry option")
+  require_contains(harness.stdio, src, "retry: {max_attempts: 1}", "unsafe write no-retry option")
+  require_not_contains(
+    harness.stdio,
+    src,
+    "http_get(",
+    "default GET transport should not use raw HTTP",
+  )
+  require_not_contains(
+    harness.stdio,
+    src,
+    "http_post(",
+    "default POST transport should not use raw HTTP",
+  )
   const module_stem = check_generates(harness, src)
   run_generated(harness, module_stem)
   const raw_src = codegen_module(
@@ -198,13 +215,13 @@ pipeline test_main(harness: Harness) {
     {module_name: "raw_policy_fixture", client_name: "Client", transport: "raw"},
   )
   require_not_contains(
-    harness,
+    harness.stdio,
     raw_src,
     "std/connectors/shared",
     "raw transport should not import connector helpers",
   )
   require_contains(
-    harness,
+    harness.stdio,
     raw_src,
     "harness.net.request(\"GET\"",
     "explicit raw transport emits harness net GET",
@@ -215,13 +232,13 @@ pipeline test_main(harness: Harness) {
     {module_name: "json_only_policy", client_name: "Client"},
   )
   require_contains(
-    harness,
+    harness.stdio,
     json_only_src,
     "import { connector_http_json } from \"std/connectors/shared\"",
     "JSON-only connector import",
   )
   require_not_contains(
-    harness,
+    harness.stdio,
     json_only_src,
     "connector_http_request",
     "JSON-only generated SDK should not import unused opaque connector helper",
