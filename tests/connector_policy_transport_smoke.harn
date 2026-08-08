@@ -87,28 +87,28 @@ fn run_generated(harness: Harness, module_stem: string) {
       + "  assert(rates[0].remaining_headers.contains(\"RateLimit-Remaining\"), \"standard rate-limit metadata should be emitted\")\n"
       + "  harness.testing.http_mock_clear()\n"
       + "  harness.testing.http_mock(\"GET\", \"https://api.example.com/items\", {responses: [{status: 503, body: \"busy\"}, {status: 200, body: \"{\\\"results\\\":[]}\"}]})\n"
-      + "  let page = list_items(harness, client)\n"
+      + "  let page = list_items({clock: harness.clock, net: harness.net}, client)\n"
       + "  let list_calls = harness.testing.http_mock_calls({include_sensitive: true})\n"
       + "  assert_eq(type_of(page.results), \"list\")\n"
       + "  assert_eq(len(list_calls), 2)\n"
       + "  harness.testing.http_mock_clear()\n"
       + "  harness.testing.http_mock(\"POST\", \"https://api.example.com/items/create\", {responses: [{status: 503, body: \"busy\"}, {status: 201, body: \"{\\\"id\\\":\\\"created\\\"}\"}]})\n"
-      + "  let created = create_item(harness, client, \"idem-1\", {name: \"thing\"})\n"
+      + "  let created = create_item({clock: harness.clock, net: harness.net}, client, \"idem-1\", {name: \"thing\"})\n"
       + "  let create_calls = harness.testing.http_mock_calls({include_sensitive: true})\n"
       + "  assert_eq(created.id, \"created\")\n"
       + "  assert_eq(len(create_calls), 2)\n"
       + "  assert_eq(create_calls[0].headers[\"idempotency-key\"], \"idem-1\")\n"
       + "  harness.testing.http_mock_clear()\n"
       + "  harness.testing.http_mock(\"POST\", \"https://api.example.com/items/unsafe\", {responses: [{status: 503, body: \"busy\"}, {status: 201, body: \"{\\\"id\\\":\\\"unsafe\\\"}\"}]})\n"
-      + "  let unsafe_caught = try { create_unsafe_item(harness, client, {name: \"unsafe\"}); nil } catch (e) { e }\n"
+      + "  let unsafe_caught = try { create_unsafe_item({clock: harness.clock, net: harness.net}, client, {name: \"unsafe\"}); nil } catch (e) { e }\n"
       + "  let unsafe_calls = harness.testing.http_mock_calls({include_sensitive: true})\n"
       + "  assert_eq(type_of(unsafe_caught), \"dict\")\n"
       + "  assert_eq(unsafe_caught.category, \"overloaded\")\n"
       + "  assert_eq(len(unsafe_calls), 1)\n"
       + "  harness.testing.http_mock_clear()\n"
       + "  harness.testing.http_mock(\"POST\", \"https://api.example.com/items/optional\", {responses: [{status: 204, body: \"\"}, {status: 204, body: \"\"}]})\n"
-      + "  let no_body = create_optional_item(harness, client)\n"
-      + "  let with_body = create_optional_item(harness, client, {name: \"optional\"})\n"
+      + "  let no_body = create_optional_item({clock: harness.clock, net: harness.net}, client)\n"
+      + "  let with_body = create_optional_item({clock: harness.clock, net: harness.net}, client, {name: \"optional\"})\n"
       + "  let optional_calls = harness.testing.http_mock_calls({include_sensitive: true})\n"
       + "  assert_eq(no_body, nil)\n"
       + "  assert_eq(with_body, nil)\n"
@@ -117,7 +117,7 @@ fn run_generated(harness: Harness, module_stem: string) {
       + "  assert_eq(json_parse(optional_calls[1].body).name, \"optional\")\n"
       + "  harness.testing.http_mock_clear()\n"
       + "  harness.testing.http_mock(\"GET\", \"https://api.example.com/items/invalid-json\", {status: 200, body: \"not json\"})\n"
-      + "  let invalid_caught = try { invalid_json(harness, client); nil } catch (e) { e }\n"
+      + "  let invalid_caught = try { invalid_json({clock: harness.clock, net: harness.net}, client); nil } catch (e) { e }\n"
       + "  assert_eq(type_of(invalid_caught), \"dict\")\n"
       + "  assert_eq(invalid_caught.category, \"invalid_json\")\n"
       + "  assert_eq(invalid_caught.status, 200)\n"
@@ -177,6 +177,18 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
+    "harness: {clock: HarnessClock, net: HarnessNet}",
+    "connector operation capability",
+  )
+  require_not_contains(
+    harness.stdio,
+    src,
+    "harness: Harness",
+    "connector operations should not require the root harness",
+  )
+  require_contains(
+    harness.stdio,
+    src,
     "connector_http_json(\n    harness.clock,\n    harness.net,\n    \"GET\"",
     "GET connector transport",
   )
@@ -220,12 +232,20 @@ pipeline test_main(harness: Harness) {
     "std/connectors/shared",
     "raw transport should not import connector helpers",
   )
+  require_contains(harness.stdio, raw_src, "net: HarnessNet", "raw operation capability")
   require_contains(
     harness.stdio,
     raw_src,
-    "harness.net.request(\"GET\"",
-    "explicit raw transport emits harness net GET",
+    "net.request(\"GET\"",
+    "explicit raw transport emits net GET",
   )
+  require_not_contains(
+    harness.stdio,
+    raw_src,
+    "harness.net",
+    "raw transport should not require unrelated harness capabilities",
+  )
+  check_generates(harness, raw_src)
   const json_only_src = codegen_module(
     harness.fs,
     parse(build_json_only_doc()),

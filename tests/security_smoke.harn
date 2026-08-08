@@ -145,7 +145,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "bearer-token")
-      get_self(harness, client)
+      get_self({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer bearer-token")
     """,
@@ -159,7 +159,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com")
-      get_self(harness, client)
+      get_self({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.get("authorization"), nil)
     """,
@@ -213,8 +213,8 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       harness.testing.http_mock("GET", "https://api.example.com/health", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "bearer-token")
-      get_self(harness, client)
-      public_ping(harness, client)
+      get_self({clock: harness.clock, net: harness.net}, client)
+      public_ping({clock: harness.clock, net: harness.net}, client)
       let calls = harness.testing.http_mock_calls({include_sensitive: true})
       assert_eq(calls[0].headers.authorization, "Bearer bearer-token")
       assert_eq(calls[1].headers.get("authorization"), nil)
@@ -250,7 +250,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("POST", "https://api.example.com/login", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "basic-user", "basic-pass")
-      login(harness, client)
+      login({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
     """,
@@ -285,7 +285,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {xApiKey: "header-key"})
-      get_thing(harness, client)
+      get_thing({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers["x-api-key"], "header-key")
     """,
@@ -313,7 +313,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/things?api_key=query-key", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {qKey: "query-key"})
-      list_things(harness, client)
+      list_things({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.url, "https://api.example.com/things?api_key=query-key")
     """,
@@ -350,7 +350,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", {sessId: "cookie key;admin=true"})
-      me(harness, client)
+      me({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.cookie, "sid=cookie%20key%3Badmin%3Dtrue")
     """,
@@ -383,7 +383,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com", "oauth-token")
-      do_thing(harness, client)
+      do_thing({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer oauth-token")
     """,

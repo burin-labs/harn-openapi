@@ -1970,9 +1970,15 @@ fn _build_op_model(
     cookie_params,
     header_overrides,
   )
-  // Every operation performs a request, so it leads with the handle that
-  // carries that authority.
-  const sig_parts = ["harness: Harness"] + sig.required + sig.optional
+  // Every operation leads with exactly the capability surface its selected
+  // transport needs. Connector policy needs a clock for retry timing plus
+  // network access; raw transport only needs network access.
+  const capability_param = if transport == "connector_policy" {
+    "harness: {clock: HarnessClock, net: HarnessNet}"
+  } else {
+    "net: HarnessNet"
+  }
+  const sig_parts = [capability_param] + sig.required + sig.optional
   const has_body = sig.has_body
   const body_required = sig.body_required
   const path_bindings_parts = sig.path_bindings_parts
@@ -2049,14 +2055,14 @@ fn _build_op_model(
 /**
  * Build the `throw { ... }` statement for non-2xx responses, matching
  * `harn fmt` width logic so the generated source is already canonical.
- * The dict literal alone wraps when `1 + inline.len() + 1 > 100`
- * (see crates/harn-fmt/src/formatter/mod.rs::format_comma_sequence).
+ * Include the operation-body and `throw` indentation in the line-width
+ * calculation so raw-transport output is canonical without a formatter pass.
  */
 fn _render_error_throw(fn_name) {
   const dict_inline = "operation: \""
     + fn_name
     + "\", status: resp.status, body: resp.body, headers: resp.headers"
-  if 2 + len(dict_inline) <= 100 {
+  if 12 + len(dict_inline) <= 100 {
     return "throw {" + dict_inline + "}"
   }
   return "throw {\n"
@@ -2301,26 +2307,26 @@ fn _render_request_lines(
   }
   const raw_method = to_string(method ?? "get").upper()
   if !has_body {
-    return "const resp = harness.net.request(\""
+    return "const resp = net.request(\""
       + raw_method
       + "\", url, {headers: request_headers})"
   }
   if body_required {
     return body_prepare
-      + "\n  const resp = harness.net.request(\""
+      + "\n  const resp = net.request(\""
       + raw_method
       + "\", url, {body: body_str, headers: request_headers})"
   }
   return "let resp = nil\n"
     + "  if body == nil {\n"
-    + "    resp = harness.net.request(\""
+    + "    resp = net.request(\""
     + raw_method
     + "\", url, {headers: request_headers})\n"
     + "  } else {\n"
     + "    "
     + _indent_after_first(body_prepare, "    ")
     + "\n"
-    + "    resp = harness.net.request(\""
+    + "    resp = net.request(\""
     + raw_method
     + "\", url, {body: body_str, headers: request_headers})\n"
     + "  }"
