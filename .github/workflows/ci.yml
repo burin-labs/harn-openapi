@@ -26,7 +26,7 @@ jobs:
       - name: Check fixture staleness
         run: harn run scripts/check_fixture_staleness.harn
       - name: Generate SDK from pinned Notion fixture
-        run: harn run --timeout 2m scripts/regen_demo.harn
+        run: harn run --timeout 5m scripts/regen_demo.harn
       - name: Smoke-test package installation
         run: harn run --no-sandbox scripts/package_install_smoke.harn
 

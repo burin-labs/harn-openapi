@@ -33,9 +33,11 @@ By default, this also installs harn-cli from crates.io and runs:
   harn check src scripts
   harn lint src scripts
   harn fmt --check src scripts tests
+  harn package check
   harn test tests --parallel --timing
   harn run scripts/regen_demo.harn
-  harn run scripts/package_install_smoke.harn
+  harn run --no-sandbox scripts/package_install_smoke.harn
+  harn run scripts/check_fixture_staleness.harn
 """
 }
 
@@ -160,48 +162,35 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
     harness.stdio.println("using cached harn-cli ${version}: ${harn_bin}")
   }
   const env_prefix = "HARN_ROOT=" + _sh_quote(repo_root) + " HARN_BIN=" + _sh_quote(harn_bin) + " "
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "harn version",
-    _sh_quote(harn_bin) + " version",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "check Harn sources",
-    env_prefix + _sh_quote(harn_bin) + " check src scripts",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "lint Harn sources",
-    env_prefix + _sh_quote(harn_bin) + " lint src scripts",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "check Harn formatting",
-    env_prefix + _sh_quote(harn_bin) + " fmt --check src scripts tests",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "run smoke tests",
-    env_prefix + _sh_quote(harn_bin) + " test tests --parallel --timing",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "run regen demo",
-    env_prefix + _sh_quote(harn_bin) + " run scripts/regen_demo.harn",
-  )
-  _run(
-    {stdio: harness.stdio, process: harness.process},
-    repo_root,
-    "run package install smoke",
-    env_prefix + _sh_quote(harn_bin) + " run scripts/package_install_smoke.harn",
-  )
+  const quoted_harn = _sh_quote(harn_bin)
+  const steps = [
+    {label: "harn version", command: quoted_harn + " version"},
+    {label: "check Harn sources", command: env_prefix + quoted_harn + " check src scripts"},
+    {label: "lint Harn sources", command: env_prefix + quoted_harn + " lint src scripts"},
+    {
+      label: "check Harn formatting",
+      command: env_prefix + quoted_harn + " fmt --check src scripts tests",
+    },
+    {label: "check package", command: env_prefix + quoted_harn + " package check"},
+    {
+      label: "run smoke tests",
+      command: env_prefix + quoted_harn + " test tests --parallel --timing",
+    },
+    {label: "run regen demo", command: env_prefix + quoted_harn + " run scripts/regen_demo.harn"},
+    {
+      label: "run package install smoke",
+      command: env_prefix
+        + quoted_harn
+        + " run --no-sandbox scripts/package_install_smoke.harn",
+    },
+    {
+      label: "check fixture staleness",
+      command: env_prefix + quoted_harn + " run scripts/check_fixture_staleness.harn",
+    },
+  ]
+  for step in steps {
+    _run({stdio: harness.stdio, process: harness.process}, repo_root, step.label, step.command)
+  }
 }
 
 pipeline default(harness: Harness) {

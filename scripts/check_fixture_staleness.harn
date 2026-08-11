@@ -26,8 +26,8 @@ fn _current_branch(harness: Harness) -> string {
     return github_ref
   }
   const result = try {
-    harness.process.spawn_captured(
-      {cmd: "git", args: ["branch", "--show-current"], cwd: _repo_root(harness.fs)},
+    harness.process.run(
+      {program: "git", args: ["branch", "--show-current"], cwd: _repo_root(harness.fs)},
     )
   } catch (e) {
     return ""
