@@ -5,7 +5,7 @@
  * By default the smoke installs the current checkout as a path dependency,
  * which keeps PR CI useful before a release tag exists. Set HARN_PACKAGE_REF
  * to test a published ref such as
- * `github.com/burin-labs/harn-openapi@v0.1.1-rc.1`.
+ * `github.com/burin-labs/harn-openapi@v0.1.1-rc.2`.
  */
 fn _repo_root(fs: HarnessFs) -> string {
   return fs.source_dir() + "/.."
