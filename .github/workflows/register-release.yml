@@ -1,0 +1,33 @@
+name: Register release
+
+# Publishing a release tag and recording it in the Harn package index are two
+# facts that have to agree, and nothing made them agree: `harn publish` is
+# author-invoked and wired into no pipeline here. `@burin/github-connector`
+# served 0.3.0 from the index while v0.8.3 had shipped, for three months, and
+# `@burin/notion-sdk` served 0.1.1 for ten days after v0.2.0
+# (burin-labs/harn-github-connector#289).
+#
+# This repository cuts releases outside CI, so a tag push is the first moment
+# anything observes the release. The mechanism itself lives in
+# burin-labs/harn-packages, which owns what the index should say; this is the
+# one call that tells it a release happened.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: register-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  register:
+    uses: burin-labs/.github/.github/workflows/register-package-release.yml@abe19da003aa7143538c9e0ca076db9a073beca0
+    secrets:
+      RELEASE_APP_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
