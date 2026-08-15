@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   register:
-    uses: burin-labs/.github/.github/workflows/register-package-release.yml@abe19da003aa7143538c9e0ca076db9a073beca0
+    uses: burin-labs/.github/.github/workflows/register-package-release.yml@34f656f21137a09d1044144358a205682f1132b9
     secrets:
       RELEASE_APP_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID }}
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
