@@ -1285,10 +1285,7 @@ const _MODULE_TEMPLATE = """
       limit: _header_ci(headers, "RateLimit-Limit")
         ?? _header_ci(headers, "X-RateLimit-Limit"),
       remaining: _header_ci(headers, "RateLimit-Remaining")
-        ?? _header_ci(
-        headers,
-        "X-RateLimit-Remaining",
-      ),
+        ?? _header_ci(headers, "X-RateLimit-Remaining"),
       reset: _header_ci(headers, "RateLimit-Reset")
         ?? _header_ci(headers, "X-RateLimit-Reset"),
     }
