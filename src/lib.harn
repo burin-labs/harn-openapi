@@ -1059,10 +1059,8 @@ fn _rate_limit_metadata_for_op(doc, op) {
     }
   }
   if status == nil && retry_after == nil && len(limit_headers) == 0 && len(remaining_headers) == 0
-    && len(
-    reset_headers,
-  )
-    == 0 {
+    && len(reset_headers)
+      == 0 {
     return nil
   }
   return {
@@ -1407,15 +1405,15 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     if def != nil {
       auth_helpers = auth_helpers
         + [
-        {
-          body: _render_auth_helper(
-            scheme_name,
-            def,
-            helper_names.headers.get(scheme_name),
-            helper_names.queries.get(scheme_name),
-          ),
-        },
-      ]
+          {
+            body: _render_auth_helper(
+              scheme_name,
+              def,
+              helper_names.headers.get(scheme_name),
+              helper_names.queries.get(scheme_name),
+            ),
+          },
+        ]
     }
   }
   // Second pass (response types): collect response-type aliases, keyed so
@@ -1742,9 +1740,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  const token = _client_token(client)\n"
       + "  let hs: dict = "
-      + _render_binding_dict(
-      [_harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if token != \"\" {\n"
       + "    hs = {...hs, Authorization: \"Bearer \" + token}\n"
@@ -1756,9 +1752,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  const basic = _client_basic(client)\n"
       + "  let hs: dict = "
-      + _render_binding_dict(
-      [_harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
       + "    const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
@@ -1774,9 +1768,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + _escape_string(scheme_name)
       + "\")\n"
       + "  let hs: dict = "
-      + _render_binding_dict(
-      [_harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
       + "    hs = {...hs, "
@@ -1793,9 +1785,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
       + _escape_string(scheme_name)
       + "\")\n"
       + "  let hs: dict = "
-      + _render_binding_dict(
-      [_harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  if api_key != \"\" {\n"
       + "    hs = _append_cookie_header(hs, \""
@@ -1812,9 +1802,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     const query_name = def.get("name") ?? scheme_name
     return "fn " + fn_name + "(client: dict) -> dict {\n"
       + "  let hs: dict = "
-      + _render_binding_dict(
-      [_harn_dict_entry("Content-Type", "\"application/json\"")],
-    )
+      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}\n"
@@ -2128,27 +2116,24 @@ fn _render_header_cookie_lines(header_params, cookie_params) {
   for p in header_params {
     lines = lines
       + [
-      "if "
-        + p.ident
-        + " != nil {\n"
-        + "    request_headers = {...request_headers, "
-        + _harn_dict_entry(
-        p.name,
-        "to_string(" + p.ident + ")",
-      )
-        + "}\n"
-        + "  }",
-    ]
+        "if "
+          + p.ident
+          + " != nil {\n"
+          + "    request_headers = {...request_headers, "
+          + _harn_dict_entry(p.name, "to_string(" + p.ident + ")")
+          + "}\n"
+          + "  }",
+      ]
   }
   for p in cookie_params {
     lines = lines
       + [
-      "request_headers = _append_cookie_header(request_headers, \""
-        + _escape_string(p.name)
-        + "\", "
-        + p.ident
-        + ")",
-    ]
+        "request_headers = _append_cookie_header(request_headers, \""
+          + _escape_string(p.name)
+          + "\", "
+          + p.ident
+          + ")",
+      ]
   }
   return join(lines, "\n  ")
 }
@@ -2453,13 +2438,13 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
     taken_fn_names = taken_fn_names + [variant_fn_name]
     variants = variants
       + [
-      {
-        name: display_name,
-        tag: tag,
-        fn_name: variant_fn_name,
-        fields: _variant_constructor_fields(doc, resolved),
-      },
-    ]
+        {
+          name: display_name,
+          tag: tag,
+          fn_name: variant_fn_name,
+          fields: _variant_constructor_fields(doc, resolved),
+        },
+      ]
   }
   return variants
 }
@@ -2562,15 +2547,15 @@ fn _variant_constructor_fields(doc, resolved) {
     const ty = _harn_type_for_property(doc, prop_schema, 1).annotation
     fields = fields
       + [
-      {
-        key: key,
-        ident: ident,
-        annotation: ty,
-        required: required.contains(key),
-        const_value: const_value,
-        has_const: const_value != nil,
-      },
-    ]
+        {
+          key: key,
+          ident: ident,
+          annotation: ty,
+          required: required.contains(key),
+          const_value: const_value,
+          has_const: const_value != nil,
+        },
+      ]
   }
   return fields
 }
@@ -2651,9 +2636,7 @@ fn _render_body_variant_constructor(variant) {
   for field in variant.fields {
     if field.has_const {
       literal_entries = literal_entries
-        + [
-        _harn_dict_entry(field.key, _render_literal(field.const_value)),
-      ]
+        + [_harn_dict_entry(field.key, _render_literal(field.const_value))]
     } else if field.required {
       required_sig = required_sig + [field.ident + ": " + field.annotation]
       literal_entries = literal_entries + [_harn_dict_entry(field.key, field.ident)]
@@ -2661,14 +2644,14 @@ fn _render_body_variant_constructor(variant) {
       optional_sig = optional_sig + [field.ident + " = nil"]
       optional_lines = optional_lines
         + [
-        "  if "
-          + field.ident
-          + " != nil {\n"
-          + "    body = {...body, "
-          + _harn_dict_entry(field.key, field.ident)
-          + "}\n"
-          + "  }",
-      ]
+          "  if "
+            + field.ident
+            + " != nil {\n"
+            + "    body = {...body, "
+            + _harn_dict_entry(field.key, field.ident)
+            + "}\n"
+            + "  }",
+        ]
     }
   }
   const doc_comment = "/** Build a `" + _escape_string(variant.tag)
@@ -2685,9 +2668,7 @@ fn _render_body_variant_constructor(variant) {
       + "}"
   }
   literal_entries = literal_entries
-    + [
-    _harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\""),
-  ]
+    + [_harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\"")]
   let body = doc_comment
     + "pub fn "
     + variant.fn_name

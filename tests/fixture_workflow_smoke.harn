@@ -184,10 +184,7 @@ pipeline test_main(harness: Harness) {
   assert(!bad_integrity.success, "check_fixture_staleness.harn must fail on bad hash/size metadata")
   assert(
     contains(bad_integrity.stderr, "sha256 mismatch")
-      || contains(
-      bad_integrity.stdout,
-      "sha256 mismatch",
-    ),
+      || contains(bad_integrity.stdout, "sha256 mismatch"),
     "integrity failure should mention sha256 mismatch",
   )
   harness.fs.delete(scratch)
