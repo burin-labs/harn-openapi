@@ -178,9 +178,9 @@ all defaulted so callers only supply what their spec actually needs:
 
 | Scheme kind | Client field added |
 |---|---|
-| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""`, `token_provider = nil` |
-| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""`, `basic_provider = nil` |
-| `apiKey` (header / query / cookie) | `api_keys: dict = {}`, `api_key_provider = nil` (keyed by scheme name) |
+| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""`, `token_provider: any = nil` |
+| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""`, `basic_provider: any = nil` |
+| `apiKey` (header / query / cookie) | `api_keys: dict = {}`, `api_key_provider: any = nil` (keyed by scheme name) |
 | `mutualTLS` | (v0: no-op — op falls through to `_no_auth_headers`) |
 
 So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
@@ -189,10 +189,10 @@ So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
 new_client(
   base_url: string = "https://api.notion.com",
   token: string = "",
-  token_provider = nil,
+  token_provider: any = nil,
   basic_user: string = "",
   basic_password: string = "",
-  basic_provider = nil,
+  basic_provider: any = nil,
   extra_headers: dict = {"Notion-Version": "..."},
 ) -> dict
 ```

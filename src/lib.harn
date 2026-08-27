@@ -1124,7 +1124,7 @@ const _MODULE_TEMPLATE = """
     return hs
   }
 
-  fn _append_cookie_header(headers: dict, name: string, value) -> dict {
+  fn _append_cookie_header(headers: dict, name: string, value: any) -> dict {
     if value == nil {
       return headers
     }
@@ -1336,7 +1336,7 @@ const _MODULE_TEMPLATE = """
     return "?" + join(parts, "&")
   }
 
-  fn _strip_codegen_variant(body) -> dict {
+  fn _strip_codegen_variant(body: any) -> dict {
     if type_of(body) != "dict" {
       throw "polymorphic request body must be a dict with a _variant marker"
     }
@@ -1664,7 +1664,7 @@ fn _render_new_client_decl(fields: any, default_base_url: any, header_overrides:
     } else if f.kind == "dict" {
       parts = parts + [f.name + ": dict = " + f.default]
     } else {
-      parts = parts + [f.name + " = " + f.default]
+      parts = parts + [f.name + ": any = " + f.default]
     }
   }
   parts = parts + ["extra_headers: dict = " + _render_dict_literal(header_overrides)]
@@ -1879,7 +1879,7 @@ fn _signature_model(
   for p in path_params {
     const name = p.get("name")
     const nm = p.ident
-    required_sig = required_sig + [nm]
+    required_sig = required_sig + [nm + ": any"]
     path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   let query_bindings_parts = []
@@ -1887,35 +1887,35 @@ fn _signature_model(
     const name = p.get("name")
     const nm = p.ident
     if p.get("required") {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
     query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   for p in header_params {
     const nm = p.ident
     if p.get("required") && header_overrides.get(p.name) == nil {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
   }
   for p in cookie_params {
     const nm = p.ident
     if p.get("required") {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
   }
   const has_body = op.request_body != nil
   const body_required = has_body && _request_body_required(doc, op.request_body)
   if has_body {
     if body_required {
-      required_sig = required_sig + ["body"]
+      required_sig = required_sig + ["body: any"]
     } else {
-      optional_sig = optional_sig + ["body = nil"]
+      optional_sig = optional_sig + ["body: any = nil"]
     }
   }
   return {
@@ -2644,7 +2644,7 @@ fn _render_body_variant_constructor(variant: any) {
       required_sig = required_sig + [field.ident + ": " + field.annotation]
       literal_entries = literal_entries + [_harn_dict_entry(field.key, field.ident)]
     } else {
-      optional_sig = optional_sig + [field.ident + " = nil"]
+      optional_sig = optional_sig + [field.ident + ": any = nil"]
       optional_lines = optional_lines
         + [
           "  if "

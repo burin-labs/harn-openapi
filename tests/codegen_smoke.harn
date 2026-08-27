@@ -27,8 +27,8 @@ pipeline test_main(harness: Harness) {
     },
   )
   assert(contains(src, "pub fn token_from_secret"), "generated token provider helper")
-  assert(contains(src, "token_provider = nil"), "generated client token-provider hook")
-  assert(contains(src, "api_key_provider = nil"), "generated client api-key-provider hook")
+  assert(contains(src, "token_provider: any = nil"), "generated client token-provider hook")
+  assert(contains(src, "api_key_provider: any = nil"), "generated client api-key-provider hook")
   assert(
     contains(src, "_client_api_key(client, \"queryKey\")"),
     "generated apiKey helpers use provider hook",
