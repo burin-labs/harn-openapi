@@ -170,7 +170,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
-    "pub fn update_pet_cat_update(meow: string, lives = nil) -> dict",
+    "pub fn update_pet_cat_update(meow: string, lives: any = nil) -> dict",
     "cat ctor",
   )
   require_contains(

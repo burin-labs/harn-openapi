@@ -19,7 +19,7 @@ fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) 
   return root + "/" + label + "-" + harness.random.uuid()
 }
 
-fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
+fn build_doc(sec_schemes: dict, doc_security: any, ops: list) -> string {
   let paths = {}
   for op in ops {
     let method_entry = {operationId: op.operation_id, responses: {"200": {description: "ok"}}}
@@ -132,7 +132,7 @@ pipeline test_main(harness: Harness) {
   require_contains(harness.stdio, src_a, "_headers_bearer_auth(client)", "A/dispatch")
   require_contains(harness.stdio, src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
   require_contains(harness.stdio, src_a, "token: string = \"\"", "A/client-has-token")
-  require_contains(harness.stdio, src_a, "token_provider = nil", "A/client-has-token-provider")
+  require_contains(harness.stdio, src_a, "token_provider: any = nil", "A/client-has-token-provider")
   require_not_contains(harness.stdio, src_a, "basic_user: string", "A/no-basic-field")
   require_not_contains(harness.stdio, src_a, "api_keys: dict", "A/no-apikey-field")
   check_generates(harness, src_a, "A")
@@ -273,7 +273,12 @@ pipeline test_main(harness: Harness) {
     "D/reads-from-api-keys",
   )
   require_contains(harness.stdio, src_d, "api_keys: dict = {}", "D/client-has-api-keys")
-  require_contains(harness.stdio, src_d, "api_key_provider = nil", "D/client-has-api-key-provider")
+  require_contains(
+    harness.stdio,
+    src_d,
+    "api_key_provider: any = nil",
+    "D/client-has-api-key-provider",
+  )
   require_not_contains(harness.stdio, src_d, "token: string", "D/no-token-field")
   check_generates(harness, src_d, "D")
   run_generated(
@@ -372,7 +377,7 @@ pipeline test_main(harness: Harness) {
   require_contains(harness.stdio, src_g, "_headers_oauth2_auth(client)", "G/dispatch")
   require_contains(harness.stdio, src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
   require_contains(harness.stdio, src_g, "token: string = \"\"", "G/client-has-token")
-  require_contains(harness.stdio, src_g, "token_provider = nil", "G/client-has-token-provider")
+  require_contains(harness.stdio, src_g, "token_provider: any = nil", "G/client-has-token-provider")
   check_generates(harness, src_g, "G")
   run_generated(
     harness,

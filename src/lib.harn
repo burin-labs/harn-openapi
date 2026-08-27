@@ -452,7 +452,7 @@ pub fn operations(doc: OpenApiDoc) -> list<Operation> {
  * Call this after a public function validates the document. It avoids
  * validating a large document again for each derived view.
  */
-fn _operations(doc) {
+fn _operations(doc: any) {
   return _flatten_path_item_map(doc.get("paths") ?? {}, doc, "path")
 }
 
@@ -467,7 +467,7 @@ pub fn component_path_items(doc: OpenApiDoc) -> dict<string, RefOr<PathItem>> {
   return components.get("pathItems") ?? {}
 }
 
-fn _flatten_path_item_map(items, doc, mode) {
+fn _flatten_path_item_map(items: any, doc: any, mode: any) {
   let out = []
   for entry in items {
     const key = entry.key
@@ -522,7 +522,7 @@ fn _flatten_path_item_map(items, doc, mode) {
   return out
 }
 
-fn _merge_parameters(path_params, op_params, doc) {
+fn _merge_parameters(path_params: any, op_params: any, doc: any) {
   const resolved_path = _resolve_param_list(path_params, doc)
   const resolved_op = _resolve_param_list(op_params, doc)
   if len(resolved_path) == 0 {
@@ -547,7 +547,7 @@ fn _merge_parameters(path_params, op_params, doc) {
   return combined
 }
 
-fn _resolve_param_list(params, doc) {
+fn _resolve_param_list(params: any, doc: any) {
   let out = []
   for p in params {
     if type_of(p) == "dict" && p.get("$ref") != nil {
@@ -559,7 +559,7 @@ fn _resolve_param_list(params, doc) {
   return out
 }
 
-fn _synth_operation_id(method, path) {
+fn _synth_operation_id(method: any, path: any) {
   const cleaned = regex_replace("[^a-zA-Z0-9]+", "_", path)
   const trimmed = regex_replace("^_+|_+$", "", cleaned)
   return method + "_" + trimmed
@@ -576,11 +576,11 @@ pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
   return _schema(doc, ref_or_inline)
 }
 
-fn _schema(doc, ref_or_inline) {
+fn _schema(doc: any, ref_or_inline: any) {
   return _schema_inner(doc, ref_or_inline, [])
 }
 
-fn _schema_inner(doc, ref_or_inline, seen_refs) {
+fn _schema_inner(doc: any, ref_or_inline: any, seen_refs: any) {
   const resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
   const all_of = resolved.get("allOf")
   if all_of == nil {
@@ -601,7 +601,7 @@ fn _schema_inner(doc, ref_or_inline, seen_refs) {
   return _merge_schema(merged, own)
 }
 
-fn _ref_chain_for(node, seen_refs) {
+fn _ref_chain_for(node: any, seen_refs: any) {
   if type_of(node) != "dict" {
     return seen_refs
   }
@@ -615,11 +615,11 @@ fn _ref_chain_for(node, seen_refs) {
   return seen_refs + [ref]
 }
 
-fn _resolve_ref(doc, node) {
+fn _resolve_ref(doc: any, node: any) {
   return _resolve_ref_inner(doc, node, [])
 }
 
-fn _resolve_ref_inner(doc, node, seen_refs) {
+fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
   if type_of(node) != "dict" {
     return {}
   }
@@ -642,7 +642,7 @@ fn _resolve_ref_inner(doc, node, seen_refs) {
   return _merge_schema(resolved_target, siblings)
 }
 
-fn _lookup_ref(doc, ref) {
+fn _lookup_ref(doc: any, ref: any) {
   if !starts_with(ref, "#/") {
     throw "harn-openapi.schema: only local JSON Pointer refs are supported, got " + ref
   }
@@ -665,7 +665,7 @@ fn _lookup_ref(doc, ref) {
   return node
 }
 
-fn _unescape_pointer(seg) {
+fn _unescape_pointer(seg: any) {
   return replace(replace(seg, "~1", "/"), "~0", "~")
 }
 
@@ -675,7 +675,7 @@ const _MAX_ALL_OF = 64
 
 const _MAX_PROPERTIES = 1024
 
-fn _merge_schema(base, overlay) {
+fn _merge_schema(base: any, overlay: any) {
   if type_of(overlay) != "dict" {
     return base
   }
@@ -711,7 +711,7 @@ fn _merge_schema(base, overlay) {
   return merged
 }
 
-fn _merge_shallow(base, overlay) {
+fn _merge_shallow(base: any, overlay: any) {
   if type_of(base) != "dict" {
     return overlay
   }
@@ -725,7 +725,7 @@ fn _merge_shallow(base, overlay) {
   return merged
 }
 
-fn _omit_key(d, k) {
+fn _omit_key(d: any, k: any) {
   let out = {}
   for entry in d {
     if entry.key != k {
@@ -735,7 +735,7 @@ fn _omit_key(d, k) {
   return out
 }
 
-fn _dedupe(xs) {
+fn _dedupe(xs: any) {
   let seen = []
   let out = []
   for x in xs {
@@ -808,7 +808,7 @@ pub fn auth_helpers(doc: OpenApiDoc) -> list<AuthHelper> {
   return out
 }
 
-fn _client_fields_for_scheme_kind(kind) {
+fn _client_fields_for_scheme_kind(kind: any) {
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return ["token", "token_provider"]
   }
@@ -821,7 +821,7 @@ fn _client_fields_for_scheme_kind(kind) {
   return []
 }
 
-fn _oauth_scope_names(def) {
+fn _oauth_scope_names(def: any) {
   const flows = def.get("flows") ?? {}
   let scopes = []
   for flow_name in ["implicit", "password", "clientCredentials", "authorizationCode"] {
@@ -844,7 +844,7 @@ pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
   return _pagination_plans(doc)
 }
 
-fn _pagination_plans(doc) {
+fn _pagination_plans(doc: any) {
   let out = []
   for op in _operations(doc) {
     const plan = _pagination_plan_for_op(doc, op)
@@ -855,7 +855,7 @@ fn _pagination_plans(doc) {
   return out
 }
 
-fn _pagination_plan_for_op(doc, op) {
+fn _pagination_plan_for_op(doc: any, op: any) {
   const params = op.parameters ?? []
   const body_props = _request_body_json_properties(doc, op)
   const cursor = _pagination_request_field(
@@ -932,7 +932,7 @@ fn _pagination_plan_for_op(doc, op) {
   return nil
 }
 
-fn _request_body_json_properties(doc, op) -> dict {
+fn _request_body_json_properties(doc: any, op: any) -> dict {
   const request_schema = _request_json_schema(doc, op.request_body)
   if request_schema == nil {
     return {}
@@ -945,7 +945,7 @@ fn _request_body_json_properties(doc, op) -> dict {
   return {}
 }
 
-fn _pagination_request_field(params, body_props, names) -> dict {
+fn _pagination_request_field(params: any, body_props: any, names: any) -> dict {
   const query_field = _first_param_named(params, names)
   if query_field != nil {
     return {name: query_field, location: "query"}
@@ -957,7 +957,7 @@ fn _pagination_request_field(params, body_props, names) -> dict {
   return {name: nil, location: nil}
 }
 
-fn _first_param_named(params, names) {
+fn _first_param_named(params: any, names: any) {
   for wanted in names {
     for p in params {
       if p.get("in") == "query" && p.get("name") == wanted {
@@ -968,7 +968,7 @@ fn _first_param_named(params, names) {
   return nil
 }
 
-fn _first_present_key(d, names) {
+fn _first_present_key(d: any, names: any) {
   if type_of(d) != "dict" {
     return nil
   }
@@ -980,7 +980,7 @@ fn _first_present_key(d, names) {
   return nil
 }
 
-fn _success_response_header(doc, op, header_name) {
+fn _success_response_header(doc: any, op: any, header_name: any) {
   for entry in op.responses {
     if _is_success_code(entry.key) {
       const response = _resolve_ref(doc, entry.value)
@@ -994,7 +994,7 @@ fn _success_response_header(doc, op, header_name) {
   return nil
 }
 
-fn _header_name_case_insensitive(headers, wanted) {
+fn _header_name_case_insensitive(headers: any, wanted: any) {
   if type_of(headers) != "dict" {
     return nil
   }
@@ -1011,7 +1011,7 @@ pub fn rate_limit_metadata(doc: OpenApiDoc) -> list<RateLimitMetadata> {
   return _rate_limit_metadata(doc)
 }
 
-fn _rate_limit_metadata(doc) {
+fn _rate_limit_metadata(doc: any) {
   let out = []
   for op in _operations(doc) {
     const meta = _rate_limit_metadata_for_op(doc, op)
@@ -1022,7 +1022,7 @@ fn _rate_limit_metadata(doc) {
   return out
 }
 
-fn _rate_limit_metadata_for_op(doc, op) {
+fn _rate_limit_metadata_for_op(doc: any, op: any) {
   let status = nil
   let retry_after = nil
   let limit_headers = []
@@ -1124,7 +1124,7 @@ const _MODULE_TEMPLATE = """
     return hs
   }
 
-  fn _append_cookie_header(headers: dict, name: string, value) -> dict {
+  fn _append_cookie_header(headers: dict, name: string, value: any) -> dict {
     if value == nil {
       return headers
     }
@@ -1336,7 +1336,7 @@ const _MODULE_TEMPLATE = """
     return "?" + join(parts, "&")
   }
 
-  fn _strip_codegen_variant(body) -> dict {
+  fn _strip_codegen_variant(body: any) -> dict {
     if type_of(body) != "dict" {
       throw "polymorphic request body must be a dict with a _variant marker"
     }
@@ -1504,7 +1504,7 @@ pub fn codegen_harn_toml(options: dict) -> string {
  *   alternatives:  list<string>  — alternate requirement sets we dropped
  *   explicit_none: bool          — true when the spec said `security: []`
  */
-fn _resolve_security(op_security, doc_security) {
+fn _resolve_security(op_security: any, doc_security: any) {
   // operation.security wins even when it's an empty list (means "no auth").
   const reqs = if op_security != nil {
     op_security
@@ -1557,7 +1557,7 @@ fn _resolve_security(op_security, doc_security) {
   }
 }
 
-fn _allocate_auth_helper_names(used_schemes, schemes) {
+fn _allocate_auth_helper_names(used_schemes: any, schemes: any) {
   let header_names = {}
   let query_names = {}
   let taken = []
@@ -1578,7 +1578,7 @@ fn _allocate_auth_helper_names(used_schemes, schemes) {
 }
 
 /** Which client-struct fields are needed given the schemes actually used? */
-fn _derive_client_fields(used_schemes, schemes) {
+fn _derive_client_fields(used_schemes: any, schemes: any) {
   let want_token = false
   let want_basic = false
   let want_api_keys = false
@@ -1619,7 +1619,7 @@ fn _derive_client_fields(used_schemes, schemes) {
  *          "apiKey-cookie" | "oauth2" | "openIdConnect" | "mutualTLS" |
  *          "unknown".
  */
-fn _scheme_kind(def) {
+fn _scheme_kind(def: any) {
   const ty = def.get("type")
   if ty == "http" {
     const scheme = def.get("scheme")
@@ -1656,7 +1656,7 @@ fn _scheme_kind(def) {
   return "unknown"
 }
 
-fn _render_new_client_decl(fields, default_base_url, header_overrides) {
+fn _render_new_client_decl(fields: any, default_base_url: any, header_overrides: any) {
   let parts = ["base_url: string = \"" + _escape_string(default_base_url) + "\""]
   for f in fields {
     if f.kind == "string" {
@@ -1664,14 +1664,14 @@ fn _render_new_client_decl(fields, default_base_url, header_overrides) {
     } else if f.kind == "dict" {
       parts = parts + [f.name + ": dict = " + f.default]
     } else {
-      parts = parts + [f.name + " = " + f.default]
+      parts = parts + [f.name + ": any = " + f.default]
     }
   }
   parts = parts + ["extra_headers: dict = " + _render_dict_literal(header_overrides)]
   return _render_fn_decl_suffix("new_client", parts, "dict")
 }
 
-fn _render_new_client_return(fields) {
+fn _render_new_client_return(fields: any) {
   let parts = ["base_url: base_url"]
   for field in fields {
     parts = parts + [field.name + ": " + field.name]
@@ -1689,11 +1689,11 @@ fn _render_new_client_return(fields) {
   return out
 }
 
-fn _render_pub_fn_decl(name, params, return_type) {
+fn _render_pub_fn_decl(name: any, params: any, return_type: any) {
   return "pub fn " + _render_fn_decl_suffix(name, params, return_type)
 }
 
-fn _render_fn_decl_suffix(name, params, return_type) {
+fn _render_fn_decl_suffix(name: any, params: any, return_type: any) {
   const inline = name + "(" + join(params, ", ") + ") -> " + return_type
   if len("pub fn " + inline + " {") <= 100 {
     return inline
@@ -1706,7 +1706,7 @@ fn _render_fn_decl_suffix(name, params, return_type) {
   return out
 }
 
-fn _normalize_generated_source(src, module_name) {
+fn _normalize_generated_source(src: any, module_name: any) {
   let out = src
   while contains(out, "\n\n\n") {
     out = replace(out, "\n\n\n", "\n\n")
@@ -1719,7 +1719,7 @@ fn _normalize_generated_source(src, module_name) {
   return out.trim() + "\n"
 }
 
-fn _transport_kind(value) {
+fn _transport_kind(value: any) {
   const transport = to_string(value ?? "raw")
   if transport == "raw" {
     return "raw"
@@ -1731,7 +1731,7 @@ fn _transport_kind(value) {
     + "' (expected 'raw' or 'connector_policy')"
 }
 
-fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
+fn _render_auth_helper(scheme_name: any, def: any, fn_name: any, query_fn_name: any) {
   const kind = _scheme_kind(def)
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return "fn " + fn_name + "(client: dict) -> dict {\n"
@@ -1830,7 +1830,7 @@ fn _render_auth_helper(scheme_name, def, fn_name, query_fn_name) {
     + "}"
 }
 
-fn _default_server_url(doc) {
+fn _default_server_url(doc: any) {
   const servers = doc.get("servers") ?? []
   if len(servers) == 0 {
     return ""
@@ -1838,7 +1838,7 @@ fn _default_server_url(doc) {
   return servers[0].get("url") ?? ""
 }
 
-fn _operation_param_models(params) {
+fn _operation_param_models(params: any) {
   let path_params = []
   let query_params = []
   let header_params = []
@@ -1865,13 +1865,13 @@ fn _operation_param_models(params) {
 }
 
 fn _signature_model(
-  doc,
-  op,
-  path_params,
-  query_params,
-  header_params,
-  cookie_params,
-  header_overrides,
+  doc: any,
+  op: any,
+  path_params: any,
+  query_params: any,
+  header_params: any,
+  cookie_params: any,
+  header_overrides: any,
 ) {
   let required_sig = ["client: dict"]
   let optional_sig = []
@@ -1879,7 +1879,7 @@ fn _signature_model(
   for p in path_params {
     const name = p.get("name")
     const nm = p.ident
-    required_sig = required_sig + [nm]
+    required_sig = required_sig + [nm + ": any"]
     path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   let query_bindings_parts = []
@@ -1887,35 +1887,35 @@ fn _signature_model(
     const name = p.get("name")
     const nm = p.ident
     if p.get("required") {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
     query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
   }
   for p in header_params {
     const nm = p.ident
     if p.get("required") && header_overrides.get(p.name) == nil {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
   }
   for p in cookie_params {
     const nm = p.ident
     if p.get("required") {
-      required_sig = required_sig + [nm]
+      required_sig = required_sig + [nm + ": any"]
     } else {
-      optional_sig = optional_sig + [nm + " = nil"]
+      optional_sig = optional_sig + [nm + ": any = nil"]
     }
   }
   const has_body = op.request_body != nil
   const body_required = has_body && _request_body_required(doc, op.request_body)
   if has_body {
     if body_required {
-      required_sig = required_sig + ["body"]
+      required_sig = required_sig + ["body: any"]
     } else {
-      optional_sig = optional_sig + ["body = nil"]
+      optional_sig = optional_sig + ["body: any = nil"]
     }
   }
   return {
@@ -1929,16 +1929,16 @@ fn _signature_model(
 }
 
 fn _build_op_model(
-  doc,
-  op,
-  taken_names,
-  choice,
-  schemes,
-  ret,
-  helper_names,
-  header_overrides,
-  transport,
-  module_name,
+  doc: any,
+  op: any,
+  taken_names: any,
+  choice: any,
+  schemes: any,
+  ret: any,
+  helper_names: any,
+  header_overrides: any,
+  transport: any,
+  module_name: any,
 ) {
   const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
   const param_model = _operation_param_models(op.parameters)
@@ -2043,7 +2043,7 @@ fn _build_op_model(
  * Include the operation-body and `throw` indentation in the line-width
  * calculation so raw-transport output is canonical without a formatter pass.
  */
-fn _render_error_throw(fn_name) {
+fn _render_error_throw(fn_name: any) {
   const dict_inline = "operation: \""
     + fn_name
     + "\", status: resp.status, body: resp.body, headers: resp.headers"
@@ -2060,7 +2060,7 @@ fn _render_error_throw(fn_name) {
     + "    }"
 }
 
-fn _render_error_lines(fn_name, transport) {
+fn _render_error_lines(fn_name: any, transport: any) {
   if transport == "connector_policy" {
     return "if !(resp.ok ?? false) {\n"
       + "    throw resp\n"
@@ -2073,11 +2073,11 @@ fn _render_error_lines(fn_name, transport) {
     + "  }"
 }
 
-fn path_bindings_parts_render(parts) {
+fn path_bindings_parts_render(parts: any) {
   return _render_binding_dict(parts)
 }
 
-fn _render_headers_call(scheme_names, helper_names) {
+fn _render_headers_call(scheme_names: any, helper_names: any) {
   if len(scheme_names) == 0 {
     return "_no_auth_headers(client)"
   }
@@ -2097,7 +2097,7 @@ fn _render_headers_call(scheme_names, helper_names) {
   return "_merge_header_dicts([" + join(calls, ", ") + "])"
 }
 
-fn _render_query_bindings(parts, query_scheme_names, helper_names) {
+fn _render_query_bindings(parts: any, query_scheme_names: any, helper_names: any) {
   let all_parts = parts
   for scheme_name in query_scheme_names {
     const helper = helper_names.queries.get(scheme_name)
@@ -2108,7 +2108,7 @@ fn _render_query_bindings(parts, query_scheme_names, helper_names) {
   return _render_binding_dict(all_parts)
 }
 
-fn _render_header_cookie_lines(header_params, cookie_params) {
+fn _render_header_cookie_lines(header_params: any, cookie_params: any) {
   let lines = []
   for p in header_params {
     lines = lines
@@ -2135,7 +2135,7 @@ fn _render_header_cookie_lines(header_params, cookie_params) {
   return join(lines, "\n  ")
 }
 
-fn _idempotency_key_param(header_params) {
+fn _idempotency_key_param(header_params: any) {
   for p in header_params {
     if to_string(p.get("name") ?? "").lower() == "idempotency-key" {
       return p.ident
@@ -2144,14 +2144,14 @@ fn _idempotency_key_param(header_params) {
   return nil
 }
 
-fn _connector_http_function(ret) {
+fn _connector_http_function(ret: any) {
   if ret.response_mode == "json_any" || ret.response_mode == "json_dict" {
     return "connector_http_json"
   }
   return "connector_http_request"
 }
 
-fn _connector_imports(return_types, transport: string) -> string {
+fn _connector_imports(return_types: any, transport: string) -> string {
   if transport != "connector_policy" {
     return ""
   }
@@ -2175,7 +2175,7 @@ fn _connector_imports(return_types, transport: string) -> string {
   return join(imports, ", ")
 }
 
-fn _connector_retry_attempts(method, idempotency_key_param) {
+fn _connector_retry_attempts(method: any, idempotency_key_param: any) {
   const normalized = to_string(method ?? "").lower()
   if ["get", "head", "put", "delete", "options"].contains(normalized) {
     return 3
@@ -2186,7 +2186,13 @@ fn _connector_retry_attempts(method, idempotency_key_param) {
   return 1
 }
 
-fn _render_connector_options(method, fn_name, module_name, has_body, idempotency_key_param) {
+fn _render_connector_options(
+  method: any,
+  fn_name: any,
+  module_name: any,
+  has_body: any,
+  idempotency_key_param: any,
+) {
   let parts = [
     _harn_dict_entry("headers", "request_headers"),
     _harn_dict_entry("provider", "\"" + _escape_string(module_name) + "\""),
@@ -2205,7 +2211,7 @@ fn _render_connector_options(method, fn_name, module_name, has_body, idempotency
   return parts
 }
 
-fn _render_connector_call(method, ret, option_parts, indent) {
+fn _render_connector_call(method: any, ret: any, option_parts: any, indent: any) {
   const options_expr = _render_binding_dict_for_column(option_parts, len(indent) + 2)
   return _connector_http_function(ret)
     + "(\n"
@@ -2228,15 +2234,15 @@ fn _render_connector_call(method, ret, option_parts, indent) {
 }
 
 fn _render_request_lines(
-  method,
-  has_body,
-  body_required,
-  body_prepare,
-  transport,
-  ret,
-  fn_name,
-  module_name,
-  idempotency_key_param,
+  method: any,
+  has_body: any,
+  body_required: any,
+  body_prepare: any,
+  transport: any,
+  ret: any,
+  fn_name: any,
+  module_name: any,
+  idempotency_key_param: any,
 ) {
   if transport == "connector_policy" {
     if !has_body {
@@ -2314,7 +2320,7 @@ fn _render_request_lines(
     + "  }"
 }
 
-fn _render_return_lines(fn_name, ret, transport) {
+fn _render_return_lines(fn_name: any, ret: any, transport: any) {
   if ret.returns_nil {
     return "return nil"
   }
@@ -2345,7 +2351,7 @@ fn _render_return_lines(fn_name, ret, transport) {
     + "  return raw"
 }
 
-fn _render_binding_dict(parts) {
+fn _render_binding_dict(parts: any) {
   const inline = "{" + join(parts, ", ") + "}"
   if len(parts) == 0 || len(inline) <= 100 {
     return inline
@@ -2358,7 +2364,7 @@ fn _render_binding_dict(parts) {
   return out
 }
 
-fn _render_binding_dict_for_column(parts, column) {
+fn _render_binding_dict_for_column(parts: any, column: any) {
   const inline = "{" + join(parts, ", ") + "}"
   if column + len(inline) + 1 <= 100 {
     return inline
@@ -2371,7 +2377,7 @@ fn _render_binding_dict_for_column(parts, column) {
   return out
 }
 
-fn _request_json_schema(doc, request_body) {
+fn _request_json_schema(doc: any, request_body: any) {
   if request_body == nil {
     return nil
   }
@@ -2387,7 +2393,7 @@ fn _request_json_schema(doc, request_body) {
   return app_json.get("schema")
 }
 
-fn _request_body_required(doc, request_body) {
+fn _request_body_required(doc: any, request_body: any) {
   if request_body == nil {
     return false
   }
@@ -2399,7 +2405,7 @@ fn _request_body_required(doc, request_body) {
   return false
 }
 
-fn _body_variants_for_op(doc, op, fn_name, taken_names) {
+fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
   const raw_schema = _request_json_schema(doc, op.request_body)
   if raw_schema == nil {
     return []
@@ -2446,7 +2452,7 @@ fn _body_variants_for_op(doc, op, fn_name, taken_names) {
   return variants
 }
 
-fn _discriminator_mapping_tag(discriminator, raw_variant) {
+fn _discriminator_mapping_tag(discriminator: any, raw_variant: any) {
   if type_of(discriminator) != "dict" || type_of(raw_variant) != "dict" {
     return nil
   }
@@ -2466,7 +2472,7 @@ fn _discriminator_mapping_tag(discriminator, raw_variant) {
   return nil
 }
 
-fn _variant_display_name(raw_variant, resolved, mapping_tag, index) {
+fn _variant_display_name(raw_variant: any, resolved: any, mapping_tag: any, index: any) {
   if type_of(resolved) == "dict" {
     const title = resolved.get("title")
     if type_of(title) == "string" && title != "" {
@@ -2485,7 +2491,7 @@ fn _variant_display_name(raw_variant, resolved, mapping_tag, index) {
   return "Variant" + to_string(index + 1)
 }
 
-fn _variant_tag(discriminator_property, resolved, display_name, mapping_tag) {
+fn _variant_tag(discriminator_property: any, resolved: any, display_name: any, mapping_tag: any) {
   if type_of(mapping_tag) == "string" && mapping_tag != "" {
     return mapping_tag
   }
@@ -2498,7 +2504,7 @@ fn _variant_tag(discriminator_property, resolved, display_name, mapping_tag) {
   return display_name
 }
 
-fn _schema_property_literal(resolved, property_name) {
+fn _schema_property_literal(resolved: any, property_name: any) {
   if type_of(resolved) != "dict" {
     return nil
   }
@@ -2518,7 +2524,7 @@ fn _schema_property_literal(resolved, property_name) {
   return nil
 }
 
-fn _variant_constructor_fields(doc, resolved) {
+fn _variant_constructor_fields(doc: any, resolved: any) {
   if type_of(resolved) != "dict" || type_of(resolved.get("properties")) != "dict" {
     return []
   }
@@ -2557,7 +2563,7 @@ fn _variant_constructor_fields(doc, resolved) {
   return fields
 }
 
-fn _body_variant_fn_names(variants) {
+fn _body_variant_fn_names(variants: any) {
   let names = []
   for variant in variants {
     names = names + [variant.fn_name]
@@ -2565,7 +2571,7 @@ fn _body_variant_fn_names(variants) {
   return names
 }
 
-fn _body_variant_tags(variants) {
+fn _body_variant_tags(variants: any) {
   let tags = []
   for variant in variants {
     tags = tags + [variant.tag]
@@ -2573,7 +2579,7 @@ fn _body_variant_tags(variants) {
   return tags
 }
 
-fn _render_body_prepare(fn_name, variants) {
+fn _render_body_prepare(fn_name: any, variants: any) {
   if len(variants) == 0 {
     return "const body_str = json_stringify(body)"
   }
@@ -2606,7 +2612,7 @@ fn _render_body_prepare(fn_name, variants) {
     + "  const body_str = json_stringify(_strip_codegen_variant(body))"
 }
 
-fn _render_string_list(items) {
+fn _render_string_list(items: any) {
   let parts = []
   for item in items {
     parts = parts + ["\"" + _escape_string(to_string(item)) + "\""]
@@ -2614,7 +2620,7 @@ fn _render_string_list(items) {
   return "[" + join(parts, ", ") + "]"
 }
 
-fn _render_body_variant_constructors(variants) {
+fn _render_body_variant_constructors(variants: any) {
   if len(variants) == 0 {
     return ""
   }
@@ -2625,7 +2631,7 @@ fn _render_body_variant_constructors(variants) {
   return "\n" + join(chunks, "\n\n")
 }
 
-fn _render_body_variant_constructor(variant) {
+fn _render_body_variant_constructor(variant: any) {
   let required_sig = []
   let optional_sig = []
   let literal_entries = []
@@ -2638,7 +2644,7 @@ fn _render_body_variant_constructor(variant) {
       required_sig = required_sig + [field.ident + ": " + field.annotation]
       literal_entries = literal_entries + [_harn_dict_entry(field.key, field.ident)]
     } else {
-      optional_sig = optional_sig + [field.ident + " = nil"]
+      optional_sig = optional_sig + [field.ident + ": any = nil"]
       optional_lines = optional_lines
         + [
           "  if "
@@ -2681,7 +2687,7 @@ fn _render_body_variant_constructor(variant) {
   return body
 }
 
-fn _render_literal(value) {
+fn _render_literal(value: any) {
   if type_of(value) == "string" {
     return "\"" + _escape_string(value) + "\""
   }
@@ -2694,7 +2700,7 @@ fn _render_literal(value) {
   return json_stringify(value)
 }
 
-fn _render_data_literal(value) {
+fn _render_data_literal(value: any) {
   if value == nil {
     return "nil"
   }
@@ -2735,11 +2741,11 @@ fn _render_data_literal(value) {
   return "\"" + _escape_string(to_string(value)) + "\""
 }
 
-fn _indent_after_first(src, indent) {
+fn _indent_after_first(src: any, indent: any) {
   return replace(src, "\n", "\n" + indent)
 }
 
-fn _render_json_parse_expr(value) {
+fn _render_json_parse_expr(value: any) {
   const encoded = _escape_string(json_stringify(value))
   if len(encoded) <= 80 {
     return "json_parse(\"" + encoded + "\")"
@@ -2759,7 +2765,7 @@ fn _render_json_parse_expr(value) {
 
 // -------------------------------------------------------------------------------------------------
 
-fn _resolve_response_type(doc, op, cache) {
+fn _resolve_response_type(doc: any, op: any, cache: any) {
   const picked = _pick_success_response(doc, op)
   if picked == nil {
     // No 2xx declared at all — legacy `dict` with empty-body fallback.
@@ -2900,7 +2906,7 @@ fn _resolve_response_type(doc, op, cache) {
   }
 }
 
-fn _pick_success_response(doc, op) {
+fn _pick_success_response(doc: any, op: any) {
   // Walk responses in spec order. First entry whose status code starts
   // with "2" wins. Returns one of:
   //   {kind: "json", schema}   — JSON body we can try to type.
@@ -2931,7 +2937,7 @@ fn _pick_success_response(doc, op) {
   return nil
 }
 
-fn _json_media_type(content) {
+fn _json_media_type(content: any) {
   if type_of(content) != "dict" {
     return nil
   }
@@ -2948,7 +2954,7 @@ fn _json_media_type(content) {
   return nil
 }
 
-fn _media_type_without_parameters(raw) {
+fn _media_type_without_parameters(raw: any) {
   const lowered = to_string(raw).lower()
   const semi = _index_of(lowered, ";")
   if semi >= 0 {
@@ -2957,7 +2963,7 @@ fn _media_type_without_parameters(raw) {
   return trim(lowered)
 }
 
-fn _index_of(hay, needle) {
+fn _index_of(hay: any, needle: any) {
   const nh = len(hay)
   const nn = len(needle)
   if nn == 0 {
@@ -2973,14 +2979,14 @@ fn _index_of(hay, needle) {
   return -1
 }
 
-fn _is_success_code(code) {
+fn _is_success_code(code: any) {
   if type_of(code) != "string" {
     return false
   }
   return starts_with(code, "2")
 }
 
-fn _schema_shape_kind(sch) {
+fn _schema_shape_kind(sch: any) {
   // Returns "struct" (emit an object alias), "dict" (polymorphic /
   // primitive / unsupported — fall back to `dict`), or "nil" (no
   // response body shape to speak of).
@@ -3011,7 +3017,7 @@ fn _schema_shape_kind(sch) {
   return "dict"
 }
 
-fn _untyped_json_return_type(sch) {
+fn _untyped_json_return_type(sch: any) {
   if type_of(sch) != "dict" {
     return "any"
   }
@@ -3029,21 +3035,21 @@ fn _untyped_json_return_type(sch) {
   return "dict"
 }
 
-fn _alias_name_from_ref(ref) {
+fn _alias_name_from_ref(ref: any) {
   // "#/components/schemas/pageObjectResponse" -> "PageObjectResponse"
   const parts = split(ref, "/")
   const tail = _unescape_pointer(parts[len(parts) - 1])
   return _pascal_case(tail)
 }
 
-fn _alias_name_from_operation(operation_id) {
+fn _alias_name_from_operation(operation_id: any) {
   // Feed the raw operation_id into `_pascal_case` so camelCase ids
   // like `searchItems` render as `SearchItems` rather than the
   // lowercased `Searchitems` we'd get from `_sanitize_fn_name`.
   return _pascal_case(operation_id) + "Response"
 }
 
-fn _pascal_case(raw) {
+fn _pascal_case(raw: any) {
   if raw == nil || raw == "" {
     return "T"
   }
@@ -3070,7 +3076,7 @@ fn _pascal_case(raw) {
   return out
 }
 
-fn _unique_type_name(base, cache) {
+fn _unique_type_name(base: any, cache: any) {
   if cache.by_name.get(base) == nil {
     return base
   }
@@ -3083,7 +3089,7 @@ fn _unique_type_name(base, cache) {
   return candidate
 }
 
-fn _emit_struct_alias(doc, alias_name, resolved) {
+fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
   const props = resolved.get("properties") ?? {}
   const required = resolved.get("required") ?? []
   let keys = []
@@ -3107,7 +3113,7 @@ fn _emit_struct_alias(doc, alias_name, resolved) {
   return out + "}"
 }
 
-fn _harn_type_for_property(doc, prop_schema, depth) {
+fn _harn_type_for_property(doc: any, prop_schema: any, depth: any) {
   // Returns {annotation: string, comment: string}. `depth` starts at 1
   // for direct properties of the response. v0 rule: stop narrowing at
   // depth 2 — nested dicts/lists render as bare `dict`/`list`.
@@ -3159,7 +3165,7 @@ fn _harn_type_for_property(doc, prop_schema, depth) {
   return {annotation: "dict", comment: ""}
 }
 
-fn _primitive_harn_type(ty) {
+fn _primitive_harn_type(ty: any) {
   if ty == "string" {
     return "string"
   }
@@ -3175,7 +3181,7 @@ fn _primitive_harn_type(ty) {
   return nil
 }
 
-fn _harn_struct_field(key, annotation, required) {
+fn _harn_struct_field(key: any, annotation: any, required: any) {
   // Type-alias field names accept bare identifiers even when the name
   // collides with a keyword (e.g. `type`, `object`). Callers guarantee
   // the key is a plain identifier via `_struct_has_renderable_keys`.
@@ -3185,7 +3191,7 @@ fn _harn_struct_field(key, annotation, required) {
   return key + "?: " + annotation
 }
 
-fn _struct_has_renderable_keys(resolved) {
+fn _struct_has_renderable_keys(resolved: any) {
   const props = resolved.get("properties") ?? {}
   for entry in props {
     if !_is_plain_identifier(entry.key) {
@@ -3195,11 +3201,11 @@ fn _struct_has_renderable_keys(resolved) {
   return true
 }
 
-fn _sanitize_fn_name(raw) {
+fn _sanitize_fn_name(raw: any) {
   return _snake_case_base(raw, "op")
 }
 
-fn _sanitize_ident(raw) {
+fn _sanitize_ident(raw: any) {
   const s = _sanitize_fn_name(raw)
   if _is_reserved(s) {
     return s + "_"
@@ -3207,7 +3213,7 @@ fn _sanitize_ident(raw) {
   return s
 }
 
-fn _snake_case_ident(raw) {
+fn _snake_case_ident(raw: any) {
   const out = _snake_case_base(raw, "variant")
   if _is_reserved(out) {
     return out + "_"
@@ -3215,7 +3221,7 @@ fn _snake_case_ident(raw) {
   return out
 }
 
-fn _snake_case_base(raw, fallback) {
+fn _snake_case_base(raw: any, fallback: any) {
   if raw == nil || raw == "" {
     return fallback
   }
@@ -3247,11 +3253,11 @@ fn _snake_case_base(raw, fallback) {
   return out
 }
 
-fn _is_upper(c) {
+fn _is_upper(c: any) {
   return regex_match("^[A-Z]$", c) != nil
 }
 
-fn _is_digit(c) {
+fn _is_digit(c: any) {
   return c == "0" || c == "1" || c == "2" || c == "3" || c == "4"
     || c == "5"
     || c == "6"
@@ -3297,11 +3303,11 @@ const _RESERVED = [
   "client",
 ]
 
-fn _is_reserved(s) {
+fn _is_reserved(s: any) {
   return _RESERVED.contains(s)
 }
 
-fn _unique_fn_name(base, taken) {
+fn _unique_fn_name(base: any, taken: any) {
   if !taken.contains(base) {
     return base
   }
@@ -3314,18 +3320,18 @@ fn _unique_fn_name(base, taken) {
   return candidate
 }
 
-fn _escape_comment(s) {
+fn _escape_comment(s: any) {
   return replace(replace(s, "*/", "* /"), "\n", " ")
 }
 
-fn _harn_dict_entry(key, value_expr) {
+fn _harn_dict_entry(key: any, value_expr: any) {
   if _is_plain_identifier(key) {
     return key + ": " + value_expr
   }
   return "\"" + _escape_string(key) + "\": " + value_expr
 }
 
-fn _is_plain_identifier(s) {
+fn _is_plain_identifier(s: any) {
   if s == "" {
     return false
   }
@@ -3336,7 +3342,7 @@ fn _is_plain_identifier(s) {
   return regex_match("^[A-Za-z_][A-Za-z0-9_]*$", s) != nil
 }
 
-fn _escape_string(s) {
+fn _escape_string(s: any) {
   // Defence-in-depth: even though emitted code is re-checked by `harn check`
   // in tests, control characters smuggled in from a malicious OpenAPI spec
   // could close a Harn string literal early or break our codegen output. We
@@ -3354,18 +3360,18 @@ fn _escape_string(s) {
   return out
 }
 
-fn _escape_toml_string(s) {
+fn _escape_toml_string(s: any) {
   return _escape_string(to_string(s))
 }
 
-fn _toml_key(key) {
+fn _toml_key(key: any) {
   if regex_match("^[A-Za-z0-9_-]+$", key) != nil {
     return key
   }
   return "\"" + _escape_toml_string(key) + "\""
 }
 
-fn _render_manifest_dependency(name, spec) {
+fn _render_manifest_dependency(name: any, spec: any) {
   if type_of(spec) == "string" {
     return _toml_key(name) + " = \"" + _escape_toml_string(spec) + "\"\n"
   }
@@ -3385,7 +3391,7 @@ fn _render_manifest_dependency(name, spec) {
   return _toml_key(name) + " = { " + join(parts, ", ") + " }\n"
 }
 
-fn _render_dict_literal(d) {
+fn _render_dict_literal(d: any) {
   if type_of(d) != "dict" {
     return "{}"
   }

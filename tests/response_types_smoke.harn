@@ -175,14 +175,14 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn get_page(harness: {clock: HarnessClock, net: HarnessNet}, client: dict, id) -> PageObject",
+      "pub fn get_page(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n  id: any,\n) -> PageObject",
     ),
     "get_page must return PageObject",
   )
   assert(
     contains(
       src,
-      "pub fn get_page_by_slug(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n  slug,\n) -> PageObject",
+      "pub fn get_page_by_slug(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n  slug: any,\n) -> PageObject",
     ),
     "get_page_by_slug must return PageObject",
   )
@@ -202,7 +202,7 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn delete_page(harness: {clock: HarnessClock, net: HarnessNet}, client: dict, id) -> nil",
+      "pub fn delete_page(harness: {clock: HarnessClock, net: HarnessNet}, client: dict, id: any) -> nil",
     ),
     "delete_page (204) must return nil",
   )
