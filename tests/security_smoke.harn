@@ -19,7 +19,7 @@ fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) 
   return root + "/" + label + "-" + harness.random.uuid()
 }
 
-fn build_doc(sec_schemes: dict, doc_security, ops: list) -> string {
+fn build_doc(sec_schemes: dict, doc_security: any, ops: list) -> string {
   let paths = {}
   for op in ops {
     let method_entry = {operationId: op.operation_id, responses: {"200": {description: "ok"}}}
