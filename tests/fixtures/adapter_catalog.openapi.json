@@ -24,6 +24,17 @@
           "annotations": {
             "openWorldHint": false
           },
+          "icons": [
+            {
+              "src": "https://api.example.test/assets/widget.svg",
+              "mimeType": "image/svg+xml",
+              "sizes": ["any"],
+              "theme": "light"
+            }
+          ],
+          "execution": {
+            "taskSupport": "optional"
+          },
           "meta": {
             "com.burin.harn/audience": "developer"
           }

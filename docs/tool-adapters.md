@@ -83,6 +83,13 @@ paths:
           destructiveHint: false
           idempotentHint: true
           openWorldHint: true
+        icons:
+          - src: https://api.example.com/assets/widget.svg
+            mimeType: image/svg+xml
+            sizes: [any]
+            theme: light
+        execution:
+          taskSupport: optional
         meta:
           com.example/audience: developer
 ```
@@ -97,10 +104,17 @@ paths:
 | `cli.command` | string or list of strings | Portable command path. Segments use ASCII letters, digits, `_`, and `-`, and cannot start with `-`. |
 | `cli.hidden` | boolean | Hide the command from help while retaining explicit invocation. |
 | `annotations` | object | Overrides for the four standard MCP boolean hints. |
+| `icons` | list of icon objects | Portable tool icons. Each icon requires `src` and accepts `mimeType`, `sizes`, and `theme` (`light` or `dark`). |
+| `execution.taskSupport` | `forbidden`, `optional`, or `required` | Whether MCP clients may or must invoke the tool as a task. |
 | `meta` | object | Protocol extension metadata projected as MCP `_meta`. |
 
 Unknown fields and invalid values fail during code generation. Duplicate
 exposed tool names or CLI command paths also fail before source is rendered.
+
+The static catalog retains all three `execution.taskSupport` values. MCP omits
+`execution` for `forbidden`, which is the protocol default, and emits the field
+for `optional` and `required`. Icons pass through unchanged; clients decide
+which declared size and theme they can display.
 
 Generated policy is separate from MCP hints. `GET`, `HEAD`, and `OPTIONS` map
 to `{kind: "fetch", side_effect_level: "network"}`; other methods map to
