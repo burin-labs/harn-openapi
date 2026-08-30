@@ -17,7 +17,7 @@ pub fn adapter_tools(
 pub fn adapter_catalog(
   harness: {clock: HarnessClock, net: HarnessNet},
   client: dict,
-) -> dict
+) -> ToolCatalog
 ```
 
 With `transport: "raw"`, both functions accept `net: HarnessNet` instead of

@@ -280,8 +280,9 @@ harn tool run ./server.harn --help
 harn serve mcp ./server.harn
 ```
 
-Generated modules also export `adapter_catalog(authority, client) -> dict`, a
-convenience wrapper over Harn's versioned `harn-tools/1.0` projection. See
+Generated modules also export `adapter_catalog(authority, client) ->
+ToolCatalog`, a typed convenience wrapper over Harn's versioned
+`harn-tools/1.0` projection. See
 [Generated tool adapters](docs/tool-adapters.md) for the exact `x-harn`
 contract and server example.
 
