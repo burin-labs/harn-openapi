@@ -8,7 +8,7 @@ The generated SDK function remains the only execution path for an operation.
 
 Each generated module exports:
 
-```harn
+```text
 pub fn adapter_tools(
   harness: {clock: HarnessClock, net: HarnessNet},
   client: dict,

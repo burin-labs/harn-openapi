@@ -84,10 +84,8 @@ pipeline default(harness: Harness) {
   } catch (error) {
     error
   }
-  assert(
-    to_string(rejected).contains("x-harn on 'get-widget' must be an object"),
-    "malformed extensions must fail before code generation",
-  )
+  require to_string(rejected).contains("x-harn on 'get-widget' must be an object"),
+    "malformed extensions must fail before code generation"
   let duplicate = json_parse(raw)
   duplicate.paths["/internal/reindex"].post["x-harn"] = {
     expose: true,
@@ -100,10 +98,8 @@ pipeline default(harness: Harness) {
   } catch (error) {
     error
   }
-  assert(
-    to_string(duplicate_rejected).contains("duplicate generated tool name 'lookup_widget'"),
-    "adapter collisions must fail while the OpenAPI source is still identifiable",
-  )
+  require to_string(duplicate_rejected).contains("duplicate generated tool name 'lookup_widget'"),
+    "adapter collisions must fail while the OpenAPI source is still identifiable"
   const module_path = scratch_path(
     {fs: harness.fs, random: harness.random},
     "harn-openapi-adapter-module",
@@ -130,5 +126,5 @@ pipeline default(harness: Harness) {
     harness.stdio.println(result.stderr)
     harness.stdio.println(result.stdout)
   }
-  assert(result.success, "generated adapter and MCP discovery path must pass")
+  require result.success, "generated adapter and MCP discovery path must pass"
 }
