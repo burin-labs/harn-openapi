@@ -26,12 +26,17 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(catalog.info.name, \"widgets\")\n"
     + "  assert_eq(catalog.info.version, \"2026-08-29\")\n"
     + "  assert_eq(catalog.tools[0].cli.command, [\"widgets\", \"lookup_widget\"])\n"
+    + "  assert_eq(catalog.tools[0].icons[0].src, \"https://api.example.test/assets/widget.svg\")\n"
+    + "  assert_eq(catalog.tools[0].icons[0].theme, \"light\")\n"
+    + "  assert_eq(catalog.tools[0].execution.taskSupport, \"optional\")\n"
     + "  assert_eq(catalog.tools[0].policy.kind, \"fetch\")\n"
     + "  assert_eq(catalog.tools[0].source.binding.method, \"GET\")\n"
     + "  const registered = registry.tools[0]\n"
     + "  assert_eq(registered.name, \"lookup_widget\")\n"
     + "  assert_eq(registered.namespace, \"widgets\")\n"
     + "  assert_eq(registered.defer_loading, true)\n"
+    + "  assert_eq(registered.icons[0].mimeType, \"image/svg+xml\")\n"
+    + "  assert_eq(registered.execution.taskSupport, \"optional\")\n"
     + "  assert_eq(registered.parameters.widget_id.required, true)\n"
     + "  assert_eq(registered.outputSchema.required, [\"id\", \"label\"])\n"
     + "  harness.testing.http_mock_clear()\n"
@@ -50,8 +55,22 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(discovered[0].outputSchema.required, [\"id\", \"label\"])\n"
     + "  assert_eq(discovered[0].annotations.readOnlyHint, true)\n"
     + "  assert_eq(discovered[0].annotations.openWorldHint, false)\n"
+    + "  assert_eq(discovered[0].icons[0].sizes, [\"any\"])\n"
     + "  assert_eq(discovered[0]._meta[\"com.burin.harn/audience\"], \"developer\")\n"
     + "  harness.tools.mcp_disconnect(mcp)\n"
+    + "  const rpc_input = json_stringify({jsonrpc: \"2.0\", id: 1, method: \"initialize\", params: {protocolVersion: \"2025-11-25\", capabilities: {}, clientInfo: {name: \"harn-openapi-test\", version: \"1\"}}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", method: \"notifications/initialized\", params: {}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", id: 2, method: \"tools/list\", params: {}}) + \"\\n\"\n"
+    + "  const wire = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"serve\", \"mcp\", \""
+    + server_path
+    + "\"], stdin: rpc_input})\n"
+    + "  require wire.success, \"generated MCP server must complete a raw stdio exchange: \" + wire.stderr\n"
+    + "  let wire_tools = nil\n"
+    + "  for line in wire.stdout.lines() {\n"
+    + "    const message = json_parse(line)\n"
+    + "    if message.get(\"id\") == 2 { wire_tools = message.result.tools }\n"
+    + "  }\n"
+    + "  require wire_tools != nil, \"raw tools/list response must be observed\"\n"
+    + "  assert_eq(wire_tools[0].icons[0].sizes, [\"any\"])\n"
+    + "  assert_eq(wire_tools[0].execution.taskSupport, \"optional\")\n"
     + "  const help = harness.process.shell((harness.env.get(\"HARN_BIN\") ?? \"harn\") + \" tool run \" + \""
     + server_path
     + "\" + \" --help\")\n"
@@ -70,6 +89,18 @@ fn generated_server(module_path: string) -> string {
     + "}\n"
 }
 
+fn extension_error(fs: HarnessFs, raw: string, extension: any) -> string {
+  let malformed = json_parse(raw)
+  malformed.paths["/widgets/{widget-id}"].get["x-harn"] = extension
+  const rejected = try {
+    codegen_module(fs, parse(json_stringify(malformed)), {module_name: "widgets"})
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(rejected)
+}
+
 @test
 pipeline default(harness: Harness) {
   const raw = harness.fs.read_text(
@@ -86,6 +117,49 @@ pipeline default(harness: Harness) {
   }
   require to_string(rejected).contains("x-harn on 'get-widget' must be an object"),
     "malformed extensions must fail before code generation"
+  const invalid_extensions = [
+    {
+      extension: {icons: {src: "https://example.test/icon.svg"}},
+      expected: "x-harn.icons on 'get-widget' must be a list",
+    },
+    {
+      extension: {icons: [{theme: "light"}]},
+      expected: "x-harn.icons[0].src on 'get-widget' must be a non-empty string",
+    },
+    {
+      extension: {icons: [{src: "https://example.test/icon.svg", color: "blue"}]},
+      expected: "unknown x-harn.icons[0] field 'color' on 'get-widget'",
+    },
+    {
+      extension: {icons: [{src: "https://example.test/icon.svg", sizes: ["32x32", 64]}]},
+      expected: "x-harn.icons[0].sizes on 'get-widget' must be a list of non-empty strings",
+    },
+    {
+      extension: {icons: [{src: "https://example.test/icon.svg", theme: "system"}]},
+      expected: "x-harn.icons[0].theme on 'get-widget' must be 'light' or 'dark'",
+    },
+    {
+      extension: {execution: "optional"},
+      expected: "x-harn.execution on 'get-widget' must be an object",
+    },
+    {
+      extension: {execution: {taskSupport: "sometimes"}},
+      expected:
+        "x-harn.execution.taskSupport on 'get-widget' must be 'forbidden', 'optional', or 'required'",
+    },
+    {
+      extension: {execution: {taskSupport: "optional", retry: true}},
+      expected: "unknown x-harn.execution field 'retry' on 'get-widget'",
+    },
+  ]
+  for invalid in invalid_extensions {
+    const message = extension_error(harness.fs, raw, invalid.extension)
+    require message.contains(invalid.expected),
+      "invalid extension must fail at its exact field: "
+      + invalid.expected
+      + "; got "
+      + message
+  }
   let duplicate = json_parse(raw)
   duplicate.paths["/internal/reindex"].post["x-harn"] = {
     expose: true,

@@ -1137,7 +1137,9 @@ const _MODULE_TEMPLATE = """
         {{ op.adapter_handler }},
         title: "{{ op.adapter_title }}",
         annotations: {{ op.adapter_annotations }},
-        execution_policy: {{ op.adapter_policy }},
+        {{ if op.adapter_icons }}icons: {{ op.adapter_icons }},
+        {{ end }}{{ if op.adapter_execution }}execution: {{ op.adapter_execution }},
+        {{ end }}execution_policy: {{ op.adapter_policy }},
         cli: {{ op.adapter_cli }},
         source: {{ op.adapter_source }},
         defer_loading: {{ op.adapter_defer_loading }},{{ if op.adapter_namespace }}
@@ -1972,6 +1974,8 @@ fn _x_harn_config(op: any) -> dict {
     "namespace",
     "defer_loading",
     "annotations",
+    "icons",
+    "execution",
     "cli",
     "meta",
   ]
@@ -2022,6 +2026,88 @@ fn _x_harn_config(op: any) -> dict {
       + "' must be a bool"
   }
   return value
+}
+
+fn _adapter_icons(op: any, extension: any) {
+  const icons = extension.get("icons")
+  if icons == nil {
+    return nil
+  }
+  if type_of(icons) != "list" {
+    throw "harn-openapi.codegen_module: x-harn.icons on '" + op.operation_id
+      + "' must be a list"
+  }
+  let normalized = []
+  for {index, value} in icons.enumerate() {
+    const field = "x-harn.icons[" + to_string(index) + "]"
+    if type_of(value) != "dict" {
+      throw "harn-openapi.codegen_module: " + field + " on '" + op.operation_id
+        + "' must be an object"
+    }
+    for entry in value {
+      if !["src", "mimeType", "sizes", "theme"].contains(entry.key) {
+        throw "harn-openapi.codegen_module: unknown " + field + " field '" + entry.key
+          + "' on '"
+          + op.operation_id
+          + "'"
+      }
+    }
+    const src = value.get("src")
+    if type_of(src) != "string" || src == "" {
+      throw "harn-openapi.codegen_module: " + field + ".src on '" + op.operation_id
+        + "' must be a non-empty string"
+    }
+    const mime_type = value.get("mimeType")
+    if mime_type != nil && (type_of(mime_type) != "string" || mime_type == "") {
+      throw "harn-openapi.codegen_module: " + field + ".mimeType on '" + op.operation_id
+        + "' must be a non-empty string"
+    }
+    const sizes = value.get("sizes")
+    if sizes != nil {
+      if type_of(sizes) != "list" {
+        throw "harn-openapi.codegen_module: " + field + ".sizes on '" + op.operation_id
+          + "' must be a list of non-empty strings"
+      }
+      for size in sizes {
+        if type_of(size) != "string" || size == "" {
+          throw "harn-openapi.codegen_module: " + field + ".sizes on '" + op.operation_id
+            + "' must be a list of non-empty strings"
+        }
+      }
+    }
+    const theme = value.get("theme")
+    if theme != nil && !["light", "dark"].contains(theme) {
+      throw "harn-openapi.codegen_module: " + field + ".theme on '" + op.operation_id
+        + "' must be 'light' or 'dark'"
+    }
+    normalized = normalized + [value]
+  }
+  return normalized
+}
+
+fn _adapter_execution(op: any, extension: any) {
+  const execution = extension.get("execution")
+  if execution == nil {
+    return nil
+  }
+  if type_of(execution) != "dict" {
+    throw "harn-openapi.codegen_module: x-harn.execution on '" + op.operation_id
+      + "' must be an object"
+  }
+  for entry in execution {
+    if entry.key != "taskSupport" {
+      throw "harn-openapi.codegen_module: unknown x-harn.execution field '" + entry.key
+        + "' on '"
+        + op.operation_id
+        + "'"
+    }
+  }
+  const task_support = execution.get("taskSupport")
+  if !["forbidden", "optional", "required"].contains(task_support) {
+    throw "harn-openapi.codegen_module: x-harn.execution.taskSupport on '" + op.operation_id
+      + "' must be 'forbidden', 'optional', or 'required'"
+  }
+  return {taskSupport: task_support}
 }
 
 fn _adapter_annotations(op: any, extension: any) -> dict {
@@ -2187,6 +2273,8 @@ fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: a
     input_schema: _adapter_input_schema(doc, op, header_overrides),
     output_schema: _adapter_output_schema(doc, op),
     annotations: _adapter_annotations(op, extension),
+    icons: _adapter_icons(op, extension),
+    execution: _adapter_execution(op, extension),
     policy: _adapter_policy(op),
     source: {
       kind: "openapi",
@@ -2405,6 +2493,16 @@ fn _build_op_model(
       transport,
     ),
     adapter_annotations: _render_json_parse_expr_at(adapter.annotations, "      ", 66),
+    adapter_icons: if adapter.icons == nil {
+      ""
+    } else {
+      _render_json_parse_expr_at(adapter.icons, "      ", 66)
+    },
+    adapter_execution: if adapter.execution == nil {
+      ""
+    } else {
+      _render_json_parse_expr_at(adapter.execution, "      ", 66)
+    },
     adapter_policy: _render_json_parse_expr_at(adapter.policy, "      ", 66),
     adapter_cli: _render_json_parse_expr_at(adapter.cli, "      ", 66),
     adapter_source: _render_json_parse_expr_at(adapter.source, "      ", 66),
