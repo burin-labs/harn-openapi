@@ -1,0 +1,88 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Widget Integration",
+    "version": "2026-08-29"
+  },
+  "servers": [
+    {
+      "url": "https://api.example.test"
+    }
+  ],
+  "paths": {
+    "/widgets/{widget-id}": {
+      "get": {
+        "operationId": "get-widget",
+        "tags": ["widgets"],
+        "summary": "Get a widget",
+        "description": "Return one widget by id.",
+        "x-harn": {
+          "name": "lookup_widget",
+          "title": "Look up widget",
+          "namespace": "widgets",
+          "defer_loading": true,
+          "annotations": {
+            "openWorldHint": false
+          },
+          "meta": {
+            "com.burin.harn/audience": "developer"
+          }
+        },
+        "parameters": [
+          {
+            "name": "widget-id",
+            "in": "path",
+            "required": true,
+            "description": "Stable widget id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verbose",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "label"],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/reindex": {
+      "post": {
+        "operationId": "reindex-widgets",
+        "summary": "Reindex widgets",
+        "x-harn": {
+          "expose": false
+        },
+        "responses": {
+          "204": {
+            "description": "Reindexed"
+          }
+        }
+      }
+    }
+  }
+}
