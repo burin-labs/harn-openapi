@@ -1137,7 +1137,7 @@ const _MODULE_TEMPLATE = """
         {{ op.adapter_handler }},
         title: "{{ op.adapter_title }}",
         annotations: {{ op.adapter_annotations }},
-        policy: {{ op.adapter_policy }},
+        execution_policy: {{ op.adapter_policy }},
         cli: {{ op.adapter_cli }},
         source: {{ op.adapter_source }},
         defer_loading: {{ op.adapter_defer_loading }},{{ if op.adapter_namespace }}
