@@ -20,6 +20,8 @@ repo keeps that shared logic in one pure-Harn package:
 - walk paths, webhooks, components, schemas, enums, security metadata,
   pagination patterns, and rate-limit response conventions;
 - generate typed Harn SDK source for downstream provider repos;
+- generate one typed tool registry that Harn projects as an MCP server, a
+  command tree, or a versioned static catalog;
 - keep a pinned real-world Notion OpenAPI fixture for deterministic coverage.
 
 The generator is intentionally scoped to focused API packages backed by an
@@ -41,6 +43,7 @@ CLI pinned by `.harn-version`.
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
 | `tests/fixtures/connector_helpers.openapi.json` | Small synthetic OpenAPI fixture covering auth alternatives, pagination, and rate-limit metadata. |
+| `tests/fixtures/adapter_catalog.openapi.json` | Synthetic adapter fixture covering `x-harn`, registry, CLI, static catalog, and MCP parity. |
 | `scripts/regen_demo.harn` | End-to-end parse to codegen demo that writes generated SDK source to `/tmp`. |
 | `scripts/refresh_fixtures.harn` | Refreshes the pinned Notion fixture and metadata intentionally. |
 | `scripts/fixture_diff.harn` | Prints a structured operation/schema diff between two fixture captures. |
@@ -51,6 +54,7 @@ CLI pinned by `.harn-version`.
 | `.github/workflows/ci.yml` | Harn check/lint/fmt/package/test/demo/fixture workflow with an aggregate `CI status` job for branch rules and merge queue. |
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
 | `docs/migration-codegen-fs.md` | How to update `codegen_module` callers to pass `HarnessFs`. |
+| `docs/tool-adapters.md` | Reference for generated tool registries and the `x-harn` extension. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
 
 ## Install
@@ -146,8 +150,8 @@ import { parse } from "../src/lib"
   conventions for downstream retry/backoff code.
 - `codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string` — emit a typed Harn SDK
   module source string with per-scheme security dispatch, credential-provider
-  hooks, optional connector-policy transport, pagination metadata, and
-  rate-limit metadata (see below).
+  hooks, optional connector-policy transport, pagination metadata, rate-limit
+  metadata, and `adapter_tools` / `adapter_catalog` projections (see below).
 - `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
   generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`.
 
@@ -262,6 +266,24 @@ let src = codegen_module(harness.fs, doc, {
 
 Raw transport emits direct `http_get`, `http_post`, and sibling calls with
 structured throws for non-2xx responses. Prefer connector policy for new SDKs.
+
+### Tool adapters
+
+Every generated module exports `adapter_tools(authority, client) ->
+ToolRegistry`. That registry owns operation names, JSON Schemas, handlers,
+policy, source bindings, and presentation metadata. Use Harn's adapters instead
+of generating parallel dispatch code:
+
+```sh
+harn tool schema ./server.harn --pretty
+harn tool run ./server.harn --help
+harn serve mcp ./server.harn
+```
+
+Generated modules also export `adapter_catalog(authority, client) -> dict`, a
+convenience wrapper over Harn's versioned `harn-tools/1.0` projection. See
+[Generated tool adapters](docs/tool-adapters.md) for the exact `x-harn`
+contract and server example.
 
 ### Pagination and rate-limit helpers
 
