@@ -24,9 +24,6 @@
           "annotations": {
             "openWorldHint": false
           },
-          "cli": {
-            "command": ["widgets", "get"]
-          },
           "meta": {
             "com.burin.harn/audience": "developer"
           }

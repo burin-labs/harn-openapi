@@ -25,7 +25,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(catalog.schema_version, \"harn-tools/1.0\")\n"
     + "  assert_eq(catalog.info.name, \"widgets\")\n"
     + "  assert_eq(catalog.info.version, \"2026-08-29\")\n"
-    + "  assert_eq(catalog.tools[0].cli.command, [\"widgets\", \"get\"])\n"
+    + "  assert_eq(catalog.tools[0].cli.command, [\"widgets\", \"lookup_widget\"])\n"
     + "  assert_eq(catalog.tools[0].policy.kind, \"fetch\")\n"
     + "  assert_eq(catalog.tools[0].source.binding.method, \"GET\")\n"
     + "  const registered = registry.tools[0]\n"

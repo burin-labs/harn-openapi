@@ -2148,12 +2148,17 @@ fn _adapter_cli(op: any, extension: any, name: any) -> dict {
     throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
       + "' must be a string or list of strings"
   } else {
-    const tags = op.tags ?? []
-    if len(tags) > 0 {
-      command_path = [_sanitize_ident(tags[0]), name]
+    let default_parts = []
+    const namespace = extension.get("namespace")
+    if namespace != nil {
+      default_parts = default_parts + namespace.split(".")
     } else {
-      command_path = [name]
+      const tags = op.tags ?? []
+      if len(tags) > 0 {
+        default_parts = default_parts + [_sanitize_ident(tags[0])]
+      }
     }
+    command_path = default_parts + name.split(".")
   }
   for segment in command_path {
     if regex_match("^[A-Za-z0-9_][A-Za-z0-9_-]*$", segment) == nil {
