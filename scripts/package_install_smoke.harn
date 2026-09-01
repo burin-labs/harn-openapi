@@ -156,6 +156,8 @@ pipeline default(harness: Harness) {
   const tools = harness.tools.mcp_list_tools(mcp)
   require tools.count == 1, "installed package MCP server should expose one tool"
   require tools[0].name == "ping", "CLI and MCP should expose the same tool"
+  const mcp_output: PingResult = schema_expect(harness.tools.mcp_call(mcp, "ping"), PingResult)
+  require mcp_output.ok == true, "installed package MCP dispatch should return typed JSON"
   harness.tools.mcp_disconnect(mcp)
   harness.fs.delete(smoke_root)
   harness.stdio.println("package_install_smoke: ok")
