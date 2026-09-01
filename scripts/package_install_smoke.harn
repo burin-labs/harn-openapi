@@ -7,6 +7,8 @@
  * to test a published ref such as
  * `github.com/burin-labs/harn-openapi@v0.2.0-rc.1`.
  */
+import { ToolCatalog } from "std/tools"
+
 type PingResult = {ok: bool}
 
 fn _repo_root(fs: HarnessFs) -> string {
@@ -133,11 +135,13 @@ pipeline default(harness: Harness) {
   const server_path = smoke_root + "/server.harn"
   const schema = harness.process.run({program: harn_bin, args: ["tool", "schema", server_path]})
   require schema.success, "installed package schema projection failed: " + schema.stderr
-  const catalog = json_parse(schema.stdout)
+  const catalog: ToolCatalog = schema_expect(json_parse(schema.stdout), ToolCatalog)
   require catalog.schema_version == "harn-tools/1.0", "catalog version should be stable"
   require len(catalog.tools) == 1, "installed package should generate one tool"
-  require catalog.tools[0].name == "ping", "installed package should retain the operation"
-  require catalog.tools[0].title == "ping", "operation id should backfill an absent summary"
+  const generated_tool = catalog.tools[0]
+  require generated_tool != nil, "installed package should generate a tool entry"
+  require generated_tool.name == "ping", "installed package should retain the operation"
+  require generated_tool.title == "ping", "operation id should backfill an absent summary"
   const help = harness.process.run(
     {program: harn_bin, args: ["tool", "run", server_path, "ping", "--help"]},
   )
