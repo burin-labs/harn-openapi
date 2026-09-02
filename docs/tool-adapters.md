@@ -20,7 +20,7 @@ pub fn adapter_catalog(
 ) -> ToolCatalog
 
 pub fn adapter_registry(
-  harness: Harness,
+  harness: {clock: HarnessClock, net: HarnessNet},
   config: AdapterRuntimeConfig,
 ) -> ToolRegistry
 ```

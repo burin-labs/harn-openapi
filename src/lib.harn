@@ -1277,7 +1277,10 @@ const _MODULE_TEMPLATE = """
   }
 
   /** Construct the one registry projected by CLI, MCP, and static schema commands. */
-  pub fn adapter_registry(harness: Harness, config: AdapterRuntimeConfig) -> ToolRegistry {
+  pub fn adapter_registry(
+    harness: {clock: HarnessClock, net: HarnessNet},
+    config: AdapterRuntimeConfig,
+  ) -> ToolRegistry {
     const client = new_client(config.base_url, config.credentials, config.extra_headers)
     return adapter_tools({{ adapter_authority }}, client)
   }
@@ -1287,11 +1290,18 @@ const _MODULE_TEMPLATE = """
     if client.base_url.trim() == "" {
       throw "harn-openapi.generated: base URL configuration is required"
     }
-    {{ for op in published_operations }}if !{{ op.security_available_call }}(client) {
-      throw "{{ op.security_error }}"
-    }
+    {{ for op in published_operations }}_validate_{{ op.fn_name }}_client(client)
     {{ end }}return nil
   }
+
+  {{ for op in published_operations }}fn _validate_{{ op.fn_name }}_client(client: AdapterClient) -> nil {
+    if !{{ op.security_available_call }}(client) {
+      throw "{{ op.security_error }}"
+    }
+    return nil
+  }
+
+  {{ end }}
 
   fn _no_auth_headers(client: AdapterClient) -> AdapterHeaders {
     let hs: AdapterHeaders = {"Content-Type": "application/json"}
@@ -1595,7 +1605,10 @@ const _ENTRYPOINT_TEMPLATE = """
   } from "{{ module_import }}"
 
   pipeline main(harness: Harness) {
-    const registry = adapter_registry(harness, adapter_environment_config(harness.env))
+    const registry = adapter_registry(
+      {clock: harness.clock, net: harness.net},
+      adapter_environment_config(harness.env),
+    )
     harness.tools.mcp_tools(registry)
   }
   """
