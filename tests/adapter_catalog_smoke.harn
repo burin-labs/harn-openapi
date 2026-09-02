@@ -92,13 +92,19 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  require wire_widget != nil, \"raw MCP tools/list must include the widget\"\n"
     + "  assert_eq(wire_widget.icons[0].sizes, [\"any\"])\n"
     + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n"
-    + "  const help = harness.process.shell((harness.env.get(\"HARN_BIN\") ?? \"harn\") + \" tool run \" + \""
-    + server_path + "\" + \" --help\")\n"
+    + "  const help = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path + "\", \"--help\"]})\n"
     + "  assert(help.success, \"generated CLI help should succeed\")\n"
     + "  assert(help.stdout.contains(\"widgets\"), \"generated CLI should expose the tag group\")\n"
     + "  assert(!help.stdout.contains(\"reindex\"), \"generated CLI help must exclude MCP-only tools\")\n"
-    + "  const excluded_cli = harness.process.shell((harness.env.get(\"HARN_BIN\") ?? \"harn\") + \" tool run \" + \""
-    + server_path + "\" + \" widgets reindex --help\")\n"
+    + "  const cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path
+    + "\", \"widgets\", \"lookup_widget\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
+    + "  require cli.success, \"generated CLI dispatch should succeed: \" + cli.stderr\n"
+    + "  const cli_result = json_parse(cli.stdout.trim())\n"
+    + "  assert_eq(cli_result.id, \"w 1\")\n" + "  assert_eq(cli_result.label, \"Widget One\")\n"
+    + "  const excluded_cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path + "\", \"widgets\", \"reindex\", \"--help\"]})\n"
     + "  assert(!excluded_cli.success, \"excluded CLI command resolution must fail\")\n" + "}\n"
 }
 
@@ -107,6 +113,8 @@ fn generated_server(module_path: string) -> string {
     + module_path
     + "\"\n\n"
     + "pipeline main(harness: Harness) {\n"
+    + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
     + "  const client = new_client(\"https://api.example.test\")\n"
     + "  harness.tools.mcp_tools(adapter_tools({clock: harness.clock, net: harness.net}, client))\n"
     + "}\n"
