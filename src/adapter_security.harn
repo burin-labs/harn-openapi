@@ -202,9 +202,18 @@ fn normalize_alternative(
       return reject_alternative(field, "must not contain an empty security scheme name")
     }
     // Resolving here proves every reference while the OpenAPI field remains identifiable.
-    const _ = resolve_security_scheme(entry.key, schemes)
+    const scheme = resolve_security_scheme(entry.key, schemes)
+    const normalized_scopes = normalize_scopes(entry.value, field + "." + entry.key)
+    const scheme_type = scheme.get("type")
+    if scheme_type != "oauth2" && scheme_type != "openIdConnect"
+      && len(normalized_scopes) != 0 {
+      return reject_alternative(
+        field + "." + entry.key,
+        "must be empty unless the scheme is OAuth 2.0 or OpenID Connect",
+      )
+    }
     names = names + [entry.key]
-    scopes = {...scopes, [entry.key]: normalize_scopes(entry.value, field + "." + entry.key)}
+    scopes = {...scopes, [entry.key]: normalized_scopes}
   }
   return {schemes: names.sort(), scopes: scopes}
 }

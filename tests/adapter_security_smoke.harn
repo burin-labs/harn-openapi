@@ -18,7 +18,8 @@ pipeline test_main(harness: Harness) {
       bearerAuth: {type: "http", scheme: "bearer"},
       headerKey: {type: "apiKey", in: "header", name: "X-Widget-Key"},
       basicAuth: {type: "http", scheme: "basic"},
-      oauthAlias: {"$ref": "#/components/securitySchemes/bearerAuth"},
+      oauthScheme: {type: "oauth2", flows: {}},
+      oauthAlias: {"$ref": "#/components/securitySchemes/oauthScheme"},
       clientCertificate: {type: "mutualTLS"},
       unused: {type: "apiKey", in: "query", name: "unused"},
     },
@@ -114,6 +115,13 @@ pipeline test_main(harness: Harness) {
       prefix: "WIDGETS",
       expected:
         "harn-openapi.adapter_security: components.securitySchemes.unknown must name a declared Security Scheme Object",
+    },
+    {
+      schemes: {bearerAuth: {type: "http", scheme: "bearer"}},
+      operations: [{operation_id: "scoped-bearer", security: [{bearerAuth: ["read"]}]}],
+      prefix: "WIDGETS",
+      expected:
+        "harn-openapi.adapter_security: operations[0].security[0].bearerAuth must be empty unless the scheme is OAuth 2.0 or OpenID Connect",
     },
   ]
   for invalid in invalid_cases {
