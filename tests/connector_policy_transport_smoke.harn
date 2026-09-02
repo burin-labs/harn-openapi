@@ -183,7 +183,7 @@ pipeline test_main(harness: Harness) {
   require_not_contains(
     harness.stdio,
     src,
-    "harness: Harness",
+    "pub fn list_items(\n    harness: Harness",
     "connector operations should not require the root harness",
   )
   require_contains(
@@ -242,7 +242,7 @@ pipeline test_main(harness: Harness) {
   require_not_contains(
     harness.stdio,
     raw_src,
-    "harness.net",
+    "pub fn list_items(harness: Harness",
     "raw transport should not require unrelated harness capabilities",
   )
   check_generates(harness, raw_src)

@@ -14,6 +14,7 @@ pub type AdapterSecurityEnvironment = {
   value?: string,
 }
 
+/** One referenced OpenAPI scheme and its portable host configuration names. */
 pub type AdapterSecuritySchemePlan = {
   name: string,
   kind: AdapterSecuritySchemeKind,
@@ -31,6 +32,7 @@ pub type AdapterOperationSecurityPlan = {
   alternatives: list<AdapterSecurityAlternative>,
 }
 
+/** Complete security contract consumed by every generated adapter projection. */
 pub type AdapterSecurityPlan = {
   environment_prefix: string,
   base_url_environment: string,
@@ -287,25 +289,26 @@ pub fn normalize_adapter_security_plan(
     }
   }
   let normalized_schemes: dict<string, AdapterSecuritySchemePlan> = {}
-  let stem_owners = {}
+  let stem_counts = {}
+  for name in referenced {
+    const stem = environment_stem(name)
+    stem_counts = {...stem_counts, [stem]: (stem_counts.get(stem) ?? 0) + 1}
+  }
   for name in referenced.sort() {
     const value = resolve_security_scheme(name, raw_schemes)
     const kind = scheme_kind(name, value)
-    const stem = environment_stem(name)
-    if stem == "" {
+    const base_stem = environment_stem(name)
+    if base_stem == "" {
       return reject_plan(
         "components.securitySchemes." + name,
         "cannot produce a portable environment-variable stem",
       )
     }
-    const prior = stem_owners.get(stem)
-    if prior != nil {
-      return reject_plan(
-        "components.securitySchemes." + name,
-        "collides with security scheme '" + prior + "' after environment-name normalization",
-      )
+    const stem = if stem_counts.get(base_stem) > 1 {
+      base_stem + "_" + substring(sha256(name), 0, 8).upper()
+    } else {
+      base_stem
     }
-    stem_owners = {...stem_owners, [stem]: name}
     if starts_with(kind, "api_key_") {
       const parameter_name = value.get("name")
       if type_of(parameter_name) != "string" || parameter_name == "" {

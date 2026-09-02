@@ -70,6 +70,22 @@ pipeline test_main(harness: Harness) {
     "harn-openapi.adapter_security: operation 'write-widget' requires one of [bearerAuth+headerKey, basicAuth]",
   )
   assert_eq(select_adapter_security_alternative(plan, "public-health", []), [])
+  const collision_plan = normalize_adapter_security_plan(
+    {"api-key": {type: "http", scheme: "bearer"}, api_key: {type: "http", scheme: "basic"}},
+    [{operation_id: "collision", security: [{"api-key": [], api_key: []}]}],
+    "WIDGETS",
+  )
+  const dashed_scheme = collision_plan.schemes.get("api-key")
+  const underscored_scheme = collision_plan.schemes.get("api_key")
+  assert(dashed_scheme != nil && underscored_scheme != nil, "colliding schemes must both survive")
+  assert_eq(
+    dashed_scheme.environment.token,
+    "WIDGETS_API_KEY_" + substring(sha256("api-key"), 0, 8).upper() + "_TOKEN",
+  )
+  assert_eq(
+    underscored_scheme.environment.username,
+    "WIDGETS_API_KEY_" + substring(sha256("api_key"), 0, 8).upper() + "_USERNAME",
+  )
   const invalid_cases = [
     {
       schemes: {},
@@ -77,16 +93,6 @@ pipeline test_main(harness: Harness) {
       prefix: "bad-prefix",
       expected:
         "harn-openapi.adapter_security: environment_prefix must match ^[A-Z][A-Z0-9_]*$ so names are portable across hosts",
-    },
-    {
-      schemes: {
-        "api-key": {type: "http", scheme: "bearer"},
-        api_key: {type: "http", scheme: "basic"},
-      },
-      operations: [{operation_id: "collision", security: [{"api-key": [], api_key: []}]}],
-      prefix: "WIDGETS",
-      expected:
-        "harn-openapi.adapter_security: components.securitySchemes.api_key collides with security scheme 'api-key' after environment-name normalization",
     },
     {
       schemes: {loop: {"$ref": "#/components/securitySchemes/loop"}},

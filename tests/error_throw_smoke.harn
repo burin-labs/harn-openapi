@@ -75,7 +75,7 @@ pipeline test_main(harness: Harness) {
     + json_stringify(body_lit)
     + ", "
     + "headers: {\"x-request-id\": \"req-123\", \"content-type\": \"application/json\"}})\n"
-    + "  let client = new_client(\"https://api.example.com\", \"tok\")\n"
+    + "  let client = new_client(\"https://api.example.com\", {bearerAuth: {token: \"tok\"}})\n"
     + "  let caught = try { get_thing({clock: harness.clock, net: harness.net}, client); nil } catch (e) { e }\n"
     + "  assert(type_of(caught) == \"dict\", \"expected dict throw\")\n"
     + "  assert_eq(caught.operation, \"get_thing\")\n"

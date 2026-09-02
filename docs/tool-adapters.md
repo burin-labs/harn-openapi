@@ -11,51 +11,86 @@ Each generated module exports:
 ```text
 pub fn adapter_tools(
   harness: {clock: HarnessClock, net: HarnessNet},
-  client: dict,
+  client: AdapterClient,
 ) -> ToolRegistry
 
 pub fn adapter_catalog(
   harness: {clock: HarnessClock, net: HarnessNet},
-  client: dict,
+  client: AdapterClient,
 ) -> ToolCatalog
+
+pub fn adapter_registry(
+  harness: Harness,
+  config: AdapterRuntimeConfig,
+) -> ToolRegistry
 ```
 
 With `transport: "raw"`, both functions accept `net: HarnessNet` instead of
 the `{clock, net}` record.
 
 `adapter_tools` returns the executable registry. `adapter_catalog` returns the
-same registry through Harn's `harn-tools/1.0` static projection. The projection
+same registry through Harn's versioned static projection. The projection
 omits handler closures and retains registry identity, input and output JSON
 Schemas, CLI paths, MCP annotations, Harn policy, source bindings, and `_meta`.
 
 Operations with `x-harn.expose: false` remain in the typed SDK and are omitted
 from the tool registry.
 
-## Server script
+## Executable entrypoint
 
-```harn
-import { adapter_tools, new_client } from "example-sdk/default"
+`codegen_entrypoint` emits a private `pipeline main` that reads
+`adapter_environment_config(harness.env)`, constructs `adapter_registry`, and
+passes it to `harness.tools.mcp_tools`. Keeping configuration helpers in the SDK
+module prevents Harn's automatic MCP projection from publishing them as tools.
 
-fn main(harness: Harness) {
-  const client = new_client("https://api.example.com")
-  harness.tools.mcp_tools(
-    adapter_tools({clock: harness.clock, net: harness.net}, client),
-  )
-}
-```
-
-Given `server.harn`, the supported projections are:
+Given `src/main.harn`, the supported projections are:
 
 ```sh
-harn tool schema server.harn --pretty
-harn tool run server.harn --help
-harn tool run server.harn widgets get --widget-id w_123
-harn serve mcp server.harn
+harn tool schema src/main.harn --pretty
+harn tool run src/main.harn --help
+harn tool run src/main.harn widgets get --widget-id w_123
+harn serve mcp src/main.harn
 ```
 
 The CLI and MCP server load and execute the same handler closure. Both validate
 input against the registry's JSON Schema. The CLI also validates handler output
 before printing it.
+
+See [Generate an adapter package](generate-adapter-package.md),
+[Run an adapter as a CLI](run-adapter-cli.md), and
+[Serve an adapter over MCP](serve-adapter-mcp.md) for runnable procedures.
+
+## Security plan and runtime configuration
+
+`adapter_security_plan(doc, prefix)` returns one `AdapterSecurityPlan`. Its
+scheme map retains original OpenAPI names and contains only portable metadata:
+the normalized scheme kind, wire parameter name, host-managed flag, and stable
+environment-variable names. It never contains credential values.
+
+Each operation contains ordered `alternatives`. Each alternative is one OpenAPI
+Security Requirement Object, so every scheme inside it is required. The list of
+objects is an OR. `{}` is the anonymous alternative. Generated clients select
+the first fully configured branch and never merge credentials across branches.
+
+`AdapterRuntimeConfig` contains:
+
+```text
+base_url: string
+credentials: dict<string, AdapterCredential>
+extra_headers: dict
+```
+
+Bearer, OAuth 2.0, and OpenID Connect credentials use `token`; Basic uses
+`username` plus `password`; API keys use `value`; mutual TLS uses
+`host_configured: true`. A credential can instead carry a typed request-time
+`token_provider`, `value_provider`, or `basic_provider` callback. The host owns OAuth authorization and refresh, secure
+storage, tenant selection, token rotation, and client-certificate plumbing.
+
+`adapter_registry` validates the base URL and every exposed operation before it
+publishes a tool. Missing configuration reports the operation and acceptable
+scheme combinations without printing secret values. See
+[Configure an adapter environment](configure-adapter-environment.md) for exact
+environment shapes.
 
 ## Portable schema graph
 
@@ -110,9 +145,9 @@ rejects the following before source generation:
 
 This boundary validates schema structure and reference portability. Harn's
 prepared tool catalog remains the owner of validating runtime input, output,
-and application-error values. The current `harn-tools/1.0` generated registry
-still emits resolved per-operation schemas; the direct graph projection lands
-with the `harn-tools/2.0` cutover.
+and application-error values. Generated registries currently emit resolved
+per-operation schemas. The direct graph projection lands with the next
+versioned Harn tool-contract cutover.
 
 ## `x-harn`
 
