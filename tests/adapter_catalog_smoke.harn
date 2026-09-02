@@ -1,4 +1,5 @@
 // Canonical OpenAPI -> ToolRegistry -> static catalog / CLI / MCP proof.
+import { normalize_adapter_governance } from "../src/adapter_governance"
 import { codegen_module, parse } from "../src/lib"
 
 fn harn_cmd(env: HarnessEnv) -> string {
@@ -14,43 +15,70 @@ fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) 
 fn generated_runner(module_path: string, server_path: string) -> string {
   return "import { agent_dispatch_tool_call } from \"std/agent/primitives\"\n"
     + "import { adapter_catalog, adapter_tools, new_client } from \"" + module_path + "\"\n\n"
+    + "fn named_tool(tools: list, name: string) {\n" + "  for entry in tools {\n"
+    + "    if entry.name == name { return entry }\n" + "  }\n" + "  return nil\n" + "}\n\n"
     + "@test\n" + "pipeline default(harness: Harness) {\n"
     + "  const client = new_client(\"https://api.example.test\")\n"
     + "  const registry = adapter_tools({clock: harness.clock, net: harness.net}, client)\n"
-    + "  assert_eq(len(registry.tools), 1)\n"
+    + "  assert_eq(len(registry.tools), 2)\n"
     + "  const catalog = adapter_catalog({clock: harness.clock, net: harness.net}, client)\n"
+    + "  assert_eq(len(catalog.tools), 1)\n"
     + "  assert_eq(catalog.schema_version, \"harn-tools/1.0\")\n"
     + "  assert_eq(catalog.info.name, \"widgets\")\n"
     + "  assert_eq(catalog.info.version, \"2026-08-29\")\n"
-    + "  assert_eq(catalog.tools[0].cli.command, [\"widgets\", \"lookup_widget\"])\n"
-    + "  assert_eq(catalog.tools[0].icons[0].src, \"https://api.example.test/assets/widget.svg\")\n"
-    + "  assert_eq(catalog.tools[0].icons[0].theme, \"light\")\n"
-    + "  assert_eq(catalog.tools[0].execution.taskSupport, \"optional\")\n"
-    + "  assert_eq(catalog.tools[0].policy.kind, \"fetch\")\n"
-    + "  assert_eq(catalog.tools[0].source.binding.method, \"GET\")\n"
-    + "  const registered = registry.tools[0]\n"
+    + "  const catalog_widget = named_tool(catalog.tools, \"lookup_widget\")\n"
+    + "  const catalog_reindex = named_tool(catalog.tools, \"reindex_widgets\")\n"
+    + "  require catalog_widget != nil, \"catalog tool must be named\"\n"
+    + "  assert_eq(catalog_reindex, nil)\n"
+    + "  assert_eq(catalog_widget.cli.command, [\"widgets\", \"get\"])\n"
+    + "  assert_eq(catalog_widget.governance.audiences, [\"cli\", \"mcp\", \"catalog\", \"agent\"])\n"
+    + "  assert_eq(catalog_widget.icons[0].src, \"https://api.example.test/assets/widget.svg\")\n"
+    + "  assert_eq(catalog_widget.icons[0].theme, \"light\")\n"
+    + "  assert_eq(catalog_widget.execution.taskSupport, \"optional\")\n"
+    + "  assert_eq(catalog_widget.policy.kind, \"fetch\")\n"
+    + "  assert_eq(catalog_widget.source.binding.method, \"GET\")\n"
+    + "  const registered = named_tool(registry.tools, \"lookup_widget\")\n"
+    + "  const registered_reindex = named_tool(registry.tools, \"reindex_widgets\")\n"
+    + "  require registered != nil && registered_reindex != nil, \"registry tools must be named\"\n"
     + "  assert_eq(registered.name, \"lookup_widget\")\n"
     + "  assert_eq(registered.namespace, \"widgets\")\n"
     + "  assert_eq(registered.defer_loading, true)\n"
     + "  assert_eq(registered.icons[0].mimeType, \"image/svg+xml\")\n"
     + "  assert_eq(registered.execution.taskSupport, \"optional\")\n"
+    + "  assert_eq(registered.governance.audiences, catalog_widget.governance.audiences)\n"
+    + "  assert_eq(registered_reindex.governance.audiences, [\"mcp\"])\n"
     + "  assert_eq(registered.parameters.widget_id.required, true)\n"
     + "  assert_eq(registered.outputSchema.required, [\"id\", \"label\"])\n"
     + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
+    + "  const cli_registry = tool_project(registry, \"cli\")\n"
+    + "  assert_eq(len(cli_registry.tools), 1)\n"
+    + "  const cli_result = named_tool(cli_registry.tools, \"lookup_widget\").handler({widget_id: \"w 1\", verbose: true})\n"
+    + "  assert_eq(cli_result.label, \"Widget One\")\n" + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
+    + "  const mcp_registry = tool_project(registry, \"mcp\")\n"
+    + "  assert_eq(len(mcp_registry.tools), 2)\n"
+    + "  const mcp_result = named_tool(mcp_registry.tools, \"lookup_widget\").handler({widget_id: \"w 1\", verbose: true})\n"
+    + "  assert_eq(mcp_result.label, \"Widget One\")\n" + "  harness.testing.http_mock_clear()\n"
     + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
     + "  const called = agent_dispatch_tool_call(harness.tools, {name: \"lookup_widget\", arguments: {widget_id: \"w 1\", verbose: true}}, registry)\n"
     + "  if !called.ok { harness.stdio.println(json_stringify(called)) }\n"
     + "  assert(called.ok, \"generated registry handler should dispatch\")\n"
     + "  assert(called.rendered_result.contains(\"Widget One\"), \"generated SDK result should return\")\n"
+    + "  assert_eq(len(tool_project(registry, \"agent\").tools), 1)\n"
+    + "  assert_eq(len(tool_project(registry, \"dashboard\").tools), 0)\n"
     + "  const mcp = harness.tools.mcp_connect(harness.env.get(\"HARN_BIN\") ?? \"harn\", [\"serve\", \"mcp\", \""
     + server_path + "\"])\n" + "  const discovered = harness.tools.mcp_list_tools(mcp)\n"
-    + "  assert_eq(discovered.count, 1)\n" + "  assert_eq(discovered[0].name, \"lookup_widget\")\n"
-    + "  assert_eq(discovered[0].inputSchema.required, [\"widget_id\"])\n"
-    + "  assert_eq(discovered[0].outputSchema.required, [\"id\", \"label\"])\n"
-    + "  assert_eq(discovered[0].annotations.readOnlyHint, true)\n"
-    + "  assert_eq(discovered[0].annotations.openWorldHint, false)\n"
-    + "  assert_eq(discovered[0].icons[0].sizes, [\"any\"])\n"
-    + "  assert_eq(discovered[0]._meta[\"com.burin.harn/audience\"], \"developer\")\n"
+    + "  assert_eq(discovered.count, 2)\n"
+    + "  const discovered_widget = named_tool(discovered, \"lookup_widget\")\n"
+    + "  require discovered_widget != nil, \"MCP must discover the included widget tool\"\n"
+    + "  assert(named_tool(discovered, \"reindex_widgets\") != nil, \"MCP must discover its selective tool\")\n"
+    + "  assert_eq(discovered_widget.inputSchema.required, [\"widget_id\"])\n"
+    + "  assert_eq(discovered_widget.outputSchema.required, [\"id\", \"label\"])\n"
+    + "  assert_eq(discovered_widget.annotations.readOnlyHint, true)\n"
+    + "  assert_eq(discovered_widget.annotations.openWorldHint, false)\n"
+    + "  assert_eq(discovered_widget.icons[0].sizes, [\"any\"])\n"
+    + "  assert_eq(discovered_widget._meta[\"com.burin.harn/audience\"], \"developer\")\n"
     + "  harness.tools.mcp_disconnect(mcp)\n"
     + "  const rpc_input = json_stringify({jsonrpc: \"2.0\", id: 1, method: \"initialize\", params: {protocolVersion: \"2025-11-25\", capabilities: {}, clientInfo: {name: \"harn-openapi-test\", version: \"1\"}}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", method: \"notifications/initialized\", params: {}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", id: 2, method: \"tools/list\", params: {}}) + \"\\n\"\n"
     + "  const wire = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"serve\", \"mcp\", \""
@@ -60,18 +88,38 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "    const message = json_parse(line)\n"
     + "    if message.get(\"id\") == 2 { wire_tools = message.result.tools }\n" + "  }\n"
     + "  require wire_tools != nil, \"raw tools/list response must be observed\"\n"
-    + "  assert_eq(wire_tools[0].icons[0].sizes, [\"any\"])\n"
-    + "  assert_eq(wire_tools[0].execution.taskSupport, \"optional\")\n"
+    + "  const wire_widget = named_tool(wire_tools, \"lookup_widget\")\n"
+    + "  require wire_widget != nil, \"raw MCP tools/list must include the widget\"\n"
+    + "  assert_eq(wire_widget.icons[0].sizes, [\"any\"])\n"
+    + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n" + "}\n"
+}
+
+/**
+ * The CLI surface spawns three subprocesses. It is generated and run as its own
+ * suite so it gets its own execute budget; combined with the MCP path in one
+ * runner the pair exceeded the 30s limit on a CI runner.
+ */
+fn generated_cli_runner(module_path: string, server_path: string) -> string {
+  return "import { adapter_tools, new_client } from \"" + module_path + "\"\n\n"
+    + "@test\n"
+    + "pipeline cli_surface(harness: Harness) {\n"
     + "  const help = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
-    + server_path + "\", \"--help\"]})\n"
+    + server_path
+    + "\", \"--help\"]})\n"
     + "  assert(help.success, \"generated CLI help should succeed\")\n"
     + "  assert(help.stdout.contains(\"widgets\"), \"generated CLI should expose the tag group\")\n"
+    + "  assert(!help.stdout.contains(\"reindex\"), \"generated CLI help must exclude MCP-only tools\")\n"
     + "  const cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
     + server_path
-    + "\", \"widgets\", \"lookup_widget\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
+    + "\", \"widgets\", \"get\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
     + "  require cli.success, \"generated CLI dispatch should succeed: \" + cli.stderr\n"
     + "  const cli_result = json_parse(cli.stdout.trim())\n"
-    + "  assert_eq(cli_result.id, \"w 1\")\n" + "  assert_eq(cli_result.label, \"Widget One\")\n"
+    + "  assert_eq(cli_result.id, \"w 1\")\n"
+    + "  assert_eq(cli_result.label, \"Widget One\")\n"
+    + "  const excluded_cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path
+    + "\", \"widgets\", \"reindex\", \"--help\"]})\n"
+    + "  assert(!excluded_cli.success, \"excluded CLI command resolution must fail\")\n"
     + "}\n"
 }
 
@@ -99,6 +147,18 @@ fn extension_error(fs: HarnessFs, raw: string, extension: any) -> string {
   return to_string(rejected)
 }
 
+fn second_adapter_error(fs: HarnessFs, raw: string, extension: any) -> string {
+  let malformed = json_parse(raw)
+  malformed.paths["/internal/reindex"].post["x-harn"] = extension
+  const rejected = try {
+    codegen_module(fs, parse(json_stringify(malformed)), {module_name: "widgets"})
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(rejected)
+}
+
 @test
 pipeline default(harness: Harness) {
   const raw = harness.fs.read_text(
@@ -116,6 +176,43 @@ pipeline default(harness: Harness) {
   require to_string(rejected).contains("x-harn on 'get-widget' must be an object"),
     "malformed extensions must fail before code generation"
   const invalid_extensions = [
+    {
+      extension: {governance: "cli"},
+      expected: "x-harn.governance on 'get-widget' must be an object",
+    },
+    {
+      extension: {governance: {audiences: ["cli"], authorization: "admin"}},
+      expected: "x-harn.governance on 'get-widget' contains unknown field 'authorization'",
+    },
+    {
+      extension: {governance: {}},
+      expected: "x-harn.governance on 'get-widget' must contain an 'audiences' field",
+    },
+    {
+      extension: {governance: {audiences: "cli"}},
+      expected: "x-harn.governance.audiences on 'get-widget' must be a list",
+    },
+    {
+      extension: {governance: {audiences: []}},
+      expected: "x-harn.governance.audiences on 'get-widget' must be non-empty",
+    },
+    {
+      extension: {governance: {audiences: ["cli", 1]}},
+      expected: "x-harn.governance.audiences on 'get-widget' must contain only strings",
+    },
+    {
+      extension: {governance: {audiences: ["cli", "desktop"]}},
+      expected: "x-harn.governance.audiences on 'get-widget' contains unknown audience 'desktop'",
+    },
+    {
+      extension: {governance: {audiences: ["cli", "cli"]}},
+      expected: "x-harn.governance.audiences on 'get-widget' contains duplicate audience 'cli'",
+    },
+    {
+      extension: {cli: {command: []}},
+      expected:
+        "x-harn.cli.command on 'get-widget' must contain at least one portable command name",
+    },
     {
       extension: {icons: {src: "https://example.test/icon.svg"}},
       expected: "x-harn.icons on 'get-widget' must be a list",
@@ -172,6 +269,73 @@ pipeline default(harness: Harness) {
   }
   require to_string(duplicate_rejected).contains("duplicate generated tool name 'lookup_widget'"),
     "adapter collisions must fail while the OpenAPI source is still identifiable"
+  const exact_cli_conflict = second_adapter_error(
+    harness.fs,
+    raw,
+    {
+      expose: true,
+      name: "reindex_widgets",
+      governance: {audiences: ["cli"]},
+      cli: {command: ["widgets", "get"]},
+    },
+  )
+  require exact_cli_conflict.contains("conflicting generated CLI commands")
+    && exact_cli_conflict.contains("'widgets get'"),
+    "equal CLI commands must collide inside the CLI audience: "
+    + exact_cli_conflict
+  const cli_conflict_rejected = second_adapter_error(
+    harness.fs,
+    raw,
+    {
+      expose: true,
+      name: "reindex_widgets",
+      governance: {audiences: ["cli"]},
+      cli: {command: ["widgets"]},
+    },
+  )
+  require cli_conflict_rejected.contains("conflicting generated CLI commands")
+    && cli_conflict_rejected.contains("'widgets'")
+    && cli_conflict_rejected.contains("'widgets get'"),
+    "CLI parent and leaf commands must not shadow each other: "
+    + cli_conflict_rejected
+  let disjoint_cli = json_parse(raw)
+  disjoint_cli.paths["/internal/reindex"].post["x-harn"] = {
+    expose: true,
+    name: "reindex_widgets",
+    governance: {audiences: ["mcp"]},
+    cli: {command: ["widgets", "get"]},
+  }
+  const disjoint_source = codegen_module(
+    harness.fs,
+    parse(json_stringify(disjoint_cli)),
+    {module_name: "widgets"},
+  )
+  require disjoint_source.contains("governance:"),
+    "disjoint adapter audiences should permit a shared dormant CLI path"
+  const defaulted_source = codegen_module(
+    harness.fs,
+    parse(
+      json_stringify(
+        {
+          openapi: "3.1.0",
+          info: {title: "Default governance", version: "1"},
+          paths: {
+            "/default": {
+              get: {operationId: "default-governance", responses: {"204": {description: "Done"}}},
+            },
+          },
+        },
+      ),
+    ),
+    {module_name: "widgets"},
+  )
+  require defaulted_source.contains(
+    "\\\"audiences\\\":[\\\"cli\\\",\\\"mcp\\\",\\\"catalog\\\",\\\"dashboard\\\",\\\"agent\\\"]",
+  ),
+    "omitted governance must emit every audience explicitly in canonical order"
+  require normalize_adapter_governance({audiences: ["agent", "catalog", "mcp", "cli"]}, "op")
+    == {audiences: ["cli", "mcp", "catalog", "agent"]},
+    "governance normalization should have one typed canonical order"
   const module_path = scratch_path(
     {fs: harness.fs, random: harness.random},
     "harn-openapi-adapter-module",
@@ -199,4 +363,39 @@ pipeline default(harness: Harness) {
     harness.stdio.println(result.stdout)
   }
   require result.success, "generated adapter and MCP discovery path must pass"
+}
+
+@test
+pipeline cli_surface(harness: Harness) {
+  const raw = harness.fs.read_text(
+    harness.fs.source_dir() + "/fixtures/adapter_catalog.openapi.json",
+  )
+  const doc = parse(raw)
+  const module_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-cli-module",
+  )
+    + ".harn"
+  const server_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-cli-server",
+  )
+    + ".harn"
+  const runner_path = scratch_path(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-cli-runner",
+  )
+    + ".harn"
+  harness.fs.write_text(
+    module_path,
+    codegen_module(harness.fs, doc, {module_name: "widgets", client_name: "WidgetClient"}),
+  )
+  harness.fs.write_text(server_path, generated_server(module_path))
+  harness.fs.write_text(runner_path, generated_cli_runner(module_path, server_path))
+  const result = harness.process.shell(harn_cmd(harness.env) + " test " + runner_path)
+  if !result.success {
+    harness.stdio.println(result.stderr)
+    harness.stdio.println(result.stdout)
+  }
+  require result.success, "generated CLI surface must honour x-harn governance and command mapping"
 }

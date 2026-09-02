@@ -84,6 +84,7 @@
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
 import { filter_nil } from "std/collections"
+import { normalize_adapter_governance } from "./adapter_governance"
 
 // -------------------------------------------------------------------------------------------------
 // Types
@@ -1087,7 +1088,7 @@ fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
-  let exposed_commands = []
+  let exposed_cli_commands = []
   for op in _operations(doc) {
     const function_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
     taken_names = taken_names + [function_name]
@@ -1096,16 +1097,39 @@ fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
       if exposed_names.contains(adapter.name) {
         throw "harn-openapi.codegen_module: duplicate generated tool name '" + adapter.name + "'"
       }
-      const command_key = join(adapter.cli.command, " ")
-      if exposed_commands.contains(command_key) {
-        throw "harn-openapi.codegen_module: duplicate generated CLI command '" + command_key + "'"
+      if adapter.governance.audiences.contains("cli") {
+        for command in exposed_cli_commands {
+          if _cli_commands_conflict(command, adapter.cli.command) {
+            throw "harn-openapi.codegen_module: conflicting generated CLI commands '"
+              + join(command, " ")
+              + "' and '"
+              + join(adapter.cli.command, " ")
+              + "'"
+          }
+        }
+        exposed_cli_commands = exposed_cli_commands + [adapter.cli.command]
       }
       exposed_names = exposed_names + [adapter.name]
-      exposed_commands = exposed_commands + [command_key]
     }
     adapter_operations = adapter_operations + [adapter]
   }
   return adapter_operations
+}
+
+fn _cli_commands_conflict(left: list<string>, right: list<string>) -> bool {
+  const shared_length = if len(left) < len(right) {
+    len(left)
+  } else {
+    len(right)
+  }
+  let index = 0
+  while index < shared_length {
+    if left[index] != right[index] {
+      return false
+    }
+    index = index + 1
+  }
+  return true
 }
 
 const _MODULE_TEMPLATE = """
@@ -1140,6 +1164,7 @@ const _MODULE_TEMPLATE = """
         {{ if op.adapter_icons }}icons: {{ op.adapter_icons }},
         {{ end }}{{ if op.adapter_execution }}execution: {{ op.adapter_execution }},
         {{ end }}execution_policy: {{ op.adapter_policy }},
+        governance: {{ op.adapter_governance }},
         cli: {{ op.adapter_cli }},
         source: {{ op.adapter_source }},
         defer_loading: {{ op.adapter_defer_loading }},{{ if op.adapter_namespace }}
@@ -1959,10 +1984,7 @@ fn _operation_param_models(params: any) {
 }
 
 fn _x_harn_config(op: any) -> dict {
-  const value = op.get("x_harn")
-  if value == nil {
-    return {}
-  }
+  const value = op.get("x_harn") ?? {}
   if type_of(value) != "dict" {
     throw "harn-openapi.codegen_module: x-harn on '" + op.operation_id
       + "' must be an object"
@@ -1976,6 +1998,7 @@ fn _x_harn_config(op: any) -> dict {
     "annotations",
     "icons",
     "execution",
+    "governance",
     "cli",
     "meta",
   ]
@@ -2025,7 +2048,10 @@ fn _x_harn_config(op: any) -> dict {
     throw "harn-openapi.codegen_module: x-harn.cli.hidden on '" + op.operation_id
       + "' must be a bool"
   }
-  return value
+  return {
+    ...value,
+    governance: normalize_adapter_governance(value.get("governance"), op.operation_id),
+  }
 }
 
 fn _adapter_icons(op: any, extension: any) {
@@ -2223,6 +2249,10 @@ fn _adapter_cli(op: any, extension: any, name: any) -> dict {
   if type_of(command) == "string" {
     command_path = [command]
   } else if type_of(command) == "list" {
+    if len(command) == 0 {
+      throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
+        + "' must contain at least one portable command name"
+    }
     for segment in command {
       if type_of(segment) != "string" || segment == "" {
         throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
@@ -2281,6 +2311,7 @@ fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: a
     annotations: _adapter_annotations(op, extension),
     icons: _adapter_icons(op, extension),
     execution: _adapter_execution(op, extension),
+    governance: extension.governance,
     policy: _adapter_policy(op),
     source: {
       kind: "openapi",
@@ -2510,6 +2541,7 @@ fn _build_op_model(
       _render_json_parse_expr_at(adapter.execution, "      ", 66)
     },
     adapter_policy: _render_json_parse_expr_at(adapter.policy, "      ", 66),
+    adapter_governance: _render_json_parse_expr_at(adapter.governance, "      ", 66),
     adapter_cli: _render_json_parse_expr_at(adapter.cli, "      ", 66),
     adapter_source: _render_json_parse_expr_at(adapter.source, "      ", 66),
     adapter_defer_loading: to_string(adapter.defer_loading),

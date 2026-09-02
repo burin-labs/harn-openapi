@@ -1,0 +1,69 @@
+import { ToolAudience, ToolGovernance } from "std/tools"
+
+const ADAPTER_AUDIENCE_ORDER: list<ToolAudience> = ["cli", "mcp", "catalog", "dashboard", "agent"]
+
+fn governance_error(operation_id: string, field: string, detail: string) -> string {
+  return "harn-openapi.codegen_module: x-harn.governance"
+    + field
+    + " on '"
+    + operation_id
+    + "' "
+    + detail
+}
+
+fn reject_governance(operation_id: string, field: string, detail: string) -> ToolGovernance {
+  throw governance_error(operation_id, field, detail)
+}
+
+/** Validate and canonicalize the OpenAPI extension at its owning boundary. */
+pub fn normalize_adapter_governance(value: unknown, operation_id: string) -> ToolGovernance {
+  if value == nil {
+    return {audiences: ADAPTER_AUDIENCE_ORDER}
+  }
+  if type_of(value) != "dict" {
+    return reject_governance(operation_id, "", "must be an object")
+  }
+  for entry in value {
+    if entry.key != "audiences" {
+      return reject_governance(operation_id, "", "contains unknown field '" + entry.key + "'")
+    }
+  }
+  const audiences = value.get("audiences")
+  if audiences == nil {
+    return reject_governance(operation_id, "", "must contain an 'audiences' field")
+  }
+  if type_of(audiences) != "list" {
+    return reject_governance(operation_id, ".audiences", "must be a list")
+  }
+  if len(audiences) == 0 {
+    return reject_governance(operation_id, ".audiences", "must be non-empty")
+  }
+  let selected = []
+  for audience in audiences {
+    if type_of(audience) != "string" {
+      return reject_governance(operation_id, ".audiences", "must contain only strings")
+    }
+    if !ADAPTER_AUDIENCE_ORDER.contains(audience) {
+      return reject_governance(
+        operation_id,
+        ".audiences",
+        "contains unknown audience '" + audience + "'",
+      )
+    }
+    if selected.contains(audience) {
+      return reject_governance(
+        operation_id,
+        ".audiences",
+        "contains duplicate audience '" + audience + "'",
+      )
+    }
+    selected = selected + [audience]
+  }
+  let normalized = []
+  for audience in ADAPTER_AUDIENCE_ORDER {
+    if selected.contains(audience) {
+      normalized = normalized + [audience]
+    }
+  }
+  return {audiences: normalized}
+}
