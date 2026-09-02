@@ -1628,6 +1628,10 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const schemes = doc.get("security_schemes") ?? {}
   const ops_raw = _operations(doc)
   const adapters = _adapter_operations(doc, options)
+  const schema_graph = normalize_adapter_schema_graph(
+    doc.openapi,
+    (doc.components ?? {}).get("schemas") ?? {},
+  )
   const environment_prefix = options.get("environment_prefix")
     ?? _default_environment_prefix(module_name)
   const security_plan = adapter_security_plan(doc, environment_prefix)
@@ -1689,6 +1693,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
       transport,
       module_name,
       adapter,
+      schema_graph,
     )
     seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
@@ -2420,11 +2425,7 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any, graph: Adapte
       required = required + ["body"]
     }
   }
-  return _adapter_closed_schema(
-    doc.openapi,
-    {type: "object", properties: properties, required: required, additionalProperties: false},
-    graph,
-  )
+  return {type: "object", properties: properties, required: required, additionalProperties: false}
 }
 
 fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
@@ -2435,14 +2436,21 @@ fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
   return _adapter_closed_schema(doc.openapi, _schema(doc, picked.schema), graph)
 }
 
-fn _adapter_tool_parameters(input_schema: any) -> dict {
+fn _adapter_tool_parameters(
+  input_schema: any,
+  openapi_version: string,
+  graph: AdapterSchemaGraph,
+) -> dict {
   const properties = input_schema.get("properties") ?? {}
   const required = input_schema.get("required") ?? []
   let parameters = {}
   for entry in properties {
     parameters = {
       ...parameters,
-      [entry.key]: {schema: entry.value, required: required.contains(entry.key)},
+      [entry.key]: {
+        schema: _adapter_closed_schema(openapi_version, entry.value, graph),
+        required: required.contains(entry.key),
+      },
     }
   }
   return parameters
@@ -2628,6 +2636,7 @@ fn _build_op_model(
   transport: any,
   module_name: any,
   adapter: any,
+  schema_graph: AdapterSchemaGraph,
 ) {
   const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
   const param_model = _operation_param_models(op.parameters)
@@ -2724,7 +2733,7 @@ fn _build_op_model(
     adapter_title: _escape_string(adapter.title),
     adapter_description: _escape_string(adapter.description),
     adapter_parameters: _render_json_parse_expr_at(
-      _adapter_tool_parameters(adapter.input_schema),
+      _adapter_tool_parameters(adapter.input_schema, doc.openapi, schema_graph),
       "      ",
       67,
     ),
