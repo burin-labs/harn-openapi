@@ -288,13 +288,21 @@ pipeline default(harness: Harness) {
   )
   require disjoint_source.contains("governance:"),
     "disjoint adapter audiences should permit a shared dormant CLI path"
-  let defaulted = json_parse(raw)
-  defaulted.paths["/widgets/{widget-id}"].get["x-harn"] = defaulted.paths["/widgets/{widget-id}"]
-    .get["x-harn"]
-    .remove("governance")
   const defaulted_source = codegen_module(
     harness.fs,
-    parse(json_stringify(defaulted)),
+    parse(
+      json_stringify(
+        {
+          openapi: "3.1.0",
+          info: {title: "Default governance", version: "1"},
+          paths: {
+            "/default": {
+              get: {operationId: "default-governance", responses: {"204": {description: "Done"}}},
+            },
+          },
+        },
+      ),
+    ),
     {module_name: "widgets"},
   )
   require defaulted_source.contains(
