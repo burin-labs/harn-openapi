@@ -86,14 +86,15 @@ pipeline default(harness: Harness) {
     == "https://example.invalid/instance-data",
     "reference-shaped instance data must stay opaque"
   const closed = close_adapter_schema("3.1.1", input, graph)
-  require len(closed.components.schemas) == 2,
+  require len(closed.get("$defs")) == 2,
     "tool schemas must carry only the transitive component closure"
-  require closed.components.schemas.get("Widget") != nil,
-    "direct component references must be bundled"
-  require closed.components.schemas.get("Widget/Id") != nil,
+  require closed.get("$defs").get("Widget") != nil, "direct component references must be bundled"
+  require closed.get("$defs").get("Widget/Id") != nil,
     "transitive component references must be bundled"
-  require closed.components.schemas.get("Tree") == nil,
+  require closed.get("$defs").get("Tree") == nil,
     "unreachable components must not be duplicated into a tool schema"
+  require closed.properties.widget.get("$ref") == "#/$defs/Widget",
+    "OpenAPI component pointers must project into Draft 2020-12 $defs"
   const graph_cases = [
     {
       value: {Broken: {"$ref": "#/components/schemas/Missing"}},

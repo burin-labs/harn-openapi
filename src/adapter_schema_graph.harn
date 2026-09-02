@@ -381,6 +381,60 @@ fn referenced_component_names(
   return names
 }
 
+fn encode_pointer_segment(value: string) -> string {
+  return replace(replace(value, "~", "~0"), "/", "~1")
+}
+
+fn rewrite_schema_references(
+  value: AdapterJsonSchema,
+  component_name: string?,
+) -> AdapterJsonSchema {
+  if type_of(value) == "bool" {
+    return value
+  }
+  let out = value
+  const reference = value.get("$ref")
+  if type_of(reference) == "string" {
+    if starts_with(reference, "#/components/schemas/") {
+      const suffix = substring(reference, len("#/components/schemas/"), len(reference))
+      out = {...out, "$ref": "#/$defs/" + suffix}
+    } else if component_name != nil && starts_with(reference, "#/") {
+      out = {
+        ...out,
+        "$ref": "#/$defs/" + encode_pointer_segment(component_name)
+          + substring(reference, 1, len(reference)),
+      }
+    }
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {...out, [keyword]: rewrite_schema_references(value.get(keyword), component_name)}
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: list<AdapterJsonSchema> = []
+      for child in value.get(keyword) {
+        children = children + [rewrite_schema_references(child, component_name)]
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: dict<string, AdapterJsonSchema> = {}
+      for entry in value.get(keyword) {
+        children = {
+          ...children,
+          [entry.key]: rewrite_schema_references(entry.value, component_name),
+        }
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  return out
+}
+
 /** Close one tool schema over only its transitively referenced components. */
 pub fn close_adapter_schema(
   openapi_version: string,
@@ -395,9 +449,10 @@ pub fn close_adapter_schema(
   }
   let schemas: dict<string, AdapterJsonSchema> = {}
   for name in names {
-    schemas = {...schemas, [name]: graph.schemas.get(name)}
+    schemas = {...schemas, [name]: rewrite_schema_references(graph.schemas.get(name), name)}
   }
-  return {...normalized, components: {schemas: schemas}}
+  const root = rewrite_schema_references(normalized, nil)
+  return {...root, "$defs": schemas}
 }
 
 /** Preserve reusable OpenAPI components as one portable Draft 2020-12 graph. */
