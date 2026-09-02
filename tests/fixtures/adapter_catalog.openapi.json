@@ -92,11 +92,31 @@
         "operationId": "reindex-widgets",
         "summary": "Reindex widgets",
         "x-harn": {
-          "expose": false
+          "name": "reindex_widgets",
+          "governance": {
+            "audiences": ["catalog", "mcp"]
+          },
+          "cli": {
+            "command": ["widgets", "reindex"]
+          }
         },
         "responses": {
           "204": {
             "description": "Reindexed"
+          }
+        }
+      }
+    },
+    "/internal/hidden": {
+      "post": {
+        "operationId": "hidden-maintenance",
+        "summary": "Run hidden maintenance",
+        "x-harn": {
+          "expose": false
+        },
+        "responses": {
+          "204": {
+            "description": "Completed"
           }
         }
       }
