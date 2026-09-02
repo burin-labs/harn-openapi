@@ -21,6 +21,12 @@
           "title": "Look up widget",
           "namespace": "widgets",
           "defer_loading": true,
+          "governance": {
+            "audiences": ["agent", "catalog", "mcp", "cli"]
+          },
+          "cli": {
+            "command": ["widgets", "get"]
+          },
           "annotations": {
             "openWorldHint": false
           },

@@ -39,6 +39,7 @@ CLI pinned by `.harn-version`.
 |---|---|
 | `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and carries the typed public surface. |
 | `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
+| `src/adapter_governance.harn` | Canonical `x-harn.governance` validation against Harn's closed adapter-audience types. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |

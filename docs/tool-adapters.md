@@ -75,6 +75,8 @@ paths:
         namespace: widgets
         expose: true
         defer_loading: true
+        governance:
+          audiences: [agent, catalog, mcp, cli]
         cli:
           command: [widgets, get]
           hidden: false
@@ -101,7 +103,8 @@ paths:
 | `namespace` | non-empty string | Default CLI command prefix when `cli.command` is absent. |
 | `expose` | boolean | Include the operation in adapter projections. Defaults to `true`. |
 | `defer_loading` | boolean | Mark the tool for deferred discovery. Defaults to `false`. |
-| `cli.command` | string or list of strings | Portable command path. Segments use ASCII letters, digits, `_`, and `-`, and cannot start with `-`. |
+| `governance.audiences` | non-empty list of `cli`, `mcp`, `catalog`, `dashboard`, or `agent` | Adapters allowed to discover and invoke the tool. Defaults to all five. |
+| `cli.command` | string or non-empty list of strings | Portable command path. Segments use ASCII letters, digits, `_`, and `-`, and cannot start with `-`. |
 | `cli.hidden` | boolean | Hide the command from help while retaining explicit invocation. |
 | `annotations` | object | Overrides for the four standard MCP boolean hints. |
 | `icons` | list of icon objects | Portable tool icons. Each icon requires `src` and accepts `mimeType`, `sizes`, and `theme` (`light` or `dark`). |
@@ -109,7 +112,22 @@ paths:
 | `meta` | object | Protocol extension metadata projected as MCP `_meta`. |
 
 Unknown fields and invalid values fail during code generation. Duplicate
-exposed tool names or CLI command paths also fail before source is rendered.
+exposed tool names and exact or parent/leaf CLI command collisions also fail
+before source is rendered.
+
+Governance is a closed exposure policy, not a transport configuration. Input
+order is normalized to `cli`, `mcp`, `catalog`, `dashboard`, `agent`, and the
+generated `tool_define` always contains the complete normalized record. Harn
+uses that one record to filter CLI, MCP, catalog, dashboard, and agent
+projections. The generator does not infer audiences from tags, security,
+deprecation, HTTP methods, or MCP annotations because those fields describe
+different concerns.
+
+`expose: false` is stronger and separate: it omits the operation from the
+registry and every projection. Selective governance retains the executable
+tool and its catalog identity while excluding only the unnamed adapters. CLI
+command conflicts are therefore checked only between tools that include the
+`cli` audience; an MCP-only tool may share a dormant CLI path with a CLI tool.
 
 The static catalog retains all three `execution.taskSupport` values. MCP omits
 `execution` for `forbidden`, which is the protocol default, and emits the field
