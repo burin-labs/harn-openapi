@@ -18,6 +18,16 @@ fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) 
   return root + "/" + label + "-" + harness.random.uuid()
 }
 
+fn repeat_text(value: string, count: int) -> string {
+  let out = ""
+  let index = 0
+  while index < count {
+    out = out + value
+    index = index + 1
+  }
+  return out
+}
+
 fn build_doc() -> string {
   return json_stringify(
     {
@@ -64,7 +74,11 @@ pipeline test_main(harness: Harness) {
   )
     + ".harn"
   harness.fs.write_text(module_path, src)
-  const body_lit = "{\"code\":\"not_found\",\"message\":\"missing\"}"
+  // Generated adapters inherit the connector's single safe-error contract:
+  // sensitive response headers are redacted and large bodies are bounded
+  // before the structured envelope reaches a caller.
+  const body_lit = repeat_text("x", 1100)
+  const expected_body = repeat_text("x", 1024) + "…[truncated 76 chars]"
   const runner = "import { new_client, get_thing } from \"" + module_stem + "\"\n"
     + "\n"
     + "@test\n"
@@ -74,7 +88,12 @@ pipeline test_main(harness: Harness) {
     + "{status: 404, body: "
     + json_stringify(body_lit)
     + ", "
-    + "headers: {\"x-request-id\": \"req-123\", \"content-type\": \"application/json\"}})\n"
+    + "headers: {"
+    + "\"x-request-id\": \"req-123\", "
+    + "\"content-type\": \"application/json\", "
+    + "\"authorization\": \"Bearer response-secret\", "
+    + "\"set-cookie\": \"session=response-secret\", "
+    + "\"x-slack-signature\": \"v0=response-secret\"}})\n"
     + "  let client = new_client(\"https://api.example.com\", {bearerAuth: {token: \"tok\"}})\n"
     + "  let caught = try { get_thing({clock: harness.clock, net: harness.net}, client); nil } catch (e) { e }\n"
     + "  assert(type_of(caught) == \"dict\", \"expected dict throw\")\n"
@@ -83,10 +102,14 @@ pipeline test_main(harness: Harness) {
     + "  assert_eq(caught.category, \"not_found\")\n"
     + "  assert_eq(caught.ok, false)\n"
     + "  assert_eq(caught.body, "
-    + json_stringify(body_lit)
+    + json_stringify(expected_body)
     + ")\n"
     + "  assert_eq(type_of(caught.headers), \"dict\")\n"
     + "  assert_eq(caught.headers[\"x-request-id\"], \"req-123\")\n"
+    + "  assert_eq(caught.headers[\"authorization\"], \"[redacted]\")\n"
+    + "  assert_eq(caught.headers[\"set-cookie\"], \"[redacted]\")\n"
+    + "  assert_eq(caught.headers[\"x-slack-signature\"], \"[redacted]\")\n"
+    + "  assert(!contains(json_stringify(caught), \"response-secret\"), \"error envelope leaked a response secret\")\n"
     + "  harness.stdio.println(\"error_throw runtime: ok\")\n"
     + "}\n"
   harness.fs.write_text(runner_path, runner)
