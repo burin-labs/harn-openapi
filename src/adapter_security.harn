@@ -1,0 +1,383 @@
+/** Portable authentication plan shared by typed clients and tool entrypoints. */
+pub type AdapterSecuritySchemeKind = "bearer" \
+  | "basic" \
+  | "api_key_header" \
+  | "api_key_query" \
+  | "api_key_cookie" \
+  | "mutual_tls"
+
+/** Environment bindings contain names only. Secret values never enter the plan. */
+pub type AdapterSecurityEnvironment = {
+  token?: string,
+  username?: string,
+  password?: string,
+  value?: string,
+}
+
+pub type AdapterSecuritySchemePlan = {
+  name: string,
+  kind: AdapterSecuritySchemeKind,
+  environment: AdapterSecurityEnvironment,
+  parameter_name?: string,
+  host_managed: bool,
+}
+
+/** One OpenAPI Security Requirement Object: every listed scheme is required. */
+pub type AdapterSecurityAlternative = {schemes: list<string>, scopes: dict<string, list<string>>}
+
+/** Alternatives retain source order because each object is an OR branch. */
+pub type AdapterOperationSecurityPlan = {
+  operation_id: string,
+  alternatives: list<AdapterSecurityAlternative>,
+}
+
+pub type AdapterSecurityPlan = {
+  environment_prefix: string,
+  base_url_environment: string,
+  schemes: dict<string, AdapterSecuritySchemePlan>,
+  operations: dict<string, AdapterOperationSecurityPlan>,
+}
+
+fn security_error(field: string, detail: string) -> string {
+  return "harn-openapi.adapter_security: " + field + " " + detail
+}
+
+fn reject_plan(field: string, detail: string) -> AdapterSecurityPlan {
+  throw security_error(field, detail)
+}
+
+fn reject_scheme(field: string, detail: string) -> AdapterSecuritySchemePlan {
+  throw security_error(field, detail)
+}
+
+fn reject_operation(field: string, detail: string) -> AdapterOperationSecurityPlan {
+  throw security_error(field, detail)
+}
+
+fn reject_alternative(field: string, detail: string) -> AdapterSecurityAlternative {
+  throw security_error(field, detail)
+}
+
+fn reject_names(field: string, detail: string) -> list<string> {
+  throw security_error(field, detail)
+}
+
+fn pointer_token(value: string) -> string {
+  return replace(replace(value, "~1", "/"), "~0", "~")
+}
+
+fn resolve_security_scheme(name: string, schemes: dict, seen: list<string> = []) -> dict {
+  if seen.contains(name) {
+    throw security_error(
+      "components.securitySchemes." + name,
+      "contains a circular local reference",
+    )
+  }
+  const value = schemes.get(name)
+  if type_of(value) != "dict" {
+    throw security_error(
+      "components.securitySchemes." + name,
+      "must name a declared Security Scheme Object",
+    )
+  }
+  const reference = value.get("$ref")
+  if reference == nil {
+    return value
+  }
+  if type_of(reference) != "string" {
+    throw security_error("components.securitySchemes." + name + ".$ref", "must be a string")
+  }
+  const parts = reference.split("/")
+  if len(parts) != 4 || parts[0] != "#" || parts[1] != "components"
+    || parts[2] != "securitySchemes"
+    || parts[3] == "" {
+    throw security_error(
+      "components.securitySchemes." + name + ".$ref",
+      "must target a local '#/components/securitySchemes/<name>' object",
+    )
+  }
+  return resolve_security_scheme(pointer_token(parts[3]), schemes, seen + [name])
+}
+
+fn portable_environment_prefix(value: string) -> bool {
+  return regex_match("^[A-Z][A-Z0-9_]*$", value) != nil
+}
+
+fn environment_stem(name: string) -> string {
+  return regex_replace("^_+|_+$", "", regex_replace("[^A-Za-z0-9]+", "_", name)).upper()
+}
+
+fn scheme_kind(name: string, value: dict) -> AdapterSecuritySchemeKind {
+  const scheme_type = value.get("type")
+  if scheme_type == "http" {
+    const scheme = to_string(value.get("scheme") ?? "").lower()
+    if scheme == "bearer" {
+      return "bearer"
+    }
+    if scheme == "basic" {
+      return "basic"
+    }
+    return reject_scheme(
+      "components.securitySchemes." + name + ".scheme",
+      "uses unsupported HTTP authentication scheme '" + scheme + "'",
+    ).kind
+  }
+  if scheme_type == "oauth2" || scheme_type == "openIdConnect" {
+    return "bearer"
+  }
+  if scheme_type == "mutualTLS" {
+    return "mutual_tls"
+  }
+  if scheme_type == "apiKey" {
+    const location = value.get("in")
+    if location == "header" {
+      return "api_key_header"
+    }
+    if location == "query" {
+      return "api_key_query"
+    }
+    if location == "cookie" {
+      return "api_key_cookie"
+    }
+    return reject_scheme(
+      "components.securitySchemes." + name + ".in",
+      "must be 'header', 'query', or 'cookie' for an apiKey scheme",
+    ).kind
+  }
+  return reject_scheme(
+    "components.securitySchemes." + name + ".type",
+    "uses unsupported security scheme type '" + to_string(scheme_type) + "'",
+  ).kind
+}
+
+fn scheme_environment(
+  prefix: string,
+  stem: string,
+  kind: AdapterSecuritySchemeKind,
+) -> AdapterSecurityEnvironment {
+  const root = prefix + "_" + stem
+  if kind == "bearer" {
+    return {token: root + "_TOKEN"}
+  }
+  if kind == "basic" {
+    return {username: root + "_USERNAME", password: root + "_PASSWORD"}
+  }
+  if starts_with(kind, "api_key_") {
+    return {value: root + "_API_KEY"}
+  }
+  return {}
+}
+
+fn normalize_scopes(value: unknown, field: string) -> list<string> {
+  if type_of(value) != "list" {
+    return reject_names(field, "must be a list of OAuth2 or OpenID Connect scope names")
+  }
+  let scopes = []
+  for scope in value {
+    if type_of(scope) != "string" || scope == "" {
+      return reject_names(field, "must contain only non-empty strings")
+    }
+    if scopes.contains(scope) {
+      return reject_names(field, "contains duplicate scope '" + scope + "'")
+    }
+    scopes = scopes + [scope]
+  }
+  return scopes.sort()
+}
+
+fn normalize_alternative(
+  value: unknown,
+  schemes: dict,
+  field: string,
+) -> AdapterSecurityAlternative {
+  if type_of(value) != "dict" {
+    return reject_alternative(field, "must be a Security Requirement Object")
+  }
+  let names = []
+  let scopes: dict<string, list<string>> = {}
+  for entry in value {
+    if entry.key == "" {
+      return reject_alternative(field, "must not contain an empty security scheme name")
+    }
+    // Resolving here proves every reference while the OpenAPI field remains identifiable.
+    const _ = resolve_security_scheme(entry.key, schemes)
+    names = names + [entry.key]
+    scopes = {...scopes, [entry.key]: normalize_scopes(entry.value, field + "." + entry.key)}
+  }
+  return {schemes: names.sort(), scopes: scopes}
+}
+
+fn normalize_operation(
+  value: unknown,
+  schemes: dict,
+  field: string,
+) -> AdapterOperationSecurityPlan {
+  if type_of(value) != "dict" {
+    return reject_operation(field, "must be an object")
+  }
+  const operation_id = value.get("operation_id")
+  if type_of(operation_id) != "string" || operation_id == "" {
+    return reject_operation(field + ".operation_id", "must be a non-empty string")
+  }
+  const requirements = value.get("security") ?? []
+  if type_of(requirements) != "list" {
+    return reject_operation(field + ".security", "must be a list")
+  }
+  if len(requirements) == 0 {
+    return {operation_id: operation_id, alternatives: [{schemes: [], scopes: {}}]}
+  }
+  let alternatives = []
+  for enumerated in requirements.enumerate() {
+    alternatives = alternatives
+      + [
+        normalize_alternative(
+          enumerated.value,
+          schemes,
+          field + ".security[" + to_string(enumerated.index) + "]",
+        ),
+      ]
+  }
+  return {operation_id: operation_id, alternatives: alternatives}
+}
+
+/**
+ * Normalize OpenAPI security once for generated clients, CLI, MCP, and static
+ * catalogs. `operations` contains `{operation_id, security}` records whose
+ * security field is already resolved against the document-level default.
+ */
+pub fn normalize_adapter_security_plan(
+  security_schemes: unknown,
+  operations: unknown,
+  environment_prefix: string,
+) -> AdapterSecurityPlan {
+  if !portable_environment_prefix(environment_prefix) {
+    return reject_plan(
+      "environment_prefix",
+      "must match ^[A-Z][A-Z0-9_]*$ so names are portable across hosts",
+    )
+  }
+  if type_of(security_schemes) != "dict" {
+    return reject_plan("components.securitySchemes", "must be an object")
+  }
+  if type_of(operations) != "list" {
+    return reject_plan("operations", "must be a list")
+  }
+  const raw_schemes = security_schemes
+  let operation_plans: dict<string, AdapterOperationSecurityPlan> = {}
+  let referenced = []
+  for enumerated in operations.enumerate() {
+    const operation = normalize_operation(
+      enumerated.value,
+      raw_schemes,
+      "operations[" + to_string(enumerated.index) + "]",
+    )
+    if operation_plans.get(operation.operation_id) != nil {
+      return reject_plan(
+        "operations[" + to_string(enumerated.index) + "].operation_id",
+        "duplicates operation '" + operation.operation_id + "'",
+      )
+    }
+    operation_plans = {...operation_plans, [operation.operation_id]: operation}
+    for alternative in operation.alternatives {
+      for name in alternative.schemes {
+        if !referenced.contains(name) {
+          referenced = referenced + [name]
+        }
+      }
+    }
+  }
+  let normalized_schemes: dict<string, AdapterSecuritySchemePlan> = {}
+  let stem_owners = {}
+  for name in referenced.sort() {
+    const value = resolve_security_scheme(name, raw_schemes)
+    const kind = scheme_kind(name, value)
+    const stem = environment_stem(name)
+    if stem == "" {
+      return reject_plan(
+        "components.securitySchemes." + name,
+        "cannot produce a portable environment-variable stem",
+      )
+    }
+    const prior = stem_owners.get(stem)
+    if prior != nil {
+      return reject_plan(
+        "components.securitySchemes." + name,
+        "collides with security scheme '" + prior + "' after environment-name normalization",
+      )
+    }
+    stem_owners = {...stem_owners, [stem]: name}
+    if starts_with(kind, "api_key_") {
+      const parameter_name = value.get("name")
+      if type_of(parameter_name) != "string" || parameter_name == "" {
+        return reject_plan(
+          "components.securitySchemes." + name + ".name",
+          "must be a non-empty wire parameter name",
+        )
+      }
+      normalized_schemes = {
+        ...normalized_schemes,
+        [name]: {
+          name: name,
+          kind: kind,
+          environment: scheme_environment(environment_prefix, stem, kind),
+          parameter_name: parameter_name,
+          host_managed: false,
+        },
+      }
+    } else {
+      normalized_schemes = {
+        ...normalized_schemes,
+        [name]: {
+          name: name,
+          kind: kind,
+          environment: scheme_environment(environment_prefix, stem, kind),
+          host_managed: kind == "mutual_tls",
+        },
+      }
+    }
+  }
+  return {
+    environment_prefix: environment_prefix,
+    base_url_environment: environment_prefix + "_BASE_URL",
+    schemes: normalized_schemes,
+    operations: operation_plans,
+  }
+}
+
+/** Select the first satisfiable OR branch without inspecting secret values. */
+pub fn select_adapter_security_alternative(
+  plan: AdapterSecurityPlan,
+  operation_id: string,
+  available_schemes: list<string>,
+) -> list<string> {
+  const operation = plan.operations.get(operation_id)
+  if operation == nil {
+    throw security_error("operations", "does not contain operation '" + operation_id + "'")
+  }
+  for alternative in operation.alternatives {
+    let satisfied = true
+    for name in alternative.schemes {
+      if !available_schemes.contains(name) {
+        satisfied = false
+      }
+    }
+    if satisfied {
+      return alternative.schemes
+    }
+  }
+  let rendered = []
+  for alternative in operation.alternatives {
+    rendered = rendered
+      + [
+        if len(alternative.schemes) == 0 {
+          "anonymous"
+        } else {
+          join(alternative.schemes, "+")
+        },
+      ]
+  }
+  throw security_error(
+    "operation '" + operation_id + "'",
+    "requires one of [" + join(rendered, ", ") + "]",
+  )
+}

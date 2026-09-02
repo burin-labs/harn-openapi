@@ -1,0 +1,116 @@
+import { normalize_adapter_security_plan, select_adapter_security_alternative } from "../src/lib"
+
+fn rejected(schemes: any, operations: any, prefix: string = "WIDGETS") -> string {
+  const caught = try {
+    normalize_adapter_security_plan(schemes, operations, prefix)
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
+@test
+pipeline test_main(harness: Harness) {
+  assert(harness.fs.source_dir() != "", "test must run through a real harness")
+  const plan = normalize_adapter_security_plan(
+    {
+      bearerAuth: {type: "http", scheme: "bearer"},
+      headerKey: {type: "apiKey", in: "header", name: "X-Widget-Key"},
+      basicAuth: {type: "http", scheme: "basic"},
+      oauthAlias: {"$ref": "#/components/securitySchemes/bearerAuth"},
+      clientCertificate: {type: "mutualTLS"},
+      unused: {type: "apiKey", in: "query", name: "unused"},
+    },
+    [
+      {operation_id: "optional-read", security: [{}, {bearerAuth: []}]},
+      {operation_id: "write-widget", security: [{bearerAuth: [], headerKey: []}, {basicAuth: []}]},
+      {operation_id: "aliased", security: [{oauthAlias: ["widgets:read"]}]},
+      {operation_id: "host-auth", security: [{clientCertificate: []}]},
+      {operation_id: "public-health", security: []},
+    ],
+    "ACME_WIDGETS",
+  )
+  assert_eq(plan.base_url_environment, "ACME_WIDGETS_BASE_URL")
+  assert_eq(len(plan.schemes), 5)
+  assert_eq(plan.schemes.get("unused"), nil)
+  assert_eq(plan.schemes.bearerAuth.environment.token, "ACME_WIDGETS_BEARERAUTH_TOKEN")
+  assert_eq(plan.schemes.headerKey.environment.value, "ACME_WIDGETS_HEADERKEY_API_KEY")
+  assert_eq(plan.schemes.headerKey.parameter_name, "X-Widget-Key")
+  assert_eq(plan.schemes.basicAuth.environment.username, "ACME_WIDGETS_BASICAUTH_USERNAME")
+  assert_eq(plan.schemes.basicAuth.environment.password, "ACME_WIDGETS_BASICAUTH_PASSWORD")
+  assert_eq(plan.schemes.oauthAlias.kind, "bearer")
+  assert_eq(plan.schemes.clientCertificate.host_managed, true)
+  assert_eq(plan.schemes.clientCertificate.environment, {})
+  const write_plan = plan.operations.get("write-widget")
+  const alias_plan = plan.operations.get("aliased")
+  assert(write_plan != nil && alias_plan != nil, "normalized operations must remain addressable")
+  const write_primary = write_plan.alternatives[0]
+  const alias_primary = alias_plan.alternatives[0]
+  assert(
+    write_primary != nil && alias_primary != nil,
+    "security alternatives must remain non-empty",
+  )
+  assert_eq(write_primary.schemes, ["bearerAuth", "headerKey"])
+  assert_eq(alias_primary.scopes.oauthAlias, ["widgets:read"])
+  assert_eq(select_adapter_security_alternative(plan, "optional-read", []), [])
+  assert_eq(
+    select_adapter_security_alternative(plan, "write-widget", ["bearerAuth", "headerKey"]),
+    ["bearerAuth", "headerKey"],
+  )
+  assert_eq(select_adapter_security_alternative(plan, "write-widget", ["basicAuth"]), ["basicAuth"])
+  const missing = try {
+    select_adapter_security_alternative(plan, "write-widget", ["bearerAuth"])
+    nil
+  } catch (error) {
+    error
+  }
+  assert_eq(
+    to_string(missing),
+    "harn-openapi.adapter_security: operation 'write-widget' requires one of [bearerAuth+headerKey, basicAuth]",
+  )
+  assert_eq(select_adapter_security_alternative(plan, "public-health", []), [])
+  const invalid_cases = [
+    {
+      schemes: {},
+      operations: [],
+      prefix: "bad-prefix",
+      expected:
+        "harn-openapi.adapter_security: environment_prefix must match ^[A-Z][A-Z0-9_]*$ so names are portable across hosts",
+    },
+    {
+      schemes: {
+        "api-key": {type: "http", scheme: "bearer"},
+        api_key: {type: "http", scheme: "basic"},
+      },
+      operations: [{operation_id: "collision", security: [{"api-key": [], api_key: []}]}],
+      prefix: "WIDGETS",
+      expected:
+        "harn-openapi.adapter_security: components.securitySchemes.api_key collides with security scheme 'api-key' after environment-name normalization",
+    },
+    {
+      schemes: {loop: {"$ref": "#/components/securitySchemes/loop"}},
+      operations: [{operation_id: "loop", security: [{loop: []}]}],
+      prefix: "WIDGETS",
+      expected:
+        "harn-openapi.adapter_security: components.securitySchemes.loop contains a circular local reference",
+    },
+    {
+      schemes: {digest: {type: "http", scheme: "digest"}},
+      operations: [{operation_id: "digest", security: [{digest: []}]}],
+      prefix: "WIDGETS",
+      expected:
+        "harn-openapi.adapter_security: components.securitySchemes.digest.scheme uses unsupported HTTP authentication scheme 'digest'",
+    },
+    {
+      schemes: {},
+      operations: [{operation_id: "missing", security: [{unknown: []}]}],
+      prefix: "WIDGETS",
+      expected:
+        "harn-openapi.adapter_security: components.securitySchemes.unknown must name a declared Security Scheme Object",
+    },
+  ]
+  for invalid in invalid_cases {
+    assert_eq(rejected(invalid.schemes, invalid.operations, invalid.prefix), invalid.expected)
+  }
+}

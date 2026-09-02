@@ -98,6 +98,16 @@ pub import {
   normalize_adapter_schema,
   normalize_adapter_schema_graph,
 } from "./adapter_schema_graph"
+pub import {
+  AdapterOperationSecurityPlan,
+  AdapterSecurityAlternative,
+  AdapterSecurityEnvironment,
+  AdapterSecurityPlan,
+  AdapterSecuritySchemeKind,
+  AdapterSecuritySchemePlan,
+  normalize_adapter_security_plan,
+  select_adapter_security_alternative,
+} from "./adapter_security"
 
 // -------------------------------------------------------------------------------------------------
 // Types
