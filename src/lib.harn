@@ -113,9 +113,11 @@ pub import {
 } from "./adapter_http_semantics"
 pub import {
   AdapterJsonSchema,
+  AdapterSchemaEmbedding,
   AdapterSchemaGraphWork,
   PreparedAdapterSchemaGraph,
   close_adapter_schema,
+  embed_adapter_schema,
   normalize_adapter_schema,
   prepare_adapter_schema_graph,
 } from "./adapter_schema_graph"

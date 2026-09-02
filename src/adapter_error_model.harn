@@ -1,4 +1,4 @@
-import { AdapterJsonSchema } from "./adapter_schema_graph"
+import { AdapterJsonSchema, embed_adapter_schema } from "./adapter_schema_graph"
 
 /** One OpenAPI response offered to the application-error model. */
 pub type AdapterErrorResponseInput = {status_key: string, body_schema?: AdapterJsonSchema}
@@ -113,16 +113,16 @@ fn status_schema(response: AdapterErrorResponse) -> AdapterJsonSchema {
   return {type: "integer", minimum: 100, maximum: 599}
 }
 
-fn typed_variant_schema(response: AdapterErrorResponse) -> AdapterJsonSchema? {
-  if response.body_schema == nil {
-    return nil
-  }
+fn typed_variant_schema(
+  response: AdapterErrorResponse,
+  body_schema: AdapterJsonSchema,
+) -> AdapterJsonSchema {
   return {
     type: "object",
     properties: {
       kind: {const: response.discriminant, type: "string"},
       status: status_schema(response),
-      body: response.body_schema,
+      body: body_schema,
     },
     required: ["kind", "status", "body"],
     additionalProperties: false,
@@ -144,17 +144,19 @@ fn fallback_schema() -> AdapterJsonSchema {
 
 fn operation_error_schema(responses: list<AdapterErrorResponse>) -> AdapterJsonSchema {
   let variants: list<AdapterJsonSchema> = []
+  let definitions: dict<string, AdapterJsonSchema> = {}
   for response in responses {
-    const variant = typed_variant_schema(response)
-    if variant != nil {
-      variants = variants + [variant]
+    if response.body_schema != nil {
+      const embedded = embed_adapter_schema(response.body_schema, response.discriminant + "_body")
+      variants = variants + [typed_variant_schema(response, embedded.schema)]
+      definitions = {...definitions, ...embedded.definitions}
     }
   }
   variants = variants + [fallback_schema()]
   if len(variants) == 1 {
     return variants[0]!
   }
-  return {oneOf: variants}
+  return {oneOf: variants, "$defs": definitions}
 }
 
 /**
@@ -166,11 +168,11 @@ pub fn prepare_adapter_error_model(
   error_type_name: string,
   inputs: list<AdapterErrorResponseInput>,
 ) -> AdapterOperationErrorModel {
-  if operation_id == "" {
+  if operation_id.trim() == "" {
     return reject_model(operation_id, "requires a non-empty operation id")
   }
-  if error_type_name == "" {
-    return reject_model(operation_id, "requires a non-empty generated error type name")
+  if regex_match("^[A-Z][A-Za-z0-9_]*$", error_type_name) == nil {
+    return reject_model(operation_id, "requires a valid generated error type name")
   }
   let by_key: dict<string, AdapterErrorResponseInput> = {}
   for input in inputs {

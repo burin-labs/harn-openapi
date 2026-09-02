@@ -18,9 +18,21 @@ fn captured_error(body: fn() -> any) -> string {
 pipeline default() {
   const not_found = {
     type: "object",
-    properties: {code: {const: "not_found"}, message: {type: "string"}},
-    required: ["code", "message"],
+    properties: {
+      code: {const: "not_found"},
+      message: {type: "string"},
+      detail: {"$ref": "#/$defs/Problem"},
+    },
+    required: ["code", "message", "detail"],
     additionalProperties: false,
+    "$defs": {
+      Problem: {
+        type: "object",
+        properties: {field: {type: "string"}},
+        required: ["field"],
+        additionalProperties: false,
+      },
+    },
   }
   const client_error = {
     type: "object",
@@ -61,6 +73,10 @@ pipeline default() {
   require encoded.contains("http_4xx"), "range response discriminant must be present"
   require encoded.contains("http_default"), "default response discriminant must be present"
   require encoded.contains("upstream_error"), "safe fallback discriminant must be present"
+  require encoded.contains("#/$defs/http_404_body/$defs/Problem"),
+    "body-local references must be rebased to the composed error document"
+  require schema.get("$defs")?.get("http_404_body") != nil,
+    "each typed body must retain one namespaced definition root"
   const fallback = variants[len(variants) - 1]
   require fallback.properties.get("body") == nil,
     "fallback errors must not publish an arbitrary upstream body"
@@ -89,4 +105,9 @@ pipeline default() {
   )
   require invalid.contains("invalid status key '4xx'"),
     "non-canonical response keys must fail closed"
+  const invalid_type = captured_error(
+    { -> prepare_adapter_error_model("get-widget", "get widget error", []) },
+  )
+  require invalid_type.contains("generated error type name"),
+    "generated error type names must be valid Harn identifiers"
 }
