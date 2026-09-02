@@ -97,7 +97,6 @@ import { filter_nil } from "std/collections"
 import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
   AdapterJsonSchema,
-  AdapterSchemaGraph,
   AdapterSchemaGraphWork,
   PreparedAdapterSchemaGraph,
   close_adapter_schema,

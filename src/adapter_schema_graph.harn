@@ -1,9 +1,6 @@
 /** Draft 2020-12 schema document carried by the portable tool catalog. */
 pub type AdapterJsonSchema = bool | dict<string, unknown>
 
-/** Reusable schemas shared by every generated tool and adapter projection. */
-pub type AdapterSchemaGraph = {schemas: dict<string, AdapterJsonSchema>}
-
 /** Observable preparation work used by scale regressions and support diagnostics. */
 pub type AdapterSchemaGraphWork = {
   component_count: int,
@@ -343,7 +340,7 @@ fn validate_document_dialect(json_schema_dialect: string?) -> nil {
 pub fn normalize_adapter_schema(
   openapi_version: string,
   value: unknown,
-  graph: AdapterSchemaGraph,
+  graph: PreparedAdapterSchemaGraph,
   json_schema_dialect: string? = nil,
 ) -> AdapterJsonSchema {
   validate_openapi_version(openapi_version)
