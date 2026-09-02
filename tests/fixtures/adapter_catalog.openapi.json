@@ -99,6 +99,7 @@
             "audiences": ["mcp", "catalog"]
           },
           "annotations": {
+            "title": "Reindex safely",
             "destructiveHint": false,
             "openWorldHint": true
           },
