@@ -85,13 +85,13 @@ version = "0.0.0"
     """
 import {
   AdapterJsonSchema,
-  AdapterSchemaGraph,
+  PreparedAdapterSchemaGraph,
   AdapterSecurityPlan,
   adapter_security_plan,
   codegen_entrypoint,
   codegen_module,
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
   operations,
   parse,
 } from "harn-openapi/default"
@@ -131,7 +131,7 @@ pipeline default(harness: Harness) {
   const op = ops[0]
   require op != nil, "package import should expose the parsed operation"
   require op.operation_id == "ping", "operation id should round-trip"
-  const graph: AdapterSchemaGraph = normalize_adapter_schema_graph(
+  const graph: PreparedAdapterSchemaGraph = prepare_adapter_schema_graph(
     doc.openapi,
     {Ping: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]}},
     doc.jsonSchemaDialect,
@@ -148,6 +148,8 @@ pipeline default(harness: Harness) {
     doc.jsonSchemaDialect,
   )
   require len(graph.schemas) == 1, "package import should retain one component"
+  require graph.work.component_count == 1,
+    "package import should expose the prepared graph work receipt"
   require input.properties.ping.get("$ref") == "#/components/schemas/Ping",
     "package import should preserve a component reference"
   const security: AdapterSecurityPlan = adapter_security_plan(doc, "PACKAGE_SMOKE")

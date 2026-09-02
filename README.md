@@ -147,9 +147,9 @@ import { parse } from "../src/lib"
   `$ref` siblings as valid JSON Schema 2020-12 data.
 - `enum_values(schema: Schema) -> list<string> | nil` — extract the enum variant list,
   or `nil` when the schema is not an enum.
-- `normalize_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?) -> AdapterSchemaGraph` —
-  retain reusable OpenAPI 3.1 component schemas as one self-contained Draft
-  2020-12 graph without expanding shared or recursive references.
+- `prepare_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?) -> PreparedAdapterSchemaGraph` —
+  validate reusable OpenAPI 3.1 component schemas once, then retain their
+  dependency closures and work counters for every generated projection.
 - `normalize_adapter_schema(openapi_version, schema, graph, json_schema_dialect?) -> AdapterJsonSchema` —
   normalize one inline tool schema and validate its references against the same
   component graph.

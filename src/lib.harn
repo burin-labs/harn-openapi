@@ -39,12 +39,12 @@
 //   enum_values(schema)          -> list | nil
 //       Return the enum variant list on a schema, or nil if absent.
 //
-//   normalize_adapter_schema_graph(openapi_version, schemas)
+//   prepare_adapter_schema_graph(openapi_version, schemas)
 //       Preserve reusable OpenAPI components as one validated, self-contained
 //       Draft 2020-12 graph for CLI, MCP, catalog, and typed-client projections.
 //
 //   normalize_adapter_schema(openapi_version, schema, graph)
-//       Normalize one tool schema against the same reusable component graph.
+//       Normalize one tool schema against the same prepared component graph.
 //
 //   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
 //       Guard helpers for common dynamic boundaries.
@@ -98,9 +98,11 @@ import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
   AdapterJsonSchema,
   AdapterSchemaGraph,
+  AdapterSchemaGraphWork,
+  PreparedAdapterSchemaGraph,
   close_adapter_schema,
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
 } from "./adapter_schema_graph"
 pub import {
   AdapterOperationSecurityPlan,
@@ -116,8 +118,6 @@ pub import {
 // -------------------------------------------------------------------------------------------------
 // Types
 // -------------------------------------------------------------------------------------------------
-
-type JsonSchemaType = "null" | "boolean" | "object" | "array" | "number" | "string" | "integer"
 
 /**
  * Harn shape fields cannot currently spell "$ref", so Reference is open and
@@ -151,54 +151,13 @@ type Tag = {name: string, description?: string, externalDocs?: ExternalDocumenta
 
 type SecurityRequirement = dict<string, list<string>>
 
-type Discriminator = {propertyName: string, mapping?: dict<string, string>}
-
 /**
- * Schema is open-shaped by design. JSON Schema 2020-12 permits "$ref"
- * siblings, so schema(doc, value) merges referenced content with any sibling
- * keywords instead of treating "$ref" as an exclusive replacement.
- * exclusiveMinimum / exclusiveMaximum are numeric in OAS 3.1, and oneOf /
- * anyOf are first-class so polymorphic request bodies remain representable.
+ * OpenAPI 3.1 schemas use the complete JSON Schema representation: an open
+ * object or a boolean. AdapterJsonSchema is the single owner of that wire
+ * shape, so parsing, reference resolution, catalogs, CLI, and MCP cannot drift
+ * into competing subsets.
  */
-type Schema = {
-  title?: string,
-  multipleOf?: float,
-  maximum?: float,
-  exclusiveMaximum?: float,
-  minimum?: float,
-  exclusiveMinimum?: float,
-  maxLength?: int,
-  minLength?: int,
-  pattern?: string,
-  maxItems?: int,
-  minItems?: int,
-  uniqueItems?: bool,
-  maxProperties?: int,
-  minProperties?: int,
-  required?: list<string>,
-  enum?: list,
-  const?: any,
-  type?: JsonSchemaType | list<JsonSchemaType>,
-  allOf?: list<dict>,
-  oneOf?: list<dict>,
-  anyOf?: list<dict>,
-  not?: dict,
-  items?: dict | list<dict>,
-  properties?: dict<string, dict>,
-  additionalProperties?: bool | dict,
-  description?: string,
-  format?: string,
-  default?: any,
-  nullable?: bool,
-  discriminator?: Discriminator,
-  readOnly?: bool,
-  writeOnly?: bool,
-  xml?: dict,
-  externalDocs?: ExternalDocumentation,
-  example?: any,
-  examples?: list<any>,
-  deprecated?: bool,
-}
+type Schema = AdapterJsonSchema
 
 type Example = {summary?: string, description?: string, value?: any, externalValue?: string}
 
@@ -616,6 +575,9 @@ fn _schema(doc: any, ref_or_inline: any) {
 
 fn _schema_inner(doc: any, ref_or_inline: any, seen_refs: any) {
   const resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
+  if type_of(resolved) == "bool" {
+    return resolved
+  }
   const all_of = resolved.get("allOf")
   if all_of == nil {
     return resolved
@@ -654,6 +616,9 @@ fn _resolve_ref(doc: any, node: any) {
 }
 
 fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
+  if type_of(node) == "bool" {
+    return node
+  }
   if type_of(node) != "dict" {
     return {}
   }
@@ -710,6 +675,21 @@ const _MAX_ALL_OF = 64
 const _MAX_PROPERTIES = 1024
 
 fn _merge_schema(base: any, overlay: any) {
+  if base == false || overlay == false {
+    return false
+  }
+  if base == true && type_of(overlay) == "dict" && len(overlay) == 0 {
+    return true
+  }
+  if overlay == true && type_of(base) == "dict" && len(base) == 0 {
+    return true
+  }
+  if base == true {
+    return overlay
+  }
+  if overlay == true {
+    return base
+  }
   if type_of(overlay) != "dict" {
     return base
   }
@@ -809,9 +789,9 @@ pub fn is_reference(value: unknown) -> bool {
   return type_of(value.get("$ref")) == "string"
 }
 
-/** True when a value is object-like enough to be used as an OAS Schema. */
+/** True when a value has the complete OpenAPI 3.1 JSON Schema wire shape. */
 pub fn is_schema(value: unknown) -> bool {
-  return schema_is(value, {type: "dict"})
+  return type_of(value) == "bool" || type_of(value) == "dict"
 }
 
 /** Classify reusable auth helper metadata for declared security schemes. */
@@ -929,6 +909,9 @@ fn _pagination_plan_for_op(doc: any, op: any) {
     return nil
   }
   const full = _schema(doc, picked.schema)
+  if type_of(full) != "dict" {
+    return nil
+  }
   const props = full.get("properties") ?? {}
   const items_field = _first_present_key(
     props,
@@ -989,6 +972,9 @@ fn _request_body_json_properties(doc: any, op: any) -> dict {
     return {}
   }
   const full = _schema(doc, request_schema)
+  if type_of(full) != "dict" {
+    return {}
+  }
   const props = full.get("properties")
   if type_of(props) == "dict" {
     return props
@@ -1130,12 +1116,12 @@ fn _rate_limit_metadata_for_op(doc: any, op: any) {
 // Codegen
 // -------------------------------------------------------------------------------------------------
 
-fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
+fn _adapter_operations(
+  doc: OpenApiDoc,
+  schema_graph: PreparedAdapterSchemaGraph,
+  options: dict = {},
+) -> list {
   const header_overrides = options.get("header_overrides") ?? {}
-  const schema_graph = normalize_adapter_schema_graph(
-    doc.openapi,
-    (doc.components ?? {}).get("schemas") ?? {},
-  )
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
@@ -1627,11 +1613,11 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const transport = _transport_kind(options.get("transport") ?? "connector_policy")
   const schemes = doc.get("security_schemes") ?? {}
   const ops_raw = _operations(doc)
-  const adapters = _adapter_operations(doc, options)
-  const schema_graph = normalize_adapter_schema_graph(
+  const schema_graph = prepare_adapter_schema_graph(
     doc.openapi,
     (doc.components ?? {}).get("schemas") ?? {},
   )
+  const adapters = _adapter_operations(doc, schema_graph, options)
   const environment_prefix = options.get("environment_prefix")
     ?? _default_environment_prefix(module_name)
   const security_plan = adapter_security_plan(doc, environment_prefix)
@@ -2381,7 +2367,7 @@ fn _adapter_policy(op: any) -> dict {
   }
 }
 
-fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
+fn _adapter_parameter_schema(doc: any, parameter: any) -> AdapterJsonSchema {
   const raw = parameter.get("schema")
   if raw == nil {
     return {}
@@ -2389,11 +2375,26 @@ fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
   return _schema(doc, raw)
 }
 
-fn _adapter_closed_schema(openapi_version: string, schema: any, graph: AdapterSchemaGraph) {
-  return close_adapter_schema(openapi_version, schema, graph)
+fn _adapter_closed_schema(openapi_version: string, schema: any, graph: PreparedAdapterSchemaGraph) {
+  const closed = close_adapter_schema(openapi_version, schema, graph)
+  // Harn and MCP tool contracts require schema objects. JSON Schema's boolean
+  // forms have exact object equivalents, so project them at this boundary while
+  // retaining booleans in the reusable OpenAPI graph and typed SDK lowering.
+  if closed == true {
+    return {}
+  }
+  if closed == false {
+    return {not: {}}
+  }
+  return closed
 }
 
-fn _adapter_input_schema(doc: any, op: any, header_overrides: any, graph: AdapterSchemaGraph) {
+fn _adapter_input_schema(
+  doc: any,
+  op: any,
+  header_overrides: any,
+  graph: PreparedAdapterSchemaGraph,
+) {
   const params = _operation_param_models(op.parameters)
   let properties = {}
   let required = []
@@ -2403,7 +2404,9 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any, graph: Adapte
     }
     let property_schema = _adapter_parameter_schema(doc, parameter)
     const description = parameter.get("description")
-    if description != nil && property_schema.get("description") == nil {
+    if description != nil
+      && type_of(property_schema) == "dict"
+      && property_schema.get("description") == nil {
       property_schema = {...property_schema, description: description}
     }
     properties = {...properties, [parameter.ident]: property_schema}
@@ -2428,7 +2431,7 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any, graph: Adapte
   return {type: "object", properties: properties, required: required, additionalProperties: false}
 }
 
-fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
+fn _adapter_output_schema(doc: any, op: any, graph: PreparedAdapterSchemaGraph) {
   const picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" || picked.schema == nil {
     return nil
@@ -2439,7 +2442,7 @@ fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
 fn _adapter_tool_parameters(
   input_schema: any,
   openapi_version: string,
-  graph: AdapterSchemaGraph,
+  graph: PreparedAdapterSchemaGraph,
 ) -> dict {
   const properties = input_schema.get("properties") ?? {}
   const required = input_schema.get("required") ?? []
@@ -2504,7 +2507,7 @@ fn _adapter_operation(
   op: any,
   function_name: any,
   header_overrides: any,
-  schema_graph: AdapterSchemaGraph,
+  schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const extension = _x_harn_config(op)
   const name = extension.get("name") ?? function_name
@@ -2636,7 +2639,7 @@ fn _build_op_model(
   transport: any,
   module_name: any,
   adapter: any,
-  schema_graph: AdapterSchemaGraph,
+  schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
   const param_model = _operation_param_models(op.parameters)
@@ -3194,6 +3197,11 @@ fn _render_return_lines(fn_name: any, ret: any, transport: any) {
   if ret.response_mode == "opaque" {
     return "return {status: resp.status, headers: resp.headers, body: resp.body}"
   }
+  if ret.response_mode == "json_never" {
+    return "throw \""
+      + fn_name
+      + ": received a response forbidden by its JSON Schema\""
+  }
   if transport == "connector_policy" {
     if ret.response_mode == "json_any" {
       return "return resp.json"
@@ -3278,6 +3286,9 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
     return []
   }
   const root = _schema(doc, raw_schema)
+  if type_of(root) != "dict" {
+    return []
+  }
   const variant_nodes = if root.get("oneOf") != nil {
     root.get("oneOf")
   } else {
@@ -3665,11 +3676,27 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
       cache: cache,
     }
   }
-  const ref = schema_raw.get("$ref")
+  const ref = if type_of(schema_raw) == "dict" {
+    schema_raw.get("$ref")
+  } else {
+    nil
+  }
   // For classification we always work off the fully-resolved (allOf-
   // merged) schema, since components often declare the interesting
   // shape inside `allOf: [...]`.
   const full = _schema(doc, schema_raw)
+  if full == false {
+    return {
+      info: {type_name: "never", returns_nil: false, alias_name: nil, response_mode: "json_never"},
+      cache: cache,
+    }
+  }
+  if full == true {
+    return {
+      info: {type_name: "any", returns_nil: false, alias_name: nil, response_mode: "json_any"},
+      cache: cache,
+    }
+  }
   const shape = _schema_shape_kind(full)
   if shape == "nil" {
     return {

@@ -100,13 +100,13 @@ schemas:
 ```harn
 import {
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
   parse,
 } from "harn-openapi/default"
 
 fn main(harness: Harness) {
   const doc = parse(harness.fs.read_text("./openapi.json"))
-  const graph = normalize_adapter_schema_graph(
+  const graph = prepare_adapter_schema_graph(
     doc.openapi,
     doc.components?.schemas ?? {},
     doc.jsonSchemaDialect,
@@ -127,9 +127,16 @@ fn main(harness: Harness) {
 ```
 
 `AdapterJsonSchema` is `bool | dict<string, unknown>`, matching Draft 2020-12
-instead of coercing boolean schemas into objects. `AdapterSchemaGraph` contains
-one `schemas` map. Shared and recursive references stay as references, including
-escaped component names and nested JSON Pointer targets.
+instead of coercing boolean schemas into objects. `PreparedAdapterSchemaGraph`
+contains normalized schemas, direct dependencies, transitive closures, and work
+counters. Shared and recursive references stay as references, including escaped
+component names and nested JSON Pointer targets.
+
+The OpenAPI graph retains boolean schemas exactly. Harn and MCP tool contracts
+require schema objects, so their projection uses the Draft 2020-12 equivalents:
+`true` becomes `{}`, and `false` becomes `{"not": {}}`. Generated SDK return
+types independently lower `true` to `any` and `false` to `never`, preserving the
+same validation semantics on every surface.
 
 The normalizer traverses only JSON Schema keyword positions. A `$ref`-shaped
 object inside `const` or `enum` is instance data and remains unchanged. It
