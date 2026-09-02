@@ -2835,7 +2835,7 @@ fn _render_error_lines(fn_name: any, transport: any) {
       + "    throw resp\n"
       + "  }"
   }
-  return "if resp.status >= 400 {\n"
+  return "if resp.status < 200 || resp.status >= 300 {\n"
     + "    "
     + _render_error_throw(fn_name)
     + "\n"

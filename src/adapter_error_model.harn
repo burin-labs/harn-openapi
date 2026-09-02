@@ -208,6 +208,9 @@ pub fn adapter_error_response_for_status(
   model: AdapterOperationErrorModel,
   status: int,
 ) -> AdapterErrorResponse? {
+  if status < 100 || status > 599 || (status >= 200 && status <= 299) {
+    return nil
+  }
   let range_match: AdapterErrorResponse? = nil
   let default_match: AdapterErrorResponse? = nil
   for response in model.responses {
