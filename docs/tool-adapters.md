@@ -71,7 +71,11 @@ import {
 
 fn main(harness: Harness) {
   const doc = parse(harness.fs.read_text("./openapi.json"))
-  const graph = normalize_adapter_schema_graph(doc.openapi, doc.components?.schemas ?? {})
+  const graph = normalize_adapter_schema_graph(
+    doc.openapi,
+    doc.components?.schemas ?? {},
+    doc.jsonSchemaDialect,
+  )
   const input_schema = normalize_adapter_schema(
     doc.openapi,
     {
@@ -81,6 +85,7 @@ fn main(harness: Harness) {
       additionalProperties: false,
     },
     graph,
+    doc.jsonSchemaDialect,
   )
   harness.stdio.println(json_stringify({graph: graph, input_schema: input_schema}))
 }
@@ -98,7 +103,8 @@ rejects the following before source generation:
 - dangling component or nested JSON Pointer references;
 - external resources and non-schema OpenAPI component targets;
 - OpenAPI 3.0 `nullable` and boolean exclusive-bound spellings;
-- non-Draft-2020-12 `$schema` declarations;
+- custom schema dialects outside Draft 2020-12 and the OpenAPI 3.1 base
+  dialect; per-schema OpenAPI base declarations canonicalize to Draft 2020-12;
 - `$id`, anchors, and dynamic references that would change resource scope when
   the graph is bundled into an MCP tool schema.
 

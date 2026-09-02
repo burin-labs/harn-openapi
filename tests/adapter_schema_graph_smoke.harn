@@ -20,6 +20,16 @@ fn schema_rejection(value: any, graph: any) -> string {
   return to_string(caught)
 }
 
+fn dialect_rejection(value: string) -> string {
+  const caught = try {
+    normalize_adapter_schema_graph("3.1.1", {}, value)
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
 @test
 pipeline default(harness: Harness) {
   require harness.fs.source_dir() != "", "test must run with a real harness"
@@ -39,16 +49,20 @@ pipeline default(harness: Harness) {
         properties: {children: {type: "array", items: {"$ref": "#/components/schemas/Tree"}}},
       },
       Local: {"$defs": {Value: {type: "integer"}}, "$ref": "#/$defs/Value"},
+      Dialect: {"$schema": "https://spec.openapis.org/oas/3.1/dialect/base", type: "string"},
       Impossible: false,
     },
   )
-  require len(graph.schemas) == 6, "every component should be emitted exactly once"
+  require len(graph.schemas) == 7, "every component should be emitted exactly once"
   require graph.schemas.WidgetList.items.get("$ref") == "#/components/schemas/Widget",
     "component references must remain shared"
   require graph.schemas.Tree.properties.children.items.get("$ref")
     == "#/components/schemas/Tree",
     "recursive references must remain references"
   require graph.schemas.Impossible == false, "boolean schemas must survive"
+  require graph.schemas.Dialect.get("$schema")
+    == "https://json-schema.org/draft/2020-12/schema",
+    "OpenAPI base dialect should canonicalize to Draft 2020-12"
   const input = normalize_adapter_schema(
     "3.1.1",
     {
@@ -113,4 +127,7 @@ pipeline default(harness: Harness) {
   require schema_rejection({"$ref": "#/components/schemas/Missing"}, graph)
     == "harn-openapi.adapter_schema_graph: schema.$ref targets missing schema component 'Missing'",
     "inline schemas must resolve against the same graph"
+  require dialect_rejection("https://schemas.example/custom")
+    == "harn-openapi.adapter_schema_graph: jsonSchemaDialect must declare Draft 2020-12 or the OpenAPI 3.1 base dialect when present",
+    "custom schema dialects must fail before projection"
 }
