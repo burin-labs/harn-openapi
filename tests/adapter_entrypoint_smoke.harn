@@ -43,7 +43,12 @@ fn secured_doc() -> string {
             operationId: "public-ping",
             security: [],
             responses: {
-              "200": {description: "ok", content: {"application/json": {schema: {type: "object"}}}},
+              "200": {
+                description: "ok",
+                content: {
+                  "application/json": {schema: {"$ref": "#/components/schemas/PublicResult"}},
+                },
+              },
             },
           },
         },
@@ -65,6 +70,9 @@ fn secured_doc() -> string {
         },
       },
       components: {
+        schemas: {
+          PublicResult: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]},
+        },
         securitySchemes: {
           bearerAuth: {type: "http", scheme: "bearer"},
           headerKey: {type: "apiKey", in: "header", name: "X-Widget-Key"},
@@ -251,7 +259,7 @@ pipeline test_main(harness: Harness) {
     site_path,
     "@route(\"GET\", \"/public\")\n"
       + "pub fn public_route(req: dict) -> dict {\n"
-      + "  return http_ok({marker: \"public-via-http\", authorization: req.headers.get(\"authorization\")})\n"
+      + "  return http_ok({ok: true, marker: \"public-via-http\", authorization: req.headers.get(\"authorization\")})\n"
       + "}\n",
   )
   const rpc_call = json_stringify(

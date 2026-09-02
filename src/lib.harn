@@ -1131,6 +1131,10 @@ fn _rate_limit_metadata_for_op(doc: any, op: any) {
 
 fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
   const header_overrides = options.get("header_overrides") ?? {}
+  const schema_graph = normalize_adapter_schema_graph(
+    doc.openapi,
+    (doc.components ?? {}).get("schemas") ?? {},
+  )
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
@@ -1138,7 +1142,7 @@ fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
   for op in _operations(doc) {
     const function_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
     taken_names = taken_names + [function_name]
-    const adapter = _adapter_operation(doc, op, function_name, header_overrides)
+    const adapter = _adapter_operation(doc, op, function_name, header_overrides, schema_graph)
     if adapter.expose {
       if exposed_names.contains(adapter.name) {
         throw "harn-openapi.codegen_module: duplicate generated tool name '" + adapter.name + "'"
@@ -2379,7 +2383,23 @@ fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
   return _schema(doc, raw)
 }
 
-fn _adapter_input_schema(doc: any, op: any, header_overrides: any) -> dict {
+fn _adapter_closed_schema(schema: any, graph: AdapterSchemaGraph) {
+  if type_of(schema) != "dict" || len(graph.schemas) == 0 {
+    return schema
+  }
+  // Preserve the OpenAPI pointer vocabulary inside a self-contained JSON
+  // Schema resource. `components` is an extension keyword to Draft 2020-12;
+  // local `$ref` pointers can still resolve through it without duplicating or
+  // recursively expanding the shared graph.
+  return {...schema, components: {schemas: graph.schemas}}
+}
+
+fn _adapter_input_schema(
+  doc: any,
+  op: any,
+  header_overrides: any,
+  graph: AdapterSchemaGraph,
+) -> dict {
   const params = _operation_param_models(op.parameters)
   let properties = {}
   let required = []
@@ -2411,15 +2431,18 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any) -> dict {
       required = required + ["body"]
     }
   }
-  return {type: "object", properties: properties, required: required, additionalProperties: false}
+  return _adapter_closed_schema(
+    {type: "object", properties: properties, required: required, additionalProperties: false},
+    graph,
+  )
 }
 
-fn _adapter_output_schema(doc: any, op: any) {
+fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
   const picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" || picked.schema == nil {
     return nil
   }
-  return _schema(doc, picked.schema)
+  return _adapter_closed_schema(_schema(doc, picked.schema), graph)
 }
 
 fn _adapter_tool_parameters(input_schema: any) -> dict {
@@ -2478,7 +2501,13 @@ fn _adapter_cli(op: any, extension: any, name: any) -> dict {
   return {...explicit, command: command_path}
 }
 
-fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: any) {
+fn _adapter_operation(
+  doc: any,
+  op: any,
+  function_name: any,
+  header_overrides: any,
+  schema_graph: AdapterSchemaGraph,
+) {
   const extension = _x_harn_config(op)
   const name = extension.get("name") ?? function_name
   const extension_title = extension.get("title")
@@ -2500,8 +2529,8 @@ fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: a
     name: name,
     title: title,
     description: description,
-    input_schema: _adapter_input_schema(doc, op, header_overrides),
-    output_schema: _adapter_output_schema(doc, op),
+    input_schema: _adapter_input_schema(doc, op, header_overrides, schema_graph),
+    output_schema: _adapter_output_schema(doc, op, schema_graph),
     annotations: _adapter_annotations(op, extension),
     icons: _adapter_icons(op, extension),
     execution: _adapter_execution(op, extension),
