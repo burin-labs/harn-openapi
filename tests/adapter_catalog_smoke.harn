@@ -13,11 +13,8 @@ fn scratch_path(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) 
 
 fn generated_runner(module_path: string, server_path: string) -> string {
   return "import { agent_dispatch_tool_call } from \"std/agent/primitives\"\n"
-    + "import { adapter_catalog, adapter_tools, new_client } from \""
-    + module_path
-    + "\"\n\n"
-    + "@test\n"
-    + "pipeline default(harness: Harness) {\n"
+    + "import { adapter_catalog, adapter_tools, new_client } from \"" + module_path + "\"\n\n"
+    + "@test\n" + "pipeline default(harness: Harness) {\n"
     + "  const client = new_client(\"https://api.example.test\")\n"
     + "  const registry = adapter_tools({clock: harness.clock, net: harness.net}, client)\n"
     + "  assert_eq(len(registry.tools), 1)\n"
@@ -46,11 +43,8 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert(called.ok, \"generated registry handler should dispatch\")\n"
     + "  assert(called.rendered_result.contains(\"Widget One\"), \"generated SDK result should return\")\n"
     + "  const mcp = harness.tools.mcp_connect(harness.env.get(\"HARN_BIN\") ?? \"harn\", [\"serve\", \"mcp\", \""
-    + server_path
-    + "\"])\n"
-    + "  const discovered = harness.tools.mcp_list_tools(mcp)\n"
-    + "  assert_eq(discovered.count, 1)\n"
-    + "  assert_eq(discovered[0].name, \"lookup_widget\")\n"
+    + server_path + "\"])\n" + "  const discovered = harness.tools.mcp_list_tools(mcp)\n"
+    + "  assert_eq(discovered.count, 1)\n" + "  assert_eq(discovered[0].name, \"lookup_widget\")\n"
     + "  assert_eq(discovered[0].inputSchema.required, [\"widget_id\"])\n"
     + "  assert_eq(discovered[0].outputSchema.required, [\"id\", \"label\"])\n"
     + "  assert_eq(discovered[0].annotations.readOnlyHint, true)\n"
@@ -60,22 +54,24 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  harness.tools.mcp_disconnect(mcp)\n"
     + "  const rpc_input = json_stringify({jsonrpc: \"2.0\", id: 1, method: \"initialize\", params: {protocolVersion: \"2025-11-25\", capabilities: {}, clientInfo: {name: \"harn-openapi-test\", version: \"1\"}}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", method: \"notifications/initialized\", params: {}}) + \"\\n\" + json_stringify({jsonrpc: \"2.0\", id: 2, method: \"tools/list\", params: {}}) + \"\\n\"\n"
     + "  const wire = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"serve\", \"mcp\", \""
-    + server_path
-    + "\"], stdin: rpc_input})\n"
+    + server_path + "\"], stdin: rpc_input})\n"
     + "  require wire.success, \"generated MCP server must complete a raw stdio exchange: \" + wire.stderr\n"
-    + "  let wire_tools = nil\n"
-    + "  for line in wire.stdout.lines() {\n"
+    + "  let wire_tools = nil\n" + "  for line in wire.stdout.lines() {\n"
     + "    const message = json_parse(line)\n"
-    + "    if message.get(\"id\") == 2 { wire_tools = message.result.tools }\n"
-    + "  }\n"
+    + "    if message.get(\"id\") == 2 { wire_tools = message.result.tools }\n" + "  }\n"
     + "  require wire_tools != nil, \"raw tools/list response must be observed\"\n"
     + "  assert_eq(wire_tools[0].icons[0].sizes, [\"any\"])\n"
     + "  assert_eq(wire_tools[0].execution.taskSupport, \"optional\")\n"
-    + "  const help = harness.process.shell((harness.env.get(\"HARN_BIN\") ?? \"harn\") + \" tool run \" + \""
-    + server_path
-    + "\" + \" --help\")\n"
+    + "  const help = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path + "\", \"--help\"]})\n"
     + "  assert(help.success, \"generated CLI help should succeed\")\n"
     + "  assert(help.stdout.contains(\"widgets\"), \"generated CLI should expose the tag group\")\n"
+    + "  const cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
+    + server_path
+    + "\", \"widgets\", \"lookup_widget\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
+    + "  require cli.success, \"generated CLI dispatch should succeed: \" + cli.stderr\n"
+    + "  const cli_result = json_parse(cli.stdout.trim())\n"
+    + "  assert_eq(cli_result.id, \"w 1\")\n" + "  assert_eq(cli_result.label, \"Widget One\")\n"
     + "}\n"
 }
 
@@ -84,6 +80,8 @@ fn generated_server(module_path: string) -> string {
     + module_path
     + "\"\n\n"
     + "pipeline main(harness: Harness) {\n"
+    + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
     + "  const client = new_client(\"https://api.example.test\")\n"
     + "  harness.tools.mcp_tools(adapter_tools({clock: harness.clock, net: harness.net}, client))\n"
     + "}\n"

@@ -2258,7 +2258,13 @@ fn _adapter_cli(op: any, extension: any, name: any) -> dict {
 fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: any) {
   const extension = _x_harn_config(op)
   const name = extension.get("name") ?? function_name
-  const title = extension.get("title") ?? op.summary ?? op.operation_id
+  const title = if extension.get("title") != nil {
+    extension.title
+  } else if op.summary != "" {
+    op.summary
+  } else {
+    op.operation_id
+  }
   const description = if op.description != "" {
     op.description
   } else if op.summary != "" {
