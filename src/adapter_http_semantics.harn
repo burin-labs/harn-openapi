@@ -10,6 +10,16 @@ pub type AdapterHttpSemantics = {
   destructive_hint?: bool,
 }
 
+/** Parsed OpenAPI response-key semantics shared by every projection. */
+pub type AdapterHttpResponseKey = {
+  status_key: string,
+  match_kind: "exact" | "range" | "default",
+  exact_status?: int,
+  status_min?: int,
+  status_max?: int,
+  success_only: bool,
+}
+
 /** Deployment-wide annotation defaults that OpenAPI cannot infer. */
 pub type AdapterAnnotationDefaults = {openWorldHint?: bool}
 
@@ -42,6 +52,45 @@ pub fn adapter_http_semantics(method: string) -> AdapterHttpSemantics {
     }
   }
   throw "harn-openapi: unsupported HTTP method '" + method + "'"
+}
+
+/** Parse an OpenAPI exact, class-range, or default response key. */
+pub fn adapter_http_response_key(status_key: string) -> AdapterHttpResponseKey? {
+  if status_key == "default" {
+    return {status_key: status_key, match_kind: "default", success_only: false}
+  }
+  if regex_match("^[1-5][0-9][0-9]$", status_key) != nil {
+    const status = to_int(status_key)
+    return {
+      status_key: status_key,
+      match_kind: "exact",
+      exact_status: status,
+      status_min: status,
+      status_max: status,
+      success_only: status >= 200 && status <= 299,
+    }
+  }
+  if regex_match("^[1-5]XX$", status_key) != nil {
+    const status_class = to_int(substring(status_key, 0, 1))
+    return {
+      status_key: status_key,
+      match_kind: "range",
+      status_min: status_class * 100,
+      status_max: status_class * 100 + 99,
+      success_only: status_class == 2,
+    }
+  }
+  return nil
+}
+
+/** Whether an integer is a valid HTTP status code. */
+pub fn adapter_http_status_is_valid(status: int) -> bool {
+  return status >= 100 && status <= 599
+}
+
+/** Whether a valid HTTP response status is successful. */
+pub fn adapter_http_status_is_success(status: int) -> bool {
+  return adapter_http_status_is_valid(status) && status >= 200 && status <= 299
 }
 
 /** Validate the optional adapter-root annotation default record. */

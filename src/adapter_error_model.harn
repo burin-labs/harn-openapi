@@ -1,3 +1,8 @@
+import {
+  adapter_http_response_key,
+  adapter_http_status_is_success,
+  adapter_http_status_is_valid,
+} from "./adapter_http_semantics"
 import { AdapterJsonSchema, embed_adapter_schema } from "./adapter_schema_graph"
 
 /** One OpenAPI response offered to the application-error model. */
@@ -35,54 +40,26 @@ fn reject_model(operation_id: string, detail: string) -> AdapterOperationErrorMo
   throw error_message(operation_id, detail)
 }
 
-fn exact_response(operation_id: string, input: AdapterErrorResponseInput) -> AdapterErrorResponse {
-  const status = to_int(input.status_key)
-  if status >= 200 && status <= 299 {
-    return reject_response(
-      operation_id,
-      "must not pass successful status '" + input.status_key + "' to the error model",
-    )
-  }
-  return schema_expect(
-    {
-      status_key: input.status_key,
-      match_kind: "exact",
-      exact_status: status,
-      discriminant: "http_" + input.status_key,
-      type_suffix: "Http" + input.status_key,
-      body_schema: input.body_schema,
-    },
-    AdapterErrorResponse,
-  )
-}
-
-fn range_response(operation_id: string, input: AdapterErrorResponseInput) -> AdapterErrorResponse {
-  const status_class = to_int(substring(input.status_key, 0, 1))
-  if status_class == 2 {
-    return reject_response(
-      operation_id,
-      "must not pass successful range '" + input.status_key + "' to the error model",
-    )
-  }
-  return schema_expect(
-    {
-      status_key: input.status_key,
-      match_kind: "range",
-      status_min: status_class * 100,
-      status_max: status_class * 100 + 99,
-      discriminant: "http_" + input.status_key.lower(),
-      type_suffix: "Http" + input.status_key,
-      body_schema: input.body_schema,
-    },
-    AdapterErrorResponse,
-  )
-}
-
 fn normalize_response(
   operation_id: string,
   input: AdapterErrorResponseInput,
 ) -> AdapterErrorResponse {
-  if input.status_key == "default" {
+  const pattern = adapter_http_response_key(input.status_key)
+  if pattern == nil {
+    return reject_response(operation_id, "contains invalid status key '" + input.status_key + "'")
+  }
+  if pattern.success_only {
+    const noun = if pattern.match_kind == "range" {
+      "range"
+    } else {
+      "status"
+    }
+    return reject_response(
+      operation_id,
+      "must not pass successful " + noun + " '" + input.status_key + "' to the error model",
+    )
+  }
+  if pattern.match_kind == "default" {
     return schema_expect(
       {
         status_key: "default",
@@ -94,13 +71,19 @@ fn normalize_response(
       AdapterErrorResponse,
     )
   }
-  if regex_match("^[1-5][0-9][0-9]$", input.status_key) != nil {
-    return exact_response(operation_id, input)
-  }
-  if regex_match("^[1-5]XX$", input.status_key) != nil {
-    return range_response(operation_id, input)
-  }
-  return reject_response(operation_id, "contains invalid status key '" + input.status_key + "'")
+  return schema_expect(
+    {
+      status_key: input.status_key,
+      match_kind: pattern.match_kind,
+      exact_status: pattern.exact_status,
+      status_min: pattern.status_min,
+      status_max: pattern.status_max,
+      discriminant: "http_" + input.status_key.lower(),
+      type_suffix: "Http" + input.status_key,
+      body_schema: input.body_schema,
+    },
+    AdapterErrorResponse,
+  )
 }
 
 fn status_schema(response: AdapterErrorResponse) -> AdapterJsonSchema {
@@ -208,7 +191,7 @@ pub fn adapter_error_response_for_status(
   model: AdapterOperationErrorModel,
   status: int,
 ) -> AdapterErrorResponse? {
-  if status < 100 || status > 599 || (status >= 200 && status <= 299) {
+  if !adapter_http_status_is_valid(status) || adapter_http_status_is_success(status) {
     return nil
   }
   let range_match: AdapterErrorResponse? = nil
