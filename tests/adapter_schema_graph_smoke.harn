@@ -1,4 +1,8 @@
-import { normalize_adapter_schema, normalize_adapter_schema_graph } from "../src/lib"
+import {
+  close_adapter_schema,
+  normalize_adapter_schema,
+  normalize_adapter_schema_graph,
+} from "../src/lib"
 
 fn graph_rejection(value: any) -> string {
   const caught = try {
@@ -81,6 +85,15 @@ pipeline default(harness: Harness) {
   require input.properties.literal.const.get("$ref")
     == "https://example.invalid/instance-data",
     "reference-shaped instance data must stay opaque"
+  const closed = close_adapter_schema("3.1.1", input, graph)
+  require len(closed.components.schemas) == 2,
+    "tool schemas must carry only the transitive component closure"
+  require closed.components.schemas.get("Widget") != nil,
+    "direct component references must be bundled"
+  require closed.components.schemas.get("Widget/Id") != nil,
+    "transitive component references must be bundled"
+  require closed.components.schemas.get("Tree") == nil,
+    "unreachable components must not be duplicated into a tool schema"
   const graph_cases = [
     {
       value: {Broken: {"$ref": "#/components/schemas/Missing"}},

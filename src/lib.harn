@@ -98,6 +98,7 @@ import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
   AdapterJsonSchema,
   AdapterSchemaGraph,
+  close_adapter_schema,
   normalize_adapter_schema,
   normalize_adapter_schema_graph,
 } from "./adapter_schema_graph"
@@ -2383,23 +2384,11 @@ fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
   return _schema(doc, raw)
 }
 
-fn _adapter_closed_schema(schema: any, graph: AdapterSchemaGraph) {
-  if type_of(schema) != "dict" || len(graph.schemas) == 0 {
-    return schema
-  }
-  // Preserve the OpenAPI pointer vocabulary inside a self-contained JSON
-  // Schema resource. `components` is an extension keyword to Draft 2020-12;
-  // local `$ref` pointers can still resolve through it without duplicating or
-  // recursively expanding the shared graph.
-  return {...schema, components: {schemas: graph.schemas}}
+fn _adapter_closed_schema(openapi_version: string, schema: any, graph: AdapterSchemaGraph) {
+  return close_adapter_schema(openapi_version, schema, graph)
 }
 
-fn _adapter_input_schema(
-  doc: any,
-  op: any,
-  header_overrides: any,
-  graph: AdapterSchemaGraph,
-) -> dict {
+fn _adapter_input_schema(doc: any, op: any, header_overrides: any, graph: AdapterSchemaGraph) {
   const params = _operation_param_models(op.parameters)
   let properties = {}
   let required = []
@@ -2432,6 +2421,7 @@ fn _adapter_input_schema(
     }
   }
   return _adapter_closed_schema(
+    doc.openapi,
     {type: "object", properties: properties, required: required, additionalProperties: false},
     graph,
   )
@@ -2442,7 +2432,7 @@ fn _adapter_output_schema(doc: any, op: any, graph: AdapterSchemaGraph) {
   if picked == nil || picked.kind != "json" || picked.schema == nil {
     return nil
   }
-  return _adapter_closed_schema(_schema(doc, picked.schema), graph)
+  return _adapter_closed_schema(doc.openapi, _schema(doc, picked.schema), graph)
 }
 
 fn _adapter_tool_parameters(input_schema: any) -> dict {

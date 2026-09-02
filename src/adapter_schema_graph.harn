@@ -326,6 +326,80 @@ pub fn normalize_adapter_schema(
   return normalized
 }
 
+fn component_reference_name(reference: unknown, field: string) -> string? {
+  if type_of(reference) != "string" || !starts_with(reference, "#/components/schemas/") {
+    return nil
+  }
+  const suffix = substring(reference, len("#/components/schemas/"), len(reference))
+  const encoded_name = split(suffix, "/")[0]
+  if encoded_name == nil || encoded_name == "" {
+    return nil
+  }
+  return decode_pointer_segment(encoded_name, field)
+}
+
+fn referenced_component_names(
+  value: AdapterJsonSchema,
+  graph: AdapterSchemaGraph,
+  seen: list<string>,
+  field: string,
+) -> list<string> {
+  if type_of(value) == "bool" {
+    return seen
+  }
+  let names = seen
+  const name = component_reference_name(value.get("$ref"), field + ".$ref")
+  if name != nil && !names.contains(name) {
+    names = names + [name]
+    names = referenced_component_names(
+      graph.schemas.get(name),
+      graph,
+      names,
+      "components.schemas." + name,
+    )
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      names = referenced_component_names(value.get(keyword), graph, names, field + "." + keyword)
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    for child in value.get(keyword) ?? [] {
+      names = referenced_component_names(child, graph, names, field + "." + keyword)
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    for entry in value.get(keyword) ?? {} {
+      names = referenced_component_names(
+        entry.value,
+        graph,
+        names,
+        field + "." + keyword + "." + entry.key,
+      )
+    }
+  }
+  return names
+}
+
+/** Close one tool schema over only its transitively referenced components. */
+pub fn close_adapter_schema(
+  openapi_version: string,
+  value: unknown,
+  graph: AdapterSchemaGraph,
+  json_schema_dialect: string? = nil,
+) -> AdapterJsonSchema {
+  const normalized = normalize_adapter_schema(openapi_version, value, graph, json_schema_dialect)
+  const names = referenced_component_names(normalized, graph, [], "schema")
+  if type_of(normalized) != "dict" || len(names) == 0 {
+    return normalized
+  }
+  let schemas: dict<string, AdapterJsonSchema> = {}
+  for name in names {
+    schemas = {...schemas, [name]: graph.schemas.get(name)}
+  }
+  return {...normalized, components: {schemas: schemas}}
+}
+
 /** Preserve reusable OpenAPI components as one portable Draft 2020-12 graph. */
 pub fn normalize_adapter_schema_graph(
   openapi_version: string,
