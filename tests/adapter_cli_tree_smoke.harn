@@ -44,6 +44,7 @@ pipeline default(harness: Harness) {
   require overridden_widgets != nil && overridden_users != nil, "overridden command census"
   require overridden_widgets.title == "Widget operations", "tag override title"
   require overridden_widgets.aliases == ["widget"], "tag override aliases"
+  require overridden_widgets.description == "Manage widgets.", "tag defaults survive overlay"
   require overridden_users.command == ["admin", "users"], "nested parent metadata"
   require overridden_users.hidden == true, "nested parent hidden state"
   const cases = [

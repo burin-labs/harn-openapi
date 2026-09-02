@@ -12,7 +12,7 @@ pub type AdapterCliCommandSpec = {
 
 pub type AdapterCliTreeSpec = {commands: list<AdapterCliCommandSpec>}
 
-/** OpenAPI tag metadata after its name is normalized once by the importer. */
+/** CLI-visible OpenAPI tag metadata after one importer-owned name normalization. */
 pub type AdapterCliTag = {command: string, title: string, description?: string, display_order: int}
 
 const ROOT_CLI_FIELDS = ["commands"]
@@ -141,14 +141,17 @@ fn replace_command(
   let out = []
   const target = command_key(replacement.command)
   for command in commands {
-    out = out
-      + [
-        if command_key(command.command) == target {
-          replacement
-        } else {
-          command
-        },
-      ]
+    if command_key(command.command) == target {
+      let merged = command
+      for key in ["title", "description", "aliases", "hidden", "display_order"] {
+        if replacement.get(key) != nil {
+          merged = {...merged, [key]: replacement.get(key)}
+        }
+      }
+      out = out + [schema_expect(merged, AdapterCliCommandSpec)]
+    } else {
+      out = out + [command]
+    }
   }
   return out
 }
