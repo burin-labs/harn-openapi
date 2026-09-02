@@ -94,6 +94,13 @@
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
 import { filter_nil } from "std/collections"
+pub import {
+  AdapterErrorResponse,
+  AdapterErrorResponseInput,
+  AdapterOperationErrorModel,
+  adapter_error_response_for_status,
+  prepare_adapter_error_model,
+} from "./adapter_error_model"
 import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
   AdapterAnnotationDefaults,

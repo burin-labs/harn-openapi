@@ -1,0 +1,92 @@
+import {
+  adapter_error_response_for_status,
+  prepare_adapter_error_model,
+} from "../src/adapter_error_model"
+
+fn captured_error(body: fn() -> any) -> string {
+  const caught = try {
+    body()
+    nil
+  } catch (error) {
+    error
+  }
+  require caught != nil, "expected operation to fail"
+  return to_string(caught)
+}
+
+@test
+pipeline default() {
+  const not_found = {
+    type: "object",
+    properties: {code: {const: "not_found"}, message: {type: "string"}},
+    required: ["code", "message"],
+    additionalProperties: false,
+  }
+  const client_error = {
+    type: "object",
+    properties: {message: {type: "string"}},
+    required: ["message"],
+    additionalProperties: false,
+  }
+  const generic_error = {
+    type: "object",
+    properties: {error: {type: "string"}},
+    required: ["error"],
+    additionalProperties: false,
+  }
+  const inputs = [
+    {status_key: "default", body_schema: generic_error},
+    {status_key: "4XX", body_schema: client_error},
+    {status_key: "409"},
+    {status_key: "404", body_schema: not_found},
+  ]
+  const model = prepare_adapter_error_model("get-widget", "GetWidgetError", inputs)
+  require model.responses.map({ response -> response.status_key })
+    == ["404", "409", "4XX", "default"],
+    "normalization must produce exact, range, default precedence in canonical order"
+  require adapter_error_response_for_status(model, 404)?.status_key == "404",
+    "an exact status must outrank its class range"
+  require adapter_error_response_for_status(model, 418)?.status_key == "4XX",
+    "a class range must outrank default"
+  require adapter_error_response_for_status(model, 503)?.status_key == "default",
+    "default must match an otherwise undocumented non-success status"
+  const schema = model.error_schema
+  require type_of(schema) == "dict", "the operation error schema must be an object schema"
+  const variants = schema.get("oneOf")
+  require type_of(variants) == "list", "typed responses plus fallback must form oneOf"
+  require len(variants) == 4,
+    "three typed bodies plus one safe fallback must be published; untyped 409 stays fallback-only"
+  const encoded = json_stringify(schema)
+  require encoded.contains("http_404"), "exact response discriminant must be present"
+  require encoded.contains("http_4xx"), "range response discriminant must be present"
+  require encoded.contains("http_default"), "default response discriminant must be present"
+  require encoded.contains("upstream_error"), "safe fallback discriminant must be present"
+  const fallback = variants[len(variants) - 1]
+  require fallback.properties.get("body") == nil,
+    "fallback errors must not publish an arbitrary upstream body"
+  require fallback.properties.get("headers") == nil,
+    "fallback errors must not publish arbitrary upstream headers"
+  const reversed = prepare_adapter_error_model("get-widget", "GetWidgetError", inputs.reverse())
+  require reversed == model, "input map order must not affect generated error contracts"
+  const duplicate = captured_error(
+    { ->
+      prepare_adapter_error_model(
+        "get-widget",
+        "GetWidgetError",
+        [{status_key: "404"}, {status_key: "404"}],
+      )
+    },
+  )
+  require duplicate.contains("duplicate status key '404'"),
+    "duplicate status declarations must fail closed"
+  const success = captured_error(
+    { -> prepare_adapter_error_model("get-widget", "GetWidgetError", [{status_key: "204"}]) },
+  )
+  require success.contains("must not pass successful status '204'"),
+    "the error model must reject successful responses"
+  const invalid = captured_error(
+    { -> prepare_adapter_error_model("get-widget", "GetWidgetError", [{status_key: "4xx"}]) },
+  )
+  require invalid.contains("invalid status key '4xx'"),
+    "non-canonical response keys must fail closed"
+}
