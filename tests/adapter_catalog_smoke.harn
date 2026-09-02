@@ -91,8 +91,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  const wire_widget = named_tool(wire_tools, \"lookup_widget\")\n"
     + "  require wire_widget != nil, \"raw MCP tools/list must include the widget\"\n"
     + "  assert_eq(wire_widget.icons[0].sizes, [\"any\"])\n"
-    + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n"
-    + "}\n"
+    + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n" + "}\n"
 }
 
 /**
@@ -102,9 +101,11 @@ fn generated_runner(module_path: string, server_path: string) -> string {
  */
 fn generated_cli_runner(module_path: string, server_path: string) -> string {
   return "import { adapter_tools, new_client } from \"" + module_path + "\"\n\n"
-    + "@test\n" + "pipeline cli_surface(harness: Harness) {\n"
+    + "@test\n"
+    + "pipeline cli_surface(harness: Harness) {\n"
     + "  const help = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
-    + server_path + "\", \"--help\"]})\n"
+    + server_path
+    + "\", \"--help\"]})\n"
     + "  assert(help.success, \"generated CLI help should succeed\")\n"
     + "  assert(help.stdout.contains(\"widgets\"), \"generated CLI should expose the tag group\")\n"
     + "  assert(!help.stdout.contains(\"reindex\"), \"generated CLI help must exclude MCP-only tools\")\n"
@@ -113,10 +114,13 @@ fn generated_cli_runner(module_path: string, server_path: string) -> string {
     + "\", \"widgets\", \"get\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
     + "  require cli.success, \"generated CLI dispatch should succeed: \" + cli.stderr\n"
     + "  const cli_result = json_parse(cli.stdout.trim())\n"
-    + "  assert_eq(cli_result.id, \"w 1\")\n" + "  assert_eq(cli_result.label, \"Widget One\")\n"
+    + "  assert_eq(cli_result.id, \"w 1\")\n"
+    + "  assert_eq(cli_result.label, \"Widget One\")\n"
     + "  const excluded_cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
-    + server_path + "\", \"widgets\", \"reindex\", \"--help\"]})\n"
-    + "  assert(!excluded_cli.success, \"excluded CLI command resolution must fail\")\n" + "}\n"
+    + server_path
+    + "\", \"widgets\", \"reindex\", \"--help\"]})\n"
+    + "  assert(!excluded_cli.success, \"excluded CLI command resolution must fail\")\n"
+    + "}\n"
 }
 
 fn generated_server(module_path: string) -> string {
