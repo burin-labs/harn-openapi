@@ -1,0 +1,205 @@
+import { is_portable_cli_component } from "./adapter_cli"
+
+/** Registry-level metadata for one parent path in the portable CLI tree. */
+pub type AdapterCliCommandSpec = {
+  command: list<string>,
+  title?: string,
+  description?: string,
+  aliases?: list<string>,
+  hidden?: bool,
+  display_order?: int,
+}
+
+pub type AdapterCliTreeSpec = {commands: list<AdapterCliCommandSpec>}
+
+/** OpenAPI tag metadata after its name is normalized once by the importer. */
+pub type AdapterCliTag = {command: string, title: string, description?: string, display_order: int}
+
+const ROOT_CLI_FIELDS = ["commands"]
+
+const COMMAND_FIELDS = ["command", "title", "description", "aliases", "hidden", "display_order"]
+
+fn tree_error(field: string, detail: string) -> string {
+  return "harn-openapi.codegen_module: root x-harn.cli" + field + " " + detail
+}
+
+fn reject_tree(field: string, detail: string) -> AdapterCliTreeSpec {
+  throw tree_error(field, detail)
+}
+
+fn reject_command(field: string, detail: string) -> AdapterCliCommandSpec {
+  throw tree_error(field, detail)
+}
+
+fn reject_aliases(field: string, detail: string) -> list<string> {
+  throw tree_error(field, detail)
+}
+
+fn command_key(command: list<string>) -> string {
+  return join(command, "/")
+}
+
+fn normalize_command_path(value: unknown, field: string) -> list<string> {
+  if type_of(value) != "list" || len(value) == 0 {
+    return reject_command(field, "must be a non-empty list of portable command names").command
+  }
+  let command = []
+  for segment in value {
+    if type_of(segment) != "string" || !is_portable_cli_component(segment) {
+      return reject_command(field, "must contain portable command names").command
+    }
+    command = command + [segment]
+  }
+  return command
+}
+
+fn normalize_aliases(value: unknown, field: string) -> list<string> {
+  if type_of(value) != "list" {
+    return reject_aliases(field, "must be a list of portable command names")
+  }
+  let aliases = []
+  for alias in value {
+    if type_of(alias) != "string" || !is_portable_cli_component(alias) {
+      return reject_aliases(field, "must contain portable command names")
+    }
+    if aliases.contains(alias) {
+      return reject_aliases(field, "contains duplicate alias '" + alias + "'")
+    }
+    aliases = aliases + [alias]
+  }
+  return aliases
+}
+
+fn validate_optional_text(value: unknown, field: string) -> nil {
+  if type_of(value) != "string" || value.trim() == "" {
+    throw tree_error(field, "must be a non-empty string")
+  }
+}
+
+fn normalize_declared_command(value: unknown, index: int) -> AdapterCliCommandSpec {
+  const field = ".commands[" + to_string(index) + "]"
+  if type_of(value) != "dict" {
+    return reject_command(field, "must be an object")
+  }
+  for entry in value {
+    if !COMMAND_FIELDS.contains(entry.key) {
+      return reject_command(field, "contains unknown field '" + entry.key + "'")
+    }
+  }
+  const command = normalize_command_path(value.get("command"), field + ".command")
+  let result: AdapterCliCommandSpec = {command: command}
+  for key in ["title", "description"] {
+    if value.get(key) != nil {
+      validate_optional_text(value.get(key), field + "." + key)
+      result = schema_expect({...result, [key]: value.get(key)}, AdapterCliCommandSpec)
+    }
+  }
+  if value.get("aliases") != nil {
+    result = schema_expect(
+      {...result, aliases: normalize_aliases(value.get("aliases"), field + ".aliases")},
+      AdapterCliCommandSpec,
+    )
+  }
+  if value.get("hidden") != nil {
+    if type_of(value.get("hidden")) != "bool" {
+      return reject_command(field + ".hidden", "must be a bool")
+    }
+    result = schema_expect({...result, hidden: value.get("hidden")}, AdapterCliCommandSpec)
+  }
+  if value.get("display_order") != nil {
+    const order = value.get("display_order")
+    if type_of(order) != "int" || order < 0 {
+      return reject_command(field + ".display_order", "must be a non-negative integer")
+    }
+    result = schema_expect({...result, display_order: order}, AdapterCliCommandSpec)
+  }
+  return result
+}
+
+fn tag_command(tag: AdapterCliTag) -> AdapterCliCommandSpec {
+  if !is_portable_cli_component(tag.command) {
+    return reject_command(
+      ".commands",
+      "OpenAPI tag '" + tag.title + "' does not normalize to a portable command name",
+    )
+  }
+  let result: AdapterCliCommandSpec = {
+    command: [tag.command],
+    title: tag.title,
+    display_order: tag.display_order,
+  }
+  if tag.description != nil && tag.description.trim() != "" {
+    result = schema_expect({...result, description: tag.description}, AdapterCliCommandSpec)
+  }
+  return result
+}
+
+fn replace_command(
+  commands: list<AdapterCliCommandSpec>,
+  replacement: AdapterCliCommandSpec,
+) -> list<AdapterCliCommandSpec> {
+  let out = []
+  const target = command_key(replacement.command)
+  for command in commands {
+    out = out
+      + [
+        if command_key(command.command) == target {
+          replacement
+        } else {
+          command
+        },
+      ]
+  }
+  return out
+}
+
+/**
+ * Normalize OpenAPI tags and root `x-harn.cli.commands` into one command tree.
+ * Explicit records replace the matching tag-derived path and may add deeper
+ * parent paths. Harn's prepared catalog remains the owner of sibling aliases,
+ * reserved names, leaf conflicts, and final tree validity.
+ */
+pub fn normalize_adapter_cli_tree(value: unknown, tags: list<AdapterCliTag>) -> AdapterCliTreeSpec {
+  const raw = value ?? {}
+  if type_of(raw) != "dict" {
+    return reject_tree("", "must be an object")
+  }
+  for entry in raw {
+    if !ROOT_CLI_FIELDS.contains(entry.key) {
+      return reject_tree("", "contains unknown field '" + entry.key + "'")
+    }
+  }
+  let commands: list<AdapterCliCommandSpec> = []
+  let keys = []
+  for tag in tags {
+    const command = tag_command(tag)
+    const key = command_key(command.command)
+    if keys.contains(key) {
+      return reject_tree(".commands", "contains duplicate tag-derived path '" + key + "'")
+    }
+    commands = commands + [command]
+    keys = keys + [key]
+  }
+  const declared = raw.get("commands")
+  if declared != nil {
+    if type_of(declared) != "list" {
+      return reject_tree(".commands", "must be a list")
+    }
+    let declared_keys = []
+    for enumerated in declared.enumerate() {
+      const command = normalize_declared_command(enumerated.value, enumerated.index)
+      const key = command_key(command.command)
+      if declared_keys.contains(key) {
+        return reject_tree(".commands", "contains duplicate declared path '" + key + "'")
+      }
+      declared_keys = declared_keys + [key]
+      if keys.contains(key) {
+        commands = replace_command(commands, command)
+      } else {
+        commands = commands + [command]
+        keys = keys + [key]
+      }
+    }
+  }
+  return {commands: commands}
+}

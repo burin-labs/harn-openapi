@@ -115,7 +115,8 @@ fn reject_validation(operation_id: string, field: string, detail: string) -> nil
   throw cli_error(operation_id, field, detail)
 }
 
-fn portable_command(value: string) -> bool {
+/** Whether a string can be one portable component of a Harn CLI command path. */
+pub fn is_portable_cli_component(value: string) -> bool {
   return regex_match("^[A-Za-z0-9_][A-Za-z0-9_-]*$", value) != nil
 }
 
@@ -173,7 +174,7 @@ fn normalize_command(value: unknown, context: AdapterCliContext) -> list<string>
     ).command
   }
   for segment in command {
-    if type_of(segment) != "string" || !portable_command(segment) {
+    if type_of(segment) != "string" || !is_portable_cli_component(segment) {
       return reject_cli(context.operation_id, ".command", "must contain portable command names")
         .command
     }
