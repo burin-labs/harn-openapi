@@ -1,0 +1,105 @@
+import { normalize_adapter_cli } from "../src/adapter_cli"
+
+fn context() {
+  return {
+    operation_id: "get-widget",
+    tool_name: "lookup_widget",
+    tags: ["widgets"],
+    parameters: [
+      {
+        property: "widget_id",
+        wire_name: "widget-id",
+        description: "Stable widget id.",
+        schema: {type: "string", format: "uri"},
+      },
+      {
+        property: "color",
+        wire_name: "color",
+        description: "Requested color.",
+        schema: {type: "string", enum: ["red", "blue"]},
+      },
+    ],
+    body_description: "Replacement widget.",
+    body_schema: {type: "object"},
+  }
+}
+
+fn rejection(value: any) -> string {
+  const caught = try {
+    normalize_adapter_cli(value, context())
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
+@test
+pipeline default(harness: Harness) {
+  require harness.fs.source_dir() != "", "test must run with a real harness"
+  const defaults = normalize_adapter_cli(nil, context())
+  require defaults.command == ["widgets", "lookup_widget"], "default command projection"
+  require defaults.arguments.widget_id.help == "Stable widget id.", "parameter help"
+  require defaults.arguments.widget_id.value_hint == "url", "format-derived value hint"
+  require defaults.arguments.color.completions == ["red", "blue"], "enum completions"
+  require defaults.arguments.body.help == "Replacement widget.", "request-body help"
+  const overridden = normalize_adapter_cli(
+    {
+      command: ["widgets", "get"],
+      aliases: ["fetch"],
+      hidden: false,
+      arguments: {
+        "widget-id": {position: 0, value_name: "ID"},
+        color: {short: "c", aliases: ["colour"], display_order: 10},
+        body: {long: "payload", help_group: "Input"},
+      },
+    },
+    context(),
+  )
+  require overridden.command == ["widgets", "get"], "explicit command projection"
+  require overridden.aliases == ["fetch"], "command aliases"
+  require overridden.arguments.widget_id.position == 0, "wire-name positional mapping"
+  require overridden.arguments.widget_id.value_name == "ID", "positional value name"
+  require overridden.arguments.color.short == "c", "short option mapping"
+  require overridden.arguments.color.aliases == ["colour"], "option aliases"
+  require overridden.arguments.body.long == "payload", "request-body option override"
+  const cases = [
+    {
+      value: "cli",
+      expected: "harn-openapi.codegen_module: x-harn.cli on 'get-widget' must be an object",
+    },
+    {
+      value: {commands: []},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli on 'get-widget' contains unknown field 'commands'",
+    },
+    {
+      value: {aliases: ["get", "get"]},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.aliases on 'get-widget' contains duplicate value 'get'",
+    },
+    {
+      value: {arguments: {missing: {long: "missing"}}},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' contains unknown OpenAPI parameter 'missing'",
+    },
+    {
+      value: {arguments: {color: {short: "cc"}}},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments.color.short on 'get-widget' must be one ASCII letter or digit",
+    },
+    {
+      value: {arguments: {color: {repeatable: "yes"}}},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments.color.repeatable on 'get-widget' must be a bool",
+    },
+    {
+      value: {arguments: {color: {value_hint: "planet"}}},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments.color.value_hint on 'get-widget' contains an unknown value hint",
+    },
+  ]
+  for case in cases {
+    require rejection(case.value) == case.expected, "exact CLI boundary diagnostic"
+  }
+}

@@ -1,0 +1,382 @@
+/**
+ * Portable CLI projection owned by the generated Harn tool catalog.
+ *
+ * OpenAPI supplies the default help and closed enum completions. `x-harn.cli`
+ * can override presentation and token-to-JSON mapping, but it never changes
+ * the input schema or the accepted values.
+ */
+pub type AdapterCliValueHint = "file" \
+  | "directory" \
+  | "path" \
+  | "url" \
+  | "email" \
+  | "username" \
+  | "hostname" \
+  | "command" \
+  | "other"
+
+pub type AdapterCliBooleanStyle = "value" | "set_true" | "set_false"
+
+pub type AdapterCliArgumentSpec = {
+  long?: string,
+  short?: string,
+  aliases?: list<string>,
+  position?: int,
+  value_name?: string,
+  help?: string,
+  value_hint?: AdapterCliValueHint,
+  boolean_style?: AdapterCliBooleanStyle,
+  repeatable?: bool,
+  hidden?: bool,
+  completions?: list<string>,
+  display_order?: int,
+  help_group?: string,
+}
+
+pub type AdapterCliSpec = {
+  command: list<string>,
+  aliases?: list<string>,
+  hidden?: bool,
+  arguments?: dict<string, AdapterCliArgumentSpec>,
+}
+
+/** One input-schema property and its source OpenAPI parameter spelling. */
+pub type AdapterCliParameter = {
+  property: string,
+  wire_name: string,
+  description?: string,
+  schema?: dict,
+}
+
+pub type AdapterCliContext = {
+  operation_id: string,
+  tool_name: string,
+  namespace?: string,
+  tags: list<string>,
+  parameters: list<AdapterCliParameter>,
+  body_description?: string,
+  body_schema?: dict,
+}
+
+const CLI_FIELDS = ["command", "aliases", "hidden", "arguments"]
+
+const ARGUMENT_FIELDS = [
+  "long",
+  "short",
+  "aliases",
+  "position",
+  "value_name",
+  "help",
+  "value_hint",
+  "boolean_style",
+  "repeatable",
+  "hidden",
+  "completions",
+  "display_order",
+  "help_group",
+]
+
+const VALUE_HINTS: list<AdapterCliValueHint> = [
+  "file",
+  "directory",
+  "path",
+  "url",
+  "email",
+  "username",
+  "hostname",
+  "command",
+  "other",
+]
+
+const BOOLEAN_STYLES: list<AdapterCliBooleanStyle> = ["value", "set_true", "set_false"]
+
+fn cli_error(operation_id: string, field: string, detail: string) -> string {
+  return "harn-openapi.codegen_module: x-harn.cli"
+    + field
+    + " on '"
+    + operation_id
+    + "' "
+    + detail
+}
+
+fn reject_cli(operation_id: string, field: string, detail: string) -> AdapterCliSpec {
+  throw cli_error(operation_id, field, detail)
+}
+
+fn reject_string_list(operation_id: string, field: string, detail: string) -> list<string> {
+  throw cli_error(operation_id, field, detail)
+}
+
+fn reject_argument(operation_id: string, field: string, detail: string) -> AdapterCliArgumentSpec {
+  throw cli_error(operation_id, field, detail)
+}
+
+fn reject_validation(operation_id: string, field: string, detail: string) -> nil {
+  throw cli_error(operation_id, field, detail)
+}
+
+fn portable_command(value: string) -> bool {
+  return regex_match("^[A-Za-z0-9_][A-Za-z0-9_-]*$", value) != nil
+}
+
+fn portable_long(value: string) -> bool {
+  return regex_match("^[A-Za-z0-9][A-Za-z0-9-]*$", value) != nil
+}
+
+fn non_empty_text(value: unknown) -> bool {
+  return type_of(value) == "string" && value.trim() != ""
+}
+
+fn normalize_string_list(
+  value: unknown,
+  operation_id: string,
+  field: string,
+  portable: bool,
+) -> list<string> {
+  if type_of(value) != "list" {
+    return reject_string_list(operation_id, field, "must be a list of non-empty strings")
+  }
+  let out = []
+  for item in value {
+    if !non_empty_text(item) || (portable && !portable_long(item)) {
+      throw cli_error(operation_id, field, "must contain portable non-empty strings")
+    }
+    if out.contains(item) {
+      throw cli_error(operation_id, field, "contains duplicate value '" + item + "'")
+    }
+    out = out + [item]
+  }
+  return out
+}
+
+fn normalize_command(value: unknown, context: AdapterCliContext) -> list<string> {
+  let command = []
+  if type_of(value) == "string" {
+    command = [value]
+  } else if type_of(value) == "list" {
+    command = value
+  } else if value != nil {
+    return reject_cli(context.operation_id, ".command", "must be a string or list of strings")
+      .command
+  } else if context.namespace != nil {
+    command = context.namespace.split(".") + context.tool_name.split(".")
+  } else if len(context.tags) > 0 {
+    command = [context.tags[0]] + context.tool_name.split(".")
+  } else {
+    command = context.tool_name.split(".")
+  }
+  if len(command) == 0 {
+    return reject_cli(
+      context.operation_id,
+      ".command",
+      "must contain at least one portable command name",
+    ).command
+  }
+  for segment in command {
+    if type_of(segment) != "string" || !portable_command(segment) {
+      return reject_cli(context.operation_id, ".command", "must contain portable command names")
+        .command
+    }
+  }
+  return command
+}
+
+fn string_completions(schema: unknown) -> list<string> {
+  if type_of(schema) != "dict" || type_of(schema.get("enum")) != "list" {
+    return []
+  }
+  let out = []
+  for value in schema.get("enum") {
+    if type_of(value) != "string" || value == "" || out.contains(value) {
+      return []
+    }
+    out = out + [value]
+  }
+  return out
+}
+
+fn schema_value_hint(schema: unknown) -> AdapterCliValueHint? {
+  if type_of(schema) != "dict" {
+    return nil
+  }
+  const format = schema.get("format")
+  if ["uri", "uri-reference", "url"].contains(format) {
+    return "url"
+  }
+  if ["email", "idn-email"].contains(format) {
+    return "email"
+  }
+  if ["hostname", "idn-hostname"].contains(format) {
+    return "hostname"
+  }
+  return nil
+}
+
+fn default_argument(description: string?, schema: dict?) -> AdapterCliArgumentSpec {
+  let result: AdapterCliArgumentSpec = {}
+  if description != nil && description.trim() != "" {
+    result = schema_expect({...result, help: description}, AdapterCliArgumentSpec)
+  }
+  const completions = string_completions(schema)
+  if len(completions) > 0 {
+    result = schema_expect({...result, completions: completions}, AdapterCliArgumentSpec)
+  }
+  const hint = schema_value_hint(schema)
+  if hint != nil {
+    result = schema_expect({...result, value_hint: hint}, AdapterCliArgumentSpec)
+  }
+  return result
+}
+
+fn parameter_for_wire_name(
+  parameters: list<AdapterCliParameter>,
+  wire_name: string,
+) -> AdapterCliParameter? {
+  for parameter in parameters {
+    if parameter.wire_name == wire_name {
+      return parameter
+    }
+  }
+  return nil
+}
+
+fn validate_argument_scalar(operation_id: string, field: string, key: string, value: unknown) {
+  if ["long", "value_name", "help", "help_group"].contains(key) {
+    if type_of(value) != "string" || value.trim() == "" {
+      return reject_validation(operation_id, field + "." + key, "must be a non-empty string")
+    }
+  }
+  if key == "long" {
+    if type_of(value) != "string" || !portable_long(value) {
+      return reject_validation(operation_id, field + ".long", "must be a portable long option name")
+    }
+  }
+  if key == "short"
+    && (type_of(value) != "string" || regex_match("^[A-Za-z0-9]$", value) == nil) {
+    return reject_validation(operation_id, field + ".short", "must be one ASCII letter or digit")
+  }
+  if ["position", "display_order"].contains(key) && (type_of(value) != "int" || value < 0) {
+    return reject_validation(operation_id, field + "." + key, "must be a non-negative integer")
+  }
+  if ["repeatable", "hidden"].contains(key) && type_of(value) != "bool" {
+    return reject_validation(operation_id, field + "." + key, "must be a bool")
+  }
+  if key == "value_hint" && (type_of(value) != "string" || !VALUE_HINTS.contains(value)) {
+    return reject_validation(operation_id, field + ".value_hint", "contains an unknown value hint")
+  }
+  if key == "boolean_style"
+    && (type_of(value) != "string" || !BOOLEAN_STYLES.contains(value)) {
+    return reject_validation(
+      operation_id,
+      field + ".boolean_style",
+      "contains an unknown boolean style",
+    )
+  }
+}
+
+fn normalize_argument_override(
+  operation_id: string,
+  wire_name: string,
+  value: unknown,
+  defaults: AdapterCliArgumentSpec,
+) -> AdapterCliArgumentSpec {
+  const field = ".arguments." + wire_name
+  if type_of(value) != "dict" {
+    return reject_argument(operation_id, field, "must be an object")
+  }
+  let result = defaults
+  for entry in value {
+    if !ARGUMENT_FIELDS.contains(entry.key) {
+      return reject_argument(operation_id, field, "contains unknown field '" + entry.key + "'")
+    }
+    if ["aliases", "completions"].contains(entry.key) {
+      const normalized = normalize_string_list(
+        entry.value,
+        operation_id,
+        field + "." + entry.key,
+        entry.key == "aliases",
+      )
+      result = schema_expect({...result, [entry.key]: normalized}, AdapterCliArgumentSpec)
+    } else {
+      validate_argument_scalar(operation_id, field, entry.key, entry.value)
+      result = schema_expect({...result, [entry.key]: entry.value}, AdapterCliArgumentSpec)
+    }
+  }
+  return result
+}
+
+/** Validate and normalize one operation's portable CLI presentation. */
+pub fn normalize_adapter_cli(value: unknown, context: AdapterCliContext) -> AdapterCliSpec {
+  const raw = value ?? {}
+  if type_of(raw) != "dict" {
+    return reject_cli(context.operation_id, "", "must be an object")
+  }
+  for entry in raw {
+    if !CLI_FIELDS.contains(entry.key) {
+      return reject_cli(context.operation_id, "", "contains unknown field '" + entry.key + "'")
+    }
+  }
+  let result: AdapterCliSpec = {command: normalize_command(raw.get("command"), context)}
+  if raw.get("aliases") != nil {
+    result = schema_expect(
+      {
+        ...result,
+        aliases: normalize_string_list(raw.get("aliases"), context.operation_id, ".aliases", true),
+      },
+      AdapterCliSpec,
+    )
+  }
+  if raw.get("hidden") != nil {
+    if type_of(raw.get("hidden")) != "bool" {
+      return reject_cli(context.operation_id, ".hidden", "must be a bool")
+    }
+    result = schema_expect({...result, hidden: raw.get("hidden")}, AdapterCliSpec)
+  }
+  let arguments: dict<string, AdapterCliArgumentSpec> = {}
+  for parameter in context.parameters {
+    const defaults = default_argument(parameter.description, parameter.schema)
+    if len(defaults) > 0 {
+      arguments = {...arguments, [parameter.property]: defaults}
+    }
+  }
+  if context.body_schema != nil {
+    const defaults = default_argument(context.body_description, context.body_schema)
+    if len(defaults) > 0 {
+      arguments = {...arguments, body: defaults}
+    }
+  }
+  const overrides = raw.get("arguments")
+  if overrides != nil {
+    if type_of(overrides) != "dict" {
+      return reject_cli(context.operation_id, ".arguments", "must be an object")
+    }
+    for entry in overrides {
+      const parameter = parameter_for_wire_name(context.parameters, entry.key)
+      const property = if parameter != nil {
+        parameter.property
+      } else if entry.key == "body" && context.body_schema != nil {
+        "body"
+      } else {
+        return reject_cli(
+          context.operation_id,
+          ".arguments",
+          "contains unknown OpenAPI parameter '" + entry.key + "'",
+        ).command[0]
+      }
+      const defaults = arguments.get(property) ?? {}
+      arguments = {
+        ...arguments,
+        [property]: normalize_argument_override(
+          context.operation_id,
+          entry.key,
+          entry.value,
+          defaults,
+        ),
+      }
+    }
+  }
+  if len(arguments) > 0 {
+    result = schema_expect({...result, arguments: arguments}, AdapterCliSpec)
+  }
+  return result
+}
