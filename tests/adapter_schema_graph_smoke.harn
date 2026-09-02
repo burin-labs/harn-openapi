@@ -1,0 +1,116 @@
+import { normalize_adapter_schema, normalize_adapter_schema_graph } from "../src/lib"
+
+fn graph_rejection(value: any) -> string {
+  const caught = try {
+    normalize_adapter_schema_graph("3.1.1", value)
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
+fn schema_rejection(value: any, graph: any) -> string {
+  const caught = try {
+    normalize_adapter_schema("3.1.1", value, graph)
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
+@test
+pipeline default(harness: Harness) {
+  require harness.fs.source_dir() != "", "test must run with a real harness"
+  const graph = normalize_adapter_schema_graph(
+    "3.1.1",
+    {
+      "Widget/Id": {type: "string", format: "uuid"},
+      Widget: {
+        type: "object",
+        properties: {id: {"$ref": "#/components/schemas/Widget~1Id"}},
+        required: ["id"],
+        additionalProperties: false,
+      },
+      WidgetList: {type: "array", items: {"$ref": "#/components/schemas/Widget"}},
+      Tree: {
+        type: "object",
+        properties: {children: {type: "array", items: {"$ref": "#/components/schemas/Tree"}}},
+      },
+      Local: {"$defs": {Value: {type: "integer"}}, "$ref": "#/$defs/Value"},
+      Impossible: false,
+    },
+  )
+  require len(graph.schemas) == 6, "every component should be emitted exactly once"
+  require graph.schemas.WidgetList.items.get("$ref") == "#/components/schemas/Widget",
+    "component references must remain shared"
+  require graph.schemas.Tree.properties.children.items.get("$ref")
+    == "#/components/schemas/Tree",
+    "recursive references must remain references"
+  require graph.schemas.Impossible == false, "boolean schemas must survive"
+  const input = normalize_adapter_schema(
+    "3.1.1",
+    {
+      type: "object",
+      properties: {
+        widget: {"$ref": "#/components/schemas/Widget"},
+        literal: {const: {"$ref": "https://example.invalid/instance-data"}},
+      },
+      required: ["widget"],
+      additionalProperties: false,
+    },
+    graph,
+  )
+  require input.properties.widget.get("$ref") == "#/components/schemas/Widget",
+    "tool schemas must retain graph references"
+  require input.properties.literal.const.get("$ref")
+    == "https://example.invalid/instance-data",
+    "reference-shaped instance data must stay opaque"
+  const graph_cases = [
+    {
+      value: {Broken: {"$ref": "#/components/schemas/Missing"}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Broken.$ref targets missing schema component 'Missing'",
+    },
+    {
+      value: {Broken: {"$ref": "https://schemas.example/Widget"}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Broken.$ref must be local; external schema resources are not portable",
+    },
+    {
+      value: {Broken: {"$ref": "#/components/parameters/Widget"}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Broken.$ref must not target a non-schema OpenAPI component",
+    },
+    {
+      value: {
+        Widget: {type: "object", properties: {id: {type: "string"}}},
+        Broken: {"$ref": "#/components/schemas/Widget/properties/missing"},
+      },
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Broken.$ref contains a broken JSON Pointer",
+    },
+    {
+      value: {Broken: {"$defs": {Value: {type: "string"}}, "$ref": "#/$defs/Missing"}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Broken.$ref contains a broken JSON Pointer",
+    },
+    {
+      value: {Legacy: {type: "string", nullable: true}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Legacy.nullable is an OpenAPI 3.0 keyword; OpenAPI 3.1 schemas must include 'null' in type or composition",
+    },
+    {
+      value: {Scoped: {"$id": "https://schemas.example/Scoped", type: "object"}},
+      expected:
+        "harn-openapi.adapter_schema_graph: components.schemas.Scoped.$id cannot be projected through a self-contained CLI and MCP schema graph",
+    },
+  ]
+  for case in graph_cases {
+    require graph_rejection(case.value) == case.expected, "exact graph boundary diagnostic"
+  }
+  require schema_rejection({"$ref": "#/components/schemas/Missing"}, graph)
+    == "harn-openapi.adapter_schema_graph: schema.$ref targets missing schema component 'Missing'",
+    "inline schemas must resolve against the same graph"
+}

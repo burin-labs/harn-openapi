@@ -1,0 +1,336 @@
+/** Draft 2020-12 schema document carried by the portable tool catalog. */
+pub type AdapterJsonSchema = bool | dict<string, unknown>
+
+/** Reusable schemas shared by every generated tool and adapter projection. */
+pub type AdapterSchemaGraph = {schemas: dict<string, AdapterJsonSchema>}
+
+const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema"
+
+const SINGLE_SCHEMA_KEYWORDS = [
+  "additionalProperties",
+  "contains",
+  "contentSchema",
+  "else",
+  "if",
+  "items",
+  "not",
+  "propertyNames",
+  "then",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+]
+
+const ARRAY_SCHEMA_KEYWORDS = ["allOf", "anyOf", "oneOf", "prefixItems"]
+
+const MAP_SCHEMA_KEYWORDS = [
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+]
+
+const RESOURCE_SCOPE_KEYWORDS = ["$id", "$anchor", "$dynamicAnchor", "$dynamicRef"]
+
+fn schema_error(field: string, detail: string) -> string {
+  return "harn-openapi.adapter_schema_graph: " + field + " " + detail
+}
+
+fn reject_schema(field: string, detail: string) -> AdapterJsonSchema {
+  throw schema_error(field, detail)
+}
+
+fn reject_graph(field: string, detail: string) -> AdapterSchemaGraph {
+  throw schema_error(field, detail)
+}
+
+fn reject_nil(field: string, detail: string) -> nil {
+  throw schema_error(field, detail)
+}
+
+fn reject_schema_map(field: string, detail: string) -> dict<string, AdapterJsonSchema> {
+  throw schema_error(field, detail)
+}
+
+fn reject_schema_list(field: string, detail: string) -> list<AdapterJsonSchema> {
+  throw schema_error(field, detail)
+}
+
+fn schema_dialect(value: unknown, field: string) -> nil {
+  if value == nil {
+    return nil
+  }
+  if type_of(value) != "string"
+    || value.trim().trim_end("#") != JSON_SCHEMA_2020_12 {
+    return reject_nil(field + ".$schema", "must declare JSON Schema Draft 2020-12 when present")
+  }
+  return nil
+}
+
+fn normalized_schema_map(value: unknown, field: string) -> dict<string, AdapterJsonSchema> {
+  if type_of(value) != "dict" {
+    return reject_schema_map(field, "must be an object of JSON Schemas")
+  }
+  let out: dict<string, AdapterJsonSchema> = {}
+  for entry in value {
+    out = {...out, [entry.key]: normalize_schema_node(entry.value, field + "." + entry.key)}
+  }
+  return out
+}
+
+fn normalized_schema_list(value: unknown, field: string) -> list<AdapterJsonSchema> {
+  if type_of(value) != "list" {
+    return reject_schema_list(field, "must be a list of JSON Schemas")
+  }
+  let out: list<AdapterJsonSchema> = []
+  for enumerated in value.enumerate() {
+    out = out
+      + [normalize_schema_node(enumerated.value, field + "[" + to_string(enumerated.index) + "]")]
+  }
+  return out
+}
+
+fn normalize_schema_node(value: unknown, field: string) -> AdapterJsonSchema {
+  if type_of(value) == "bool" {
+    return value
+  }
+  if type_of(value) != "dict" {
+    return reject_schema(field, "must be a boolean or object JSON Schema")
+  }
+  schema_dialect(value.get("$schema"), field)
+  if value.get("nullable") != nil {
+    return reject_schema(
+      field + ".nullable",
+      "is an OpenAPI 3.0 keyword; OpenAPI 3.1 schemas must include 'null' in type or composition",
+    )
+  }
+  for keyword in RESOURCE_SCOPE_KEYWORDS {
+    if value.get(keyword) != nil {
+      return reject_schema(
+        field + "." + keyword,
+        "cannot be projected through a self-contained CLI and MCP schema graph",
+      )
+    }
+  }
+  if value.get("$recursiveRef") != nil || value.get("$recursiveAnchor") != nil {
+    return reject_schema(
+      field,
+      "uses obsolete recursive-reference keywords; use Draft 2020-12 $ref recursion",
+    )
+  }
+  for keyword in ["exclusiveMinimum", "exclusiveMaximum"] {
+    if type_of(value.get(keyword)) == "bool" {
+      return reject_schema(
+        field + "." + keyword,
+        "must be a numeric Draft 2020-12 bound, not an OpenAPI 3.0 boolean",
+      )
+    }
+  }
+  let out = value
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {...out, [keyword]: normalize_schema_node(value.get(keyword), field + "." + keyword)}
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {...out, [keyword]: normalized_schema_list(value.get(keyword), field + "." + keyword)}
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {...out, [keyword]: normalized_schema_map(value.get(keyword), field + "." + keyword)}
+    }
+  }
+  return out
+}
+
+fn decode_pointer_segment(value: string, field: string) -> string {
+  let out = ""
+  let index = 0
+  while index < len(value) {
+    const character = substring(value, index, index + 1)
+    if character != "~" {
+      out = out + character
+      index = index + 1
+    } else {
+      if index + 1 >= len(value) {
+        throw schema_error(field, "contains an invalid JSON Pointer escape")
+      }
+      const escaped = substring(value, index + 1, index + 2)
+      if escaped == "0" {
+        out = out + "~"
+      } else if escaped == "1" {
+        out = out + "/"
+      } else {
+        throw schema_error(field, "contains an invalid JSON Pointer escape")
+      }
+      index = index + 2
+    }
+  }
+  return out
+}
+
+fn resolve_pointer(
+  root: unknown,
+  encoded_segments: list<string>,
+  field: string,
+) -> AdapterJsonSchema {
+  let target = root
+  for encoded_segment in encoded_segments {
+    const segment = decode_pointer_segment(encoded_segment, field)
+    if type_of(target) == "dict" {
+      target = target.get(segment)
+    } else if type_of(target) == "list"
+      && regex_match("^(0|[1-9][0-9]*)$", segment) != nil {
+      const index = to_int(segment)
+      target = if index == nil {
+        nil
+      } else {
+        target[index]
+      }
+    } else {
+      return reject_schema(field, "contains a broken JSON Pointer")
+    }
+    if target == nil {
+      return reject_schema(field, "contains a broken JSON Pointer")
+    }
+  }
+  if type_of(target) != "bool" && type_of(target) != "dict" {
+    return reject_schema(field, "must resolve to a boolean or object JSON Schema")
+  }
+  return schema_expect(target, AdapterJsonSchema)
+}
+
+fn validate_reference(
+  reference: unknown,
+  root: AdapterJsonSchema,
+  schemas: dict,
+  field: string,
+) -> nil {
+  if type_of(reference) != "string" || reference == "" {
+    return reject_nil(field, "must be a non-empty local JSON Reference")
+  }
+  if !starts_with(reference, "#") {
+    return reject_nil(field, "must be local; external schema resources are not portable")
+  }
+  if starts_with(reference, "#/components/")
+    && !starts_with(reference, "#/components/schemas/") {
+    return reject_nil(field, "must not target a non-schema OpenAPI component")
+  }
+  if starts_with(reference, "#/components/schemas/") {
+    const suffix = substring(reference, len("#/components/schemas/"), len(reference))
+    const parts = split(suffix, "/")
+    const encoded_name = parts[0]
+    if encoded_name == nil || encoded_name == "" {
+      return reject_nil(field, "must name a schema component")
+    }
+    const name = decode_pointer_segment(encoded_name, field)
+    const component = schemas.get(name)
+    if component == nil {
+      return reject_nil(field, "targets missing schema component '" + name + "'")
+    }
+    let nested = []
+    for enumerated in parts.enumerate() {
+      if enumerated.index > 0 {
+        nested = nested + [enumerated.value]
+      }
+    }
+    if len(nested) > 0 {
+      resolve_pointer(component, nested, field)
+    }
+  } else if reference == "#" {
+    return nil
+  } else if starts_with(reference, "#/") {
+    resolve_pointer(root, split(substring(reference, 2, len(reference)), "/"), field)
+  } else {
+    return reject_nil(field, "must use a JSON Pointer fragment; anchors are not portable")
+  }
+  return nil
+}
+
+fn validate_schema_refs(
+  value: AdapterJsonSchema,
+  root: AdapterJsonSchema,
+  schemas: dict,
+  field: string,
+) -> nil {
+  if type_of(value) == "bool" {
+    return nil
+  }
+  if value.get("$ref") != nil {
+    validate_reference(value.get("$ref"), root, schemas, field + ".$ref")
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      validate_schema_refs(value.get(keyword), root, schemas, field + "." + keyword)
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    const children = value.get(keyword)
+    if children != nil {
+      for enumerated in children.enumerate() {
+        validate_schema_refs(
+          enumerated.value,
+          root,
+          schemas,
+          field + "." + keyword + "[" + to_string(enumerated.index) + "]",
+        )
+      }
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    const children = value.get(keyword)
+    if children != nil {
+      for entry in children {
+        validate_schema_refs(entry.value, root, schemas, field + "." + keyword + "." + entry.key)
+      }
+    }
+  }
+  return nil
+}
+
+fn validate_openapi_version(openapi_version: string) -> nil {
+  if regex_match("^3\\.1(\\.[0-9]+)?$", openapi_version) == nil {
+    return reject_nil("openapi", "must be an OpenAPI 3.1 version")
+  }
+  return nil
+}
+
+/** Normalize one inline or referenced schema against a catalog component graph. */
+pub fn normalize_adapter_schema(
+  openapi_version: string,
+  value: unknown,
+  graph: AdapterSchemaGraph,
+) -> AdapterJsonSchema {
+  validate_openapi_version(openapi_version)
+  const normalized = normalize_schema_node(value, "schema")
+  validate_schema_refs(normalized, normalized, graph.schemas, "schema")
+  return normalized
+}
+
+/** Preserve reusable OpenAPI components as one portable Draft 2020-12 graph. */
+pub fn normalize_adapter_schema_graph(
+  openapi_version: string,
+  value: unknown,
+) -> AdapterSchemaGraph {
+  validate_openapi_version(openapi_version)
+  const raw = value ?? {}
+  if type_of(raw) != "dict" {
+    return reject_graph("components.schemas", "must be an object")
+  }
+  let schemas: dict<string, AdapterJsonSchema> = {}
+  for entry in raw {
+    if entry.key.trim() == "" {
+      return reject_graph("components.schemas", "contains an empty component name")
+    }
+    schemas = {
+      ...schemas,
+      [entry.key]: normalize_schema_node(entry.value, "components.schemas." + entry.key),
+    }
+  }
+  for entry in schemas {
+    validate_schema_refs(entry.value, entry.value, schemas, "components.schemas." + entry.key)
+  }
+  return {schemas: schemas}
+}
