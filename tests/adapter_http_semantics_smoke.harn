@@ -1,0 +1,62 @@
+import {
+  adapter_http_semantics,
+  adapter_retry_attempts,
+  normalize_adapter_annotations,
+} from "../src/adapter_http_semantics"
+
+@test
+pipeline default() {
+  for method in ["GET", "HEAD", "OPTIONS", "TRACE"] {
+    const semantics = adapter_http_semantics(method)
+    require semantics.safe, method + " must be safe"
+    require semantics.idempotent, method + " must be idempotent"
+    require semantics.destructive_hint == false, method + " must be non-destructive"
+    require adapter_retry_attempts(method, false) == 3, method + " must be retryable"
+  }
+  const put = adapter_http_semantics("put")
+  require !put.safe, "PUT must be unsafe"
+  require put.idempotent, "PUT must be idempotent"
+  require put.destructive_hint == nil, "PUT destructiveness must be unspecified"
+  require adapter_retry_attempts("PUT", false) == 3, "PUT must be retryable"
+  const deletion = adapter_http_semantics("DELETE")
+  require !deletion.safe, "DELETE must not be safe"
+  require deletion.destructive_hint == true, "DELETE must be destructive"
+  const refined_delete = normalize_adapter_annotations(
+    "DELETE",
+    "archive-widget",
+    {destructiveHint: false},
+    {},
+  )
+  require refined_delete.destructiveHint == false,
+    "operation metadata may refine DELETE as additive"
+  const refined_post = normalize_adapter_annotations(
+    "POST",
+    "search-widgets",
+    {readOnlyHint: true, idempotentHint: true},
+    {},
+  )
+  require refined_post.readOnlyHint && refined_post.idempotentHint,
+    "operation metadata may refine facts HTTP leaves unknown"
+  for method in ["POST", "PATCH"] {
+    const semantics = adapter_http_semantics(method)
+    require !semantics.safe, method + " must be unsafe"
+    require !semantics.idempotent, method + " must be non-idempotent"
+    require semantics.destructive_hint == nil, method + " destructiveness must be unspecified"
+    require adapter_retry_attempts(method, false) == 1,
+      method
+      + " without an idempotency key must not retry"
+    require adapter_retry_attempts(method, true) == 3,
+      method
+      + " with an idempotency key must retry"
+    require !adapter_http_semantics(method).idempotent,
+      "an idempotency key must not rewrite operation-level semantics"
+  }
+  const unknown = try {
+    adapter_http_semantics("BREW")
+    nil
+  } catch (error) {
+    error
+  }
+  require to_string(unknown).contains("unsupported HTTP method 'BREW'"),
+    "unknown methods must fail closed"
+}

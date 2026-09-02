@@ -163,6 +163,9 @@ default tool name, title, description, JSON Schemas, method-derived MCP hints,
 policy, and source binding.
 
 ```yaml
+x-harn:
+  annotationDefaults:
+    openWorldHint: false
 paths:
   /widgets/{widget-id}:
     get:
@@ -183,7 +186,6 @@ paths:
           readOnlyHint: true
           destructiveHint: false
           idempotentHint: true
-          openWorldHint: true
         icons:
           - src: https://api.example.com/assets/widget.svg
             mimeType: image/svg+xml
@@ -205,7 +207,7 @@ paths:
 | `governance.audiences` | non-empty list of `cli`, `mcp`, `catalog`, `dashboard`, or `agent` | Adapters allowed to discover and invoke the tool. Defaults to all five. |
 | `cli.command` | string or non-empty list of strings | Portable command path. Segments use ASCII letters, digits, `_`, and `-`, and cannot start with `-`. |
 | `cli.hidden` | boolean | Hide the command from help while retaining explicit invocation. |
-| `annotations` | object | Overrides for the four standard MCP boolean hints. |
+| `annotations` | object | Advisory MCP hints. Values that contradict standard HTTP method facts are rejected. |
 | `icons` | list of icon objects | Portable tool icons. Each icon requires `src` and accepts `mimeType`, `sizes`, and `theme` (`light` or `dark`). |
 | `execution.taskSupport` | `forbidden`, `optional`, or `required` | Whether MCP clients may or must invoke the tool as a task. |
 | `meta` | object | Protocol extension metadata projected as MCP `_meta`. |
@@ -213,6 +215,55 @@ paths:
 Unknown fields and invalid values fail during code generation. Duplicate
 exposed tool names and exact or parent/leaf CLI command collisions also fail
 before source is rendered.
+
+The optional top-level `x-harn.annotationDefaults.openWorldHint` is a boolean
+default for every generated tool. An operation-level `openWorldHint` overrides
+it. When neither value is present, Harn leaves `openWorldHint` unspecified
+instead of claiming that the operation can or cannot reach an open world.
+
+HTTP method facts have one typed owner shared by generated annotations and
+connector retry planning:
+
+| Methods | `readOnlyHint` | `idempotentHint` | `destructiveHint` | Retry default |
+|---|---:|---:|---:|---:|
+| `GET`, `HEAD`, `OPTIONS`, `TRACE` | `true` | `true` | `false` | 3 attempts |
+| `PUT` | `false` | `true` | unspecified | 3 attempts |
+| `DELETE` | `false` | `true` | `true` | 3 attempts |
+| `POST`, `PATCH` | `false` | `false` | unspecified | 1 attempt |
+
+An `Idempotency-Key` parameter raises the generated retry limit for `POST` or
+`PATCH` to three attempts. It does not change `idempotentHint`: the key makes a
+particular invocation safe to repeat, not every invocation of the operation.
+`destructiveHint` remains unspecified for methods where HTTP alone cannot
+answer the question. Operation annotations may fill that gap, but cannot
+mark a safe method as mutating or destructive, or an idempotent method as
+non-idempotent. An operation may refine an otherwise unknown fact, such as a
+read-only POST or an additive DELETE.
+
+Teams that do not own the source OpenAPI document can add the same metadata
+with an OpenAPI Overlay 1.1 document, apply it with their overlay tool, and pass
+the resulting OpenAPI document to Harn:
+
+```yaml
+overlay: 1.1.0
+info:
+  title: Harn adapter semantics
+  version: 1.0.0
+extends: ./openapi.yaml
+actions:
+  - target: $
+    update:
+      x-harn:
+        annotationDefaults:
+          openWorldHint: false
+  - target: $.paths['/search'].post
+    update:
+      x-harn:
+        annotations:
+          readOnlyHint: true
+          idempotentHint: true
+          openWorldHint: true
+```
 
 Governance is a closed exposure policy, not a transport configuration. Input
 order is normalized to `cli`, `mcp`, `catalog`, `dashboard`, `agent`, and the
@@ -233,7 +284,9 @@ The static catalog retains all three `execution.taskSupport` values. MCP omits
 for `optional` and `required`. Icons pass through unchanged; clients decide
 which declared size and theme they can display.
 
-Generated policy is separate from MCP hints. `GET`, `HEAD`, and `OPTIONS` map
-to `{kind: "fetch", side_effect_level: "network"}`; other methods map to
+Generated policy is separate from MCP hints. Safe HTTP methods map to
+`{kind: "fetch", side_effect_level: "network"}`; other methods map to
 `{kind: "execute", side_effect_level: "network"}`. Generated source metadata
 uses `{kind: "openapi", id: operationId, binding: {method, path}}`.
+Changing advisory annotations never grants an audience, changes execution
+policy, or weakens Harn's capability checks.

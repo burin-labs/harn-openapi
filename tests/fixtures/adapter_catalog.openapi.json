@@ -9,6 +9,11 @@
       "url": "https://api.example.test"
     }
   ],
+  "x-harn": {
+    "annotationDefaults": {
+      "openWorldHint": false
+    }
+  },
   "paths": {
     "/widgets/{widget-id}": {
       "get": {
@@ -26,9 +31,6 @@
           },
           "cli": {
             "command": ["widgets", "get"]
-          },
-          "annotations": {
-            "openWorldHint": false
           },
           "icons": [
             {
@@ -94,12 +96,26 @@
         "x-harn": {
           "name": "reindex_widgets",
           "governance": {
-            "audiences": ["mcp"]
+            "audiences": ["mcp", "catalog"]
+          },
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": true
           },
           "cli": {
             "command": ["widgets", "reindex"]
           }
         },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Reindexed"

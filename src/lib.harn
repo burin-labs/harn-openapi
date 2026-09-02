@@ -96,6 +96,15 @@
 import { filter_nil } from "std/collections"
 import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
+  AdapterAnnotationDefaults,
+  AdapterHttpSemantics,
+  AdapterToolAnnotations,
+  adapter_http_semantics,
+  adapter_retry_attempts,
+  normalize_adapter_annotation_defaults,
+  normalize_adapter_annotations,
+} from "./adapter_http_semantics"
+pub import {
   AdapterJsonSchema,
   AdapterSchemaGraphWork,
   PreparedAdapterSchemaGraph,
@@ -333,6 +342,7 @@ type OpenApiDoc = {
   tags?: list<Tag>,
   externalDocs?: ExternalDocumentation,
   security_schemes?: dict<string, RefOr<SecurityScheme>>,
+  x_harn?: dict,
 }
 
 type WebhookOperation = {
@@ -423,6 +433,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
     externalDocs: raw.get("externalDocs"),
+    x_harn: raw.get("x-harn"),
   }
   return schema_expect(filter_nil(doc), OpenApiDoc)
 }
@@ -1121,6 +1132,7 @@ fn _adapter_operations(
   options: dict = {},
 ) -> list {
   const header_overrides = options.get("header_overrides") ?? {}
+  const annotation_defaults: AdapterAnnotationDefaults = _adapter_annotation_defaults(doc)
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
@@ -1128,7 +1140,14 @@ fn _adapter_operations(
   for op in _operations(doc) {
     const function_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
     taken_names = taken_names + [function_name]
-    const adapter = _adapter_operation(doc, op, function_name, header_overrides, schema_graph)
+    const adapter = _adapter_operation(
+      doc,
+      op,
+      function_name,
+      header_overrides,
+      annotation_defaults,
+      schema_graph,
+    )
     if adapter.expose {
       if exposed_names.contains(adapter.name) {
         throw "harn-openapi.codegen_module: duplicate generated tool name '" + adapter.name + "'"
@@ -2324,40 +2343,23 @@ fn _adapter_execution(op: any, extension: any) {
   return {taskSupport: task_support}
 }
 
-fn _adapter_annotations(op: any, extension: any) -> dict {
-  const method = op.method.upper()
-  const read_only = ["GET", "HEAD", "OPTIONS"].contains(method)
-  let annotations: dict = {
-    readOnlyHint: read_only,
-    destructiveHint: !read_only,
-    idempotentHint: ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"].contains(method),
-    openWorldHint: true,
+fn _adapter_annotation_defaults(doc: OpenApiDoc) -> AdapterAnnotationDefaults {
+  const root = doc.get("x_harn") ?? {}
+  if type_of(root) != "dict" {
+    throw "harn-openapi.codegen_module: top-level x-harn must be an object"
   }
-  for entry in extension.get("annotations") ?? {} {
-    if !["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].contains(entry.key) {
-      throw "harn-openapi.codegen_module: unknown x-harn.annotations field '" + entry.key
-        + "' on '"
-        + op.operation_id
-        + "'"
+  for entry in root {
+    if entry.key != "annotationDefaults" {
+      throw "harn-openapi.codegen_module: unknown top-level x-harn field '" + entry.key + "'"
     }
-    if type_of(entry.value) != "bool" {
-      throw "harn-openapi.codegen_module: x-harn.annotations." + entry.key + " on '"
-        + op.operation_id
-        + "' must be a bool"
-    }
-    annotations = {...annotations, [entry.key]: entry.value}
   }
-  if annotations.readOnlyHint && annotations.destructiveHint {
-    throw "harn-openapi.codegen_module: x-harn.annotations on '" + op.operation_id
-      + "' cannot be both read-only and destructive"
-  }
-  return annotations
+  return normalize_adapter_annotation_defaults(root.get("annotationDefaults"))
 }
 
 fn _adapter_policy(op: any) -> dict {
-  const method = op.method.upper()
+  const semantics = adapter_http_semantics(op.method)
   return {
-    kind: if ["GET", "HEAD", "OPTIONS"].contains(method) {
+    kind: if semantics.safe {
       "fetch"
     } else {
       "execute"
@@ -2506,6 +2508,7 @@ fn _adapter_operation(
   op: any,
   function_name: any,
   header_overrides: any,
+  annotation_defaults: AdapterAnnotationDefaults,
   schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const extension = _x_harn_config(op)
@@ -2531,7 +2534,12 @@ fn _adapter_operation(
     description: description,
     input_schema: _adapter_input_schema(doc, op, header_overrides, schema_graph),
     output_schema: _adapter_output_schema(doc, op, schema_graph),
-    annotations: _adapter_annotations(op, extension),
+    annotations: normalize_adapter_annotations(
+      op.method,
+      op.operation_id,
+      extension.get("annotations"),
+      annotation_defaults,
+    ),
     icons: _adapter_icons(op, extension),
     execution: _adapter_execution(op, extension),
     governance: extension.governance,
@@ -3045,14 +3053,7 @@ fn _connector_imports(return_types: any, transport: string) -> string {
 }
 
 fn _connector_retry_attempts(method: any, idempotency_key_param: any) {
-  const normalized = to_string(method ?? "").lower()
-  if ["get", "head", "put", "delete", "options"].contains(normalized) {
-    return 3
-  }
-  if (normalized == "post" || normalized == "patch") && idempotency_key_param != nil {
-    return 3
-  }
-  return 1
+  return adapter_retry_attempts(to_string(method ?? ""), idempotency_key_param != nil)
 }
 
 fn _render_connector_options(

@@ -262,7 +262,7 @@ helper envelope directly, so callers can branch on `category`, `status`,
 `retryable`, `retry_after_ms`, `error`, and `rate_limit` without parsing a
 string.
 
-Safe or idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) emit a
+Safe or idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`, `TRACE`) emit a
 bounded retry policy. `POST` and `PATCH` emit that retry policy only when the
 OpenAPI operation declares an explicit `Idempotency-Key` header parameter; the
 generated function also threads that parameter into `options.idempotency_key`
