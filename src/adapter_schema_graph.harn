@@ -590,10 +590,12 @@ pub fn embed_adapter_schema(
   if definition_key.trim() == "" {
     throw schema_error("definition_key", "must be non-empty")
   }
+  const normalized = normalize_schema_node(value, "schema")
+  validate_schema_refs(normalized, normalized, {}, "schema")
   const pointer = "#/$defs/" + encode_pointer_segment(definition_key)
   return {
     schema: {"$ref": pointer},
-    definitions: {[definition_key]: rewrite_embedded_schema_references(value, pointer)},
+    definitions: {[definition_key]: rewrite_embedded_schema_references(normalized, pointer)},
   }
 }
 

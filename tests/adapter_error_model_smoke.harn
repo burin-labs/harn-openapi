@@ -110,4 +110,15 @@ pipeline default() {
   )
   require invalid_type.contains("generated error type name"),
     "generated error type names must be valid Harn identifiers"
+  const external_ref = captured_error(
+    { ->
+      prepare_adapter_error_model(
+        "get-widget",
+        "GetWidgetError",
+        [{status_key: "404", body_schema: {"$ref": "https://schemas.example/error"}}],
+      )
+    },
+  )
+  require external_ref.contains("external schema resources are not portable"),
+    "composed error bodies must already be closed over portable local references"
 }
