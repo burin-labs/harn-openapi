@@ -158,9 +158,10 @@ fn replace_command(
 
 /**
  * Normalize OpenAPI tags and root `x-harn.cli.commands` into one command tree.
- * Explicit records replace the matching tag-derived path and may add deeper
- * parent paths. Harn's prepared catalog remains the owner of sibling aliases,
- * reserved names, leaf conflicts, and final tree validity.
+ * Explicit records overlay the matching tag-derived path and may add deeper
+ * parent paths. Omitted fields preserve tag-derived defaults. Harn's prepared
+ * catalog remains the owner of sibling aliases, reserved names, leaf conflicts,
+ * and final tree validity.
  */
 pub fn normalize_adapter_cli_tree(value: unknown, tags: list<AdapterCliTag>) -> AdapterCliTreeSpec {
   const raw = value ?? {}

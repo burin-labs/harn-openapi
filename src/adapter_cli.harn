@@ -241,6 +241,68 @@ fn parameter_for_wire_name(
   return nil
 }
 
+fn validate_parameter_identities(context: AdapterCliContext) -> nil {
+  let seen_properties: dict<string, string> = {}
+  let seen_wire_names: dict<string, string> = {}
+  for parameter in context.parameters {
+    if parameter.property.trim() == "" || parameter.wire_name.trim() == "" {
+      return reject_validation(
+        context.operation_id,
+        ".arguments",
+        "parameter identities must use non-empty input-property and OpenAPI wire names",
+      )
+    }
+    const prior_wire_name = seen_properties.get(parameter.property)
+    if prior_wire_name != nil {
+      if prior_wire_name == parameter.wire_name {
+        return reject_validation(
+          context.operation_id,
+          ".arguments",
+          "contains duplicate OpenAPI parameter identity '" + parameter.wire_name + "'",
+        )
+      }
+      return reject_validation(
+        context.operation_id,
+        ".arguments",
+        "OpenAPI parameters '"
+          + prior_wire_name
+          + "' and '"
+          + parameter.wire_name
+          + "' both normalize to input property '"
+          + parameter.property
+          + "'",
+      )
+    }
+    const prior_property = seen_wire_names.get(parameter.wire_name)
+    if prior_property != nil && prior_property != parameter.property {
+      return reject_validation(
+        context.operation_id,
+        ".arguments",
+        "OpenAPI wire name '"
+          + parameter.wire_name
+          + "' is ambiguous between input properties '"
+          + prior_property
+          + "' and '"
+          + parameter.property
+          + "'",
+      )
+    }
+    if context.body_schema != nil
+      && (parameter.wire_name == "body" || parameter.property == "body") {
+      return reject_validation(
+        context.operation_id,
+        ".arguments",
+        "OpenAPI parameter '"
+          + parameter.wire_name
+          + "' conflicts with the reserved request-body input 'body'",
+      )
+    }
+    seen_properties = {...seen_properties, [parameter.property]: parameter.wire_name}
+    seen_wire_names = {...seen_wire_names, [parameter.wire_name]: parameter.property}
+  }
+  return nil
+}
+
 fn validate_argument_scalar(operation_id: string, field: string, key: string, value: unknown) {
   if ["long", "value_name", "help", "help_group"].contains(key) {
     if type_of(value) != "string" || value.trim() == "" {
@@ -308,6 +370,7 @@ fn normalize_argument_override(
 
 /** Validate and normalize one operation's portable CLI presentation. */
 pub fn normalize_adapter_cli(value: unknown, context: AdapterCliContext) -> AdapterCliSpec {
+  validate_parameter_identities(context)
   const raw = value ?? {}
   if type_of(raw) != "dict" {
     return reject_cli(context.operation_id, "", "must be an object")

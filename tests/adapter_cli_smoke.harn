@@ -34,6 +34,16 @@ fn rejection(value: any) -> string {
   return to_string(caught)
 }
 
+fn context_rejection(candidate: any) -> string {
+  const caught = try {
+    normalize_adapter_cli(nil, candidate)
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
 @test
 pipeline default(harness: Harness) {
   require harness.fs.source_dir() != "", "test must run with a real harness"
@@ -101,5 +111,54 @@ pipeline default(harness: Harness) {
   ]
   for case in cases {
     require rejection(case.value) == case.expected, "exact CLI boundary diagnostic"
+  }
+  const identity_cases = [
+    {
+      candidate: {...context(), parameters: [{property: "", wire_name: "widget-id"}]},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' parameter identities must use non-empty input-property and OpenAPI wire names",
+    },
+    {
+      candidate: {
+        ...context(),
+        parameters: [
+          {property: "widget_id", wire_name: "widget-id"},
+          {property: "widget_id", wire_name: "widget-id"},
+        ],
+      },
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' contains duplicate OpenAPI parameter identity 'widget-id'",
+    },
+    {
+      candidate: {
+        ...context(),
+        parameters: [
+          {property: "widget_id", wire_name: "widget-id"},
+          {property: "widget_id", wire_name: "widget_id"},
+        ],
+      },
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' OpenAPI parameters 'widget-id' and 'widget_id' both normalize to input property 'widget_id'",
+    },
+    {
+      candidate: {
+        ...context(),
+        parameters: [
+          {property: "query_id", wire_name: "id"},
+          {property: "header_id", wire_name: "id"},
+        ],
+      },
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' OpenAPI wire name 'id' is ambiguous between input properties 'query_id' and 'header_id'",
+    },
+    {
+      candidate: {...context(), parameters: [{property: "body", wire_name: "body"}]},
+      expected:
+        "harn-openapi.codegen_module: x-harn.cli.arguments on 'get-widget' OpenAPI parameter 'body' conflicts with the reserved request-body input 'body'",
+    },
+  ]
+  for case in identity_cases {
+    require context_rejection(case.candidate) == case.expected,
+      "exact parameter identity diagnostic"
   }
 }
