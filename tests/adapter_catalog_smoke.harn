@@ -92,6 +92,11 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  require wire_widget != nil, \"raw MCP tools/list must include the widget\"\n"
     + "  assert_eq(wire_widget.icons[0].sizes, [\"any\"])\n"
     + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n"
+    + "}\n\n"
+    // The CLI surface runs three more subprocesses. Kept as its own test so it
+    // gets its own execute budget; folded into `default` the combined MCP and
+    // CLI spawns exceeded the 30s limit.
+    + "@test\n" + "pipeline cli_surface(harness: Harness) {\n"
     + "  const help = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
     + server_path + "\", \"--help\"]})\n"
     + "  assert(help.success, \"generated CLI help should succeed\")\n"
@@ -99,7 +104,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert(!help.stdout.contains(\"reindex\"), \"generated CLI help must exclude MCP-only tools\")\n"
     + "  const cli = harness.process.run({program: harness.env.get(\"HARN_BIN\") ?? \"harn\", args: [\"tool\", \"run\", \""
     + server_path
-    + "\", \"widgets\", \"lookup_widget\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
+    + "\", \"widgets\", \"get\", \"--widget-id\", \"w 1\", \"--verbose\", \"true\", \"--harn-output\", \"json\"]})\n"
     + "  require cli.success, \"generated CLI dispatch should succeed: \" + cli.stderr\n"
     + "  const cli_result = json_parse(cli.stdout.trim())\n"
     + "  assert_eq(cli_result.id, \"w 1\")\n" + "  assert_eq(cli_result.label, \"Widget One\")\n"
