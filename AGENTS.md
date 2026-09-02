@@ -66,6 +66,40 @@ after 180 days.
 - Do not publish docs that require a sibling checkout unless the section is
   explicitly about local multi-repo development.
 
+## Pull requests
+
+Title every pull request `[Area] Sentence case description`. Capitalize the
+first word of the description and proper nouns only, and leave the trailing
+period off.
+
+`Area` is one of these, taken from the repository layout table in
+[README.md](./README.md):
+
+| Area | Covers |
+| --- | --- |
+| `Parser` | Parsing OpenAPI 3.1 documents into normalized Harn records |
+| `Types` | The typed public surface and its aliases |
+| `Codegen` | Generating typed Harn SDK source |
+| `Adapters` | Tool registry generation and the `x-harn` extension |
+| `Connector` | Helpers for auth, pagination, and rate limits |
+| `Fixtures` | `tests/fixtures/`, refresh, diff, and staleness |
+| `Packaging` | `harn.toml`, the `.harn-version` pin, and releases |
+| `CI` | This repository's workflows and required checks |
+| `Docs` | `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, and `docs/` |
+| `Tests` | `tests/` coverage outside the fixtures themselves |
+
+Pick the area that owns the behavior you changed, not the file you touched most.
+`src/lib.harn` holds the parser, the walker, and the generator, so a change
+inside it can be `[Parser]`, `[Codegen]`, or `[Adapters]`. If two areas fit, the
+pull request is probably two pull requests.
+
+Keep the description to 3-5 sentences: what changed, why, the one risk, and how
+you verified it. Do not list the gate commands. `.github/pull_request_template.md`
+carries a worked example.
+
+The same words are the `area/*` labels in `.github/labels.yml`, so a title and a
+label agree.
+
 <!-- BEGIN HARN SHARED AGENT CONTRACT: managed by harn-bump-fleet -->
 
 ## Ecosystem working agreement

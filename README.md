@@ -435,6 +435,12 @@ version you name and verifies against a from-crates.io install, so it stays the
 local-development path. Use `--no-verify` only when you intentionally want to
 edit the version pin without running the gate.
 
+## Contributing
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before you open a pull request. It
+covers what belongs in this package, the pinned-CLI gate, why the Notion fixture
+stays pinned, and the `[Area] Sentence case description` title convention.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0. Choose whichever you prefer.
