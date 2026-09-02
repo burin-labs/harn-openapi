@@ -40,6 +40,7 @@ CLI pinned by `.harn-version`.
 | `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and carries the typed public surface. |
 | `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
 | `src/adapter_governance.harn` | Canonical `x-harn.governance` validation against Harn's closed adapter-audience types. |
+| `src/adapter_schema_graph.harn` | Portable Draft 2020-12 component graph and reference validation shared by future catalog projections. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
@@ -138,6 +139,12 @@ import { parse } from "../src/lib"
   `$ref` siblings as valid JSON Schema 2020-12 data.
 - `enum_values(schema: Schema) -> list<string> | nil` — extract the enum variant list,
   or `nil` when the schema is not an enum.
+- `normalize_adapter_schema_graph(openapi_version, schemas) -> AdapterSchemaGraph` —
+  retain reusable OpenAPI 3.1 component schemas as one self-contained Draft
+  2020-12 graph without expanding shared or recursive references.
+- `normalize_adapter_schema(openapi_version, schema, graph) -> AdapterJsonSchema` —
+  normalize one inline tool schema and validate its references against the same
+  component graph.
 - `is_openapi_doc(value)`, `is_reference(value)`, `is_schema(value)` — small schema guards
   for common dynamic boundaries.
 - `auth_helpers(doc: OpenApiDoc) -> list<AuthHelper>` — classify each declared
@@ -285,7 +292,7 @@ Generated modules also export `adapter_catalog(authority, client) ->
 ToolCatalog`, a typed convenience wrapper over Harn's versioned
 `harn-tools/1.0` projection. See
 [Generated tool adapters](docs/tool-adapters.md) for the exact `x-harn`
-contract and server example.
+contract, portable schema graph, and server example.
 
 ### Pagination and rate-limit helpers
 

@@ -57,6 +57,57 @@ The CLI and MCP server load and execute the same handler closure. Both validate
 input against the registry's JSON Schema. The CLI also validates handler output
 before printing it.
 
+## Portable schema graph
+
+The package facade exports two typed normalization boundaries for catalog
+schemas:
+
+```harn
+import {
+  normalize_adapter_schema,
+  normalize_adapter_schema_graph,
+  parse,
+} from "harn-openapi/default"
+
+fn main(harness: Harness) {
+  const doc = parse(harness.fs.read_text("./openapi.json"))
+  const graph = normalize_adapter_schema_graph(doc.openapi, doc.components?.schemas ?? {})
+  const input_schema = normalize_adapter_schema(
+    doc.openapi,
+    {
+      type: "object",
+      properties: {widget: {"$ref": "#/components/schemas/Widget"}},
+      required: ["widget"],
+      additionalProperties: false,
+    },
+    graph,
+  )
+  harness.stdio.println(json_stringify({graph: graph, input_schema: input_schema}))
+}
+```
+
+`AdapterJsonSchema` is `bool | dict<string, unknown>`, matching Draft 2020-12
+instead of coercing boolean schemas into objects. `AdapterSchemaGraph` contains
+one `schemas` map. Shared and recursive references stay as references, including
+escaped component names and nested JSON Pointer targets.
+
+The normalizer traverses only JSON Schema keyword positions. A `$ref`-shaped
+object inside `const` or `enum` is instance data and remains unchanged. It
+rejects the following before source generation:
+
+- dangling component or nested JSON Pointer references;
+- external resources and non-schema OpenAPI component targets;
+- OpenAPI 3.0 `nullable` and boolean exclusive-bound spellings;
+- non-Draft-2020-12 `$schema` declarations;
+- `$id`, anchors, and dynamic references that would change resource scope when
+  the graph is bundled into an MCP tool schema.
+
+This boundary validates schema structure and reference portability. Harn's
+prepared tool catalog remains the owner of validating runtime input, output,
+and application-error values. The current `harn-tools/1.0` generated registry
+still emits resolved per-operation schemas; the direct graph projection lands
+with the `harn-tools/2.0` cutover.
+
 ## `x-harn`
 
 OpenAPI extension fields are optional. OpenAPI operation data supplies the
