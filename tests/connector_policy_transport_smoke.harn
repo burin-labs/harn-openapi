@@ -239,6 +239,12 @@ pipeline test_main(harness: Harness) {
     "net.request(\"GET\"",
     "explicit raw transport emits net GET",
   )
+  require_contains(
+    harness.stdio,
+    raw_src,
+    "if resp.status < 200 || resp.status >= 300",
+    "raw transport must treat every non-2xx status as an error",
+  )
   require_not_contains(
     harness.stdio,
     raw_src,

@@ -9,6 +9,12 @@ pub type AdapterSchemaGraphWork = {
   closure_visit_count: int,
 }
 
+/** One schema rebased for safe composition inside a larger schema document. */
+pub type AdapterSchemaEmbedding = {
+  schema: AdapterJsonSchema,
+  definitions: dict<string, AdapterJsonSchema>,
+}
+
 /** Immutable schema graph prepared once for every adapter projection. */
 pub type PreparedAdapterSchemaGraph = {
   schemas: dict<string, AdapterJsonSchema>,
@@ -522,6 +528,75 @@ fn rewrite_schema_references(
     }
   }
   return out
+}
+
+fn rewrite_embedded_schema_references(
+  value: AdapterJsonSchema,
+  definition_pointer: string,
+) -> AdapterJsonSchema {
+  if type_of(value) == "bool" {
+    return value
+  }
+  let out = value
+  const reference = value.get("$ref")
+  if type_of(reference) == "string" {
+    if reference == "#" {
+      out = {...out, "$ref": definition_pointer}
+    } else if starts_with(reference, "#/") {
+      out = {...out, "$ref": definition_pointer + substring(reference, 1, len(reference))}
+    }
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {
+        ...out,
+        [keyword]: rewrite_embedded_schema_references(value.get(keyword), definition_pointer),
+      }
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: list<AdapterJsonSchema> = []
+      for child in value.get(keyword) {
+        children = children + [rewrite_embedded_schema_references(child, definition_pointer)]
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: dict<string, AdapterJsonSchema> = {}
+      for entry in value.get(keyword) {
+        children = {
+          ...children,
+          [entry.key]: rewrite_embedded_schema_references(entry.value, definition_pointer),
+        }
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  return out
+}
+
+/**
+ * Rebase one self-contained schema as a named definition in a larger schema.
+ * Root-local references keep targeting the embedded schema instead of silently
+ * changing meaning when a caller nests it below a property or union branch.
+ */
+pub fn embed_adapter_schema(
+  value: AdapterJsonSchema,
+  definition_key: string,
+) -> AdapterSchemaEmbedding {
+  if definition_key.trim() == "" {
+    throw schema_error("definition_key", "must be non-empty")
+  }
+  const normalized = normalize_schema_node(value, "schema")
+  validate_schema_refs(normalized, normalized, {}, "schema")
+  const pointer = "#/$defs/" + encode_pointer_segment(definition_key)
+  return {
+    schema: {"$ref": pointer},
+    definitions: {[definition_key]: rewrite_embedded_schema_references(normalized, pointer)},
+  }
 }
 
 /** Close one tool schema over only its transitively referenced components. */

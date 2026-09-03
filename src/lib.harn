@@ -104,6 +104,7 @@ pub import {
   normalize_adapter_annotation_defaults,
   normalize_adapter_annotations,
 } from "./adapter_http_semantics"
+import { adapter_http_response_key } from "./adapter_http_semantics"
 pub import {
   AdapterJsonSchema,
   AdapterSchemaGraphWork,
@@ -2835,7 +2836,7 @@ fn _render_error_lines(fn_name: any, transport: any) {
       + "    throw resp\n"
       + "  }"
   }
-  return "if resp.status >= 400 {\n"
+  return "if resp.status < 200 || resp.status >= 300 {\n"
     + "    "
     + _render_error_throw(fn_name)
     + "\n"
@@ -3881,7 +3882,7 @@ fn _is_success_code(code: any) {
   if type_of(code) != "string" {
     return false
   }
-  return starts_with(code, "2")
+  return adapter_http_response_key(code)?.success_only ?? false
 }
 
 fn _schema_shape_kind(sch: any) {
