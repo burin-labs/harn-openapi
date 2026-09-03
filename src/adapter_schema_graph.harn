@@ -1,8 +1,21 @@
 /** Draft 2020-12 schema document carried by the portable tool catalog. */
 pub type AdapterJsonSchema = bool | dict<string, unknown>
 
-/** Reusable schemas shared by every generated tool and adapter projection. */
-pub type AdapterSchemaGraph = {schemas: dict<string, AdapterJsonSchema>}
+/** Observable preparation work used by scale regressions and support diagnostics. */
+pub type AdapterSchemaGraphWork = {
+  component_count: int,
+  schema_node_count: int,
+  dependency_edge_count: int,
+  closure_visit_count: int,
+}
+
+/** Immutable schema graph prepared once for every adapter projection. */
+pub type PreparedAdapterSchemaGraph = {
+  schemas: dict<string, AdapterJsonSchema>,
+  direct_dependencies: dict<string, list<string>>,
+  transitive_dependencies: dict<string, list<string>>,
+  work: AdapterSchemaGraphWork,
+}
 
 const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 
@@ -42,7 +55,7 @@ fn reject_schema(field: string, detail: string) -> AdapterJsonSchema {
   throw schema_error(field, detail)
 }
 
-fn reject_graph(field: string, detail: string) -> AdapterSchemaGraph {
+fn reject_graph(field: string, detail: string) -> PreparedAdapterSchemaGraph {
   throw schema_error(field, detail)
 }
 
@@ -77,8 +90,8 @@ fn normalized_schema_map(value: unknown, field: string) -> dict<string, AdapterJ
     return reject_schema_map(field, "must be an object of JSON Schemas")
   }
   let out: dict<string, AdapterJsonSchema> = {}
-  for entry in value {
-    out = {...out, [entry.key]: normalize_schema_node(entry.value, field + "." + entry.key)}
+  for key in value.keys().sort() {
+    out = {...out, [key]: normalize_schema_node(value.get(key), field + "." + key)}
   }
   return out
 }
@@ -179,6 +192,17 @@ fn decode_pointer_segment(value: string, field: string) -> string {
   return out
 }
 
+fn decode_component_name(value: string, field: string) -> string {
+  const decoded = try {
+    // URI-fragment percent decoding happens before JSON Pointer decoding.
+    // Preserve a literal plus rather than applying query-string semantics.
+    url_decode(replace(value, "+", "%2B"))
+  } catch (_error) {
+    throw schema_error(field, "contains invalid URI-fragment encoding")
+  }
+  return decode_pointer_segment(decoded, field)
+}
+
 fn resolve_pointer(
   root: unknown,
   encoded_segments: list<string>,
@@ -233,7 +257,7 @@ fn validate_reference(
     if encoded_name == nil || encoded_name == "" {
       return reject_nil(field, "must name a schema component")
     }
-    const name = decode_pointer_segment(encoded_name, field)
+    const name = decode_component_name(encoded_name, field)
     const component = schemas.get(name)
     if component == nil {
       return reject_nil(field, "targets missing schema component '" + name + "'")
@@ -316,7 +340,7 @@ fn validate_document_dialect(json_schema_dialect: string?) -> nil {
 pub fn normalize_adapter_schema(
   openapi_version: string,
   value: unknown,
-  graph: AdapterSchemaGraph,
+  graph: PreparedAdapterSchemaGraph,
   json_schema_dialect: string? = nil,
 ) -> AdapterJsonSchema {
   validate_openapi_version(openapi_version)
@@ -326,12 +350,229 @@ pub fn normalize_adapter_schema(
   return normalized
 }
 
-/** Preserve reusable OpenAPI components as one portable Draft 2020-12 graph. */
-pub fn normalize_adapter_schema_graph(
+fn component_reference_name(reference: unknown, field: string) -> string? {
+  if type_of(reference) != "string" || !starts_with(reference, "#/components/schemas/") {
+    return nil
+  }
+  const suffix = substring(reference, len("#/components/schemas/"), len(reference))
+  const encoded_name = split(suffix, "/")[0]
+  if encoded_name == nil || encoded_name == "" {
+    return nil
+  }
+  return decode_component_name(encoded_name, field)
+}
+
+fn direct_component_names(
+  value: AdapterJsonSchema,
+  seen: list<string>,
+  field: string,
+) -> list<string> {
+  if type_of(value) == "bool" {
+    return seen
+  }
+  let names = seen
+  const name = component_reference_name(value.get("$ref"), field + ".$ref")
+  if name != nil && !names.contains(name) {
+    names = names + [name]
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      names = direct_component_names(value.get(keyword), names, field + "." + keyword)
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    for child in value.get(keyword) ?? [] {
+      names = direct_component_names(child, names, field + "." + keyword)
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    for entry in value.get(keyword) ?? {} {
+      names = direct_component_names(entry.value, names, field + "." + keyword + "." + entry.key)
+    }
+  }
+  return names
+}
+
+fn encode_pointer_segment(value: string) -> string {
+  return replace(replace(value, "~", "~0"), "/", "~1")
+}
+
+fn component_closure(
+  name: string,
+  direct_dependencies: dict<string, list<string>>,
+) -> {names: list<string>, visits: int} {
+  let pending = direct_dependencies.get(name) ?? []
+  let seen: dict<string, bool> = {}
+  let index = 0
+  let visits = 0
+  while index < len(pending) {
+    const dependency = pending[index]
+    visits = visits + 1
+    if seen.get(dependency) != true {
+      seen = {...seen, [dependency]: true}
+      pending = pending + (direct_dependencies.get(dependency) ?? [])
+    }
+    index = index + 1
+  }
+  return {names: seen.keys().sort(), visits: visits}
+}
+
+fn schema_node_count(value: AdapterJsonSchema) -> int {
+  if type_of(value) == "bool" {
+    return 1
+  }
+  let count = 1
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      count = count + schema_node_count(value.get(keyword))
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    for child in value.get(keyword) ?? [] {
+      count = count + schema_node_count(child)
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    for entry in value.get(keyword) ?? {} {
+      count = count + schema_node_count(entry.value)
+    }
+  }
+  return count
+}
+
+fn allocated_component_key(name: string, used: dict<string, bool>) -> string {
+  if used.get(name) != true {
+    return name
+  }
+  const base = "__harn_component_" + name
+  let candidate = base
+  let suffix = 2
+  while used.get(candidate) == true {
+    candidate = base + "_" + to_string(suffix)
+    suffix = suffix + 1
+  }
+  return candidate
+}
+
+fn rewrite_schema_references(
+  value: AdapterJsonSchema,
+  component_name: string?,
+  component_keys: dict<string, string>,
+) -> AdapterJsonSchema {
+  if type_of(value) == "bool" {
+    return value
+  }
+  let out = value
+  const reference = value.get("$ref")
+  if type_of(reference) == "string" {
+    if starts_with(reference, "#/components/schemas/") {
+      const suffix = substring(reference, len("#/components/schemas/"), len(reference))
+      const parts = split(suffix, "/")
+      const target_name = decode_component_name(parts[0], "$ref")
+      const target_key = component_keys.get(target_name)
+      if target_key == nil {
+        throw schema_error("$ref", "targets an unprepared schema component '" + target_name + "'")
+      }
+      let rewritten = "#/$defs/" + encode_pointer_segment(target_key)
+      for enumerated in parts.enumerate() {
+        if enumerated.index > 0 {
+          rewritten = rewritten + "/" + enumerated.value
+        }
+      }
+      out = {...out, "$ref": rewritten}
+    } else if component_name != nil && reference == "#" {
+      const component_key = component_keys.get(component_name)
+      out = {...out, "$ref": "#/$defs/" + encode_pointer_segment(component_key)}
+    } else if component_name != nil && starts_with(reference, "#/") {
+      const component_key = component_keys.get(component_name)
+      out = {
+        ...out,
+        "$ref": "#/$defs/" + encode_pointer_segment(component_key)
+          + substring(reference, 1, len(reference)),
+      }
+    }
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      out = {
+        ...out,
+        [keyword]: rewrite_schema_references(value.get(keyword), component_name, component_keys),
+      }
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: list<AdapterJsonSchema> = []
+      for child in value.get(keyword) {
+        children = children + [rewrite_schema_references(child, component_name, component_keys)]
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil {
+      let children: dict<string, AdapterJsonSchema> = {}
+      for entry in value.get(keyword) {
+        children = {
+          ...children,
+          [entry.key]: rewrite_schema_references(entry.value, component_name, component_keys),
+        }
+      }
+      out = {...out, [keyword]: children}
+    }
+  }
+  return out
+}
+
+/** Close one tool schema over only its transitively referenced components. */
+pub fn close_adapter_schema(
+  openapi_version: string,
+  value: unknown,
+  graph: PreparedAdapterSchemaGraph,
+  json_schema_dialect: string? = nil,
+) -> AdapterJsonSchema {
+  const normalized = normalize_adapter_schema(openapi_version, value, graph, json_schema_dialect)
+  const direct = direct_component_names(normalized, [], "schema").sort()
+  if type_of(normalized) != "dict" || len(direct) == 0 {
+    return normalized
+  }
+  let included: dict<string, bool> = {}
+  for name in direct {
+    included = {...included, [name]: true}
+    for dependency in graph.transitive_dependencies.get(name) ?? [] {
+      included = {...included, [dependency]: true}
+    }
+  }
+  const names = included.keys().sort()
+  const local_definitions = normalized.get("$defs") ?? {}
+  let used_keys: dict<string, bool> = {}
+  for key in local_definitions.keys() {
+    used_keys = {...used_keys, [key]: true}
+  }
+  let component_keys: dict<string, string> = {}
+  for name in names {
+    const key = allocated_component_key(name, used_keys)
+    used_keys = {...used_keys, [key]: true}
+    component_keys = {...component_keys, [name]: key}
+  }
+  const root = rewrite_schema_references(normalized, nil, component_keys)
+  let definitions: dict<string, AdapterJsonSchema> = root.get("$defs") ?? {}
+  for name in names {
+    const key = component_keys.get(name)
+    definitions = {
+      ...definitions,
+      [key]: rewrite_schema_references(graph.schemas.get(name), name, component_keys),
+    }
+  }
+  return {...root, "$defs": definitions}
+}
+
+/** Prepare reusable OpenAPI components once for every downstream projection. */
+pub fn prepare_adapter_schema_graph(
   openapi_version: string,
   value: unknown,
   json_schema_dialect: string? = nil,
-) -> AdapterSchemaGraph {
+) -> PreparedAdapterSchemaGraph {
   validate_openapi_version(openapi_version)
   validate_document_dialect(json_schema_dialect)
   const raw = value ?? {}
@@ -339,17 +580,42 @@ pub fn normalize_adapter_schema_graph(
     return reject_graph("components.schemas", "must be an object")
   }
   let schemas: dict<string, AdapterJsonSchema> = {}
-  for entry in raw {
-    if entry.key.trim() == "" {
+  let nodes = 0
+  for name in raw.keys().sort() {
+    if name.trim() == "" {
       return reject_graph("components.schemas", "contains an empty component name")
     }
-    schemas = {
-      ...schemas,
-      [entry.key]: normalize_schema_node(entry.value, "components.schemas." + entry.key),
-    }
+    const normalized = normalize_schema_node(raw.get(name), "components.schemas." + name)
+    schemas = {...schemas, [name]: normalized}
+    nodes = nodes + schema_node_count(normalized)
   }
   for entry in schemas {
     validate_schema_refs(entry.value, entry.value, schemas, "components.schemas." + entry.key)
   }
-  return {schemas: schemas}
+  let direct_dependencies: dict<string, list<string>> = {}
+  let dependency_edges = 0
+  for name in schemas.keys().sort() {
+    const dependencies = direct_component_names(schemas.get(name), [], "components.schemas." + name)
+      .sort()
+    direct_dependencies = {...direct_dependencies, [name]: dependencies}
+    dependency_edges = dependency_edges + len(dependencies)
+  }
+  let transitive_dependencies: dict<string, list<string>> = {}
+  let closure_visits = 0
+  for name in schemas.keys().sort() {
+    const closure = component_closure(name, direct_dependencies)
+    transitive_dependencies = {...transitive_dependencies, [name]: closure.names}
+    closure_visits = closure_visits + closure.visits
+  }
+  return {
+    schemas: schemas,
+    direct_dependencies: direct_dependencies,
+    transitive_dependencies: transitive_dependencies,
+    work: {
+      component_count: len(schemas),
+      schema_node_count: nodes,
+      dependency_edge_count: dependency_edges,
+      closure_visit_count: closure_visits,
+    },
+  }
 }

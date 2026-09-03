@@ -46,8 +46,8 @@ pipeline test_main(harness: Harness) {
   assert(bearer != nil, "bearerAuth helper metadata should exist")
   assert(bearer.kind == "bearer", "bearerAuth should classify as bearer")
   assert(
-    bearer.client_fields.contains("token_provider"),
-    "bearerAuth should advertise token_provider",
+    bearer.credential_fields == ["token", "token_provider"],
+    "bearerAuth should advertise its scheme-scoped credential fields",
   )
   const oauth = helper_by_name(helpers, "oauth2Auth")
   assert(oauth != nil, "oauth2Auth helper metadata should exist")

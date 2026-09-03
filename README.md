@@ -41,6 +41,7 @@ CLI pinned by `.harn-version`.
 | `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
 | `src/adapter_governance.harn` | Canonical `x-harn.governance` validation against Harn's closed adapter-audience types. |
 | `src/adapter_schema_graph.harn` | Portable Draft 2020-12 component graph and reference validation shared by future catalog projections. |
+| `src/adapter_security.harn` | Typed OpenAPI security plan shared by generated clients, environment configuration, CLI, MCP, and static catalogs. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
@@ -57,6 +58,13 @@ CLI pinned by `.harn-version`.
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
 | `docs/migration-codegen-fs.md` | How to update `codegen_module` callers to pass `HarnessFs`. |
 | `docs/tool-adapters.md` | Reference for generated tool registries and the `x-harn` extension. |
+| `docs/generate-adapter-package.md` | Generate a typed SDK and its executable registry entrypoint. |
+| `docs/configure-adapter-environment.md` | Configure base URLs and credentials without writing secrets into generated source. |
+| `docs/run-adapter-cli.md` | Inspect and invoke the generated registry as a command tree. |
+| `docs/serve-adapter-mcp.md` | Serve the same registry over MCP stdio. |
+| `docs/package-adapter.md` | Assemble and verify a distributable Harn package. |
+| `docs/distribute-adapter.md` | Publish and consume an adapter through a pinned package reference. |
+| `docs/migration-scheme-credentials.md` | Breaking migration from shared credential fields to scheme-keyed credentials. |
 | `AGENTS.md` | Repo-specific instructions for coding agents. |
 
 ## Install
@@ -139,9 +147,9 @@ import { parse } from "../src/lib"
   `$ref` siblings as valid JSON Schema 2020-12 data.
 - `enum_values(schema: Schema) -> list<string> | nil` — extract the enum variant list,
   or `nil` when the schema is not an enum.
-- `normalize_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?) -> AdapterSchemaGraph` —
-  retain reusable OpenAPI 3.1 component schemas as one self-contained Draft
-  2020-12 graph without expanding shared or recursive references.
+- `prepare_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?) -> PreparedAdapterSchemaGraph` —
+  validate reusable OpenAPI 3.1 component schemas once, then retain their
+  dependency closures and work counters for every generated projection.
 - `normalize_adapter_schema(openapi_version, schema, graph, json_schema_dialect?) -> AdapterJsonSchema` —
   normalize one inline tool schema and validate its references against the same
   component graph.
@@ -149,7 +157,10 @@ import { parse } from "../src/lib"
   for common dynamic boundaries.
 - `auth_helpers(doc: OpenApiDoc) -> list<AuthHelper>` — classify each declared
   security scheme into reusable helper metadata, including generated client
-  fields and OAuth scopes where present.
+  credential fields and OAuth scopes where present.
+- `adapter_security_plan(doc: OpenApiDoc, environment_prefix: string) -> AdapterSecurityPlan` —
+  normalize every effective operation requirement into ordered OR alternatives
+  whose members are AND requirements, plus stable environment-variable names.
 - `pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan>` — detect simple
   cursor, page-number, and next-link list patterns from operation query
   parameters and success-response schemas.
@@ -160,8 +171,12 @@ import { parse } from "../src/lib"
   module source string with per-scheme security dispatch, credential-provider
   hooks, optional connector-policy transport, pagination metadata, rate-limit
   metadata, and `adapter_tools` / `adapter_catalog` projections (see below).
+- `codegen_entrypoint(fs: HarnessFs, doc: OpenApiDoc, options: AdapterEntrypointOptions) -> string` —
+  emit the executable that reads the generated environment contract and
+  registers the SDK's one tool registry for CLI and MCP hosts.
 - `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
-  generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`.
+  generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`,
+  including an optional named entrypoint export.
 
 ### Pre-1.0 change policy
 
@@ -181,44 +196,35 @@ header. A single OpenAPI security requirement object is treated as an AND:
 `security: [{bearerAuth: [], apiKeyAuth: []}]` sends both schemes, while
 separate objects remain alternatives.
 
-Generated auth helpers omit missing bearer/basic/header/cookie credentials
-instead of sending malformed empty auth material. Cookie auth values use the
-same URL encoding path as normal cookie parameters.
-
-`new_client` takes only the client fields implied by the schemes in use,
-all defaulted so callers only supply what their spec actually needs:
-
-| Scheme kind | Client field added |
-|---|---|
-| `http` + `bearer`, `oauth2`, `openIdConnect` | `token: string = ""`, `token_provider: any = nil` |
-| `http` + `basic` | `basic_user: string = ""`, `basic_password: string = ""`, `basic_provider: any = nil` |
-| `apiKey` (header / query / cookie) | `api_keys: dict = {}`, `api_key_provider: any = nil` (keyed by scheme name) |
-| `mutualTLS` | (v0: no-op — op falls through to `_no_auth_headers`) |
-
-So a Notion-shaped spec with `bearerAuth` + `basicAuth` yields:
+Generated clients keep credentials in one map keyed by the original OpenAPI
+security-scheme name. This prevents two schemes of the same kind from sharing
+credential state accidentally:
 
 ```harn
 new_client(
   base_url: string = "https://api.notion.com",
-  token: string = "",
-  token_provider: any = nil,
-  basic_user: string = "",
-  basic_password: string = "",
-  basic_provider: any = nil,
+  credentials: dict<string, AdapterCredential> = {
+    bearerAuth: {token: "..."},
+    basicAuth: {username: "...", password: "..."},
+  },
   extra_headers: dict = {"Notion-Version": "..."},
-) -> dict
+) -> AdapterClient
 ```
 
-For connector packages, prefer provider hooks over static token strings. The
-generated module includes `token_from_secret(secrets, secret_id)` and
-`api_key_from_secret(secrets, secret_ids)` helpers that read from the connector's
-secret store at request time. Both take a `HarnessSecrets` handle, so a caller
-passes `harness.secrets`. Callers can also pass custom closures for token refresh, OAuth storage, or multi-tenant key lookup.
+Each credential accepts a typed request-time `token_provider`,
+`value_provider`, or `basic_provider` closure. Generated modules
+also include `token_from_secret(secrets, secret_id)` and
+`api_key_from_secret(secrets, secret_id)` helpers. The host remains responsible
+for OAuth login, token refresh and rotation, tenant selection, secure storage,
+and client-certificate configuration. Mutual TLS requires
+`{host_configured: true}` and never degrades to an unauthenticated request.
 
 When an operation declares multiple security requirement alternatives
-(`security: [{a: []}, {b: []}]`), v0 picks the first and leaves a
-`NOTE` comment above the generated function listing the alternatives so
-a human can retarget manually.
+(`security: [{a: [], b: []}, {c: []}]`), the generated client chooses the first
+fully configured alternative. It sends both `a` and `b`, or falls back to `c`.
+An empty requirement object is the explicit anonymous alternative. Missing
+required configuration rejects registry publication and direct operation calls
+without echoing credential values.
 
 Every generated operation function takes only its transport's capabilities
 first: connector-policy operations accept
@@ -229,8 +235,10 @@ interpolation, query values are encoded in the query string, header parameters
 are merged into the request headers, and cookie parameters are appended to the
 `Cookie` header.
 
-Out of scope for v0: full OAuth2 flows (authorization-code, device,
-PKCE) and `mutualTLS` client-certificate plumbing.
+The generated environment projection creates stable names such as
+`WIDGETS_BASE_URL`, `WIDGETS_BEARERAUTH_TOKEN`, and
+`WIDGETS_HEADERKEY_API_KEY`. See
+[Configure an adapter environment](docs/configure-adapter-environment.md).
 
 ### Transport policy
 
@@ -254,7 +262,7 @@ helper envelope directly, so callers can branch on `category`, `status`,
 `retryable`, `retry_after_ms`, `error`, and `rate_limit` without parsing a
 string.
 
-Safe or idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) emit a
+Safe or idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`, `TRACE`) emit a
 bounded retry policy. `POST` and `PATCH` emit that retry policy only when the
 OpenAPI operation declares an explicit `Idempotency-Key` header parameter; the
 generated function also threads that parameter into `options.idempotency_key`
@@ -283,16 +291,18 @@ policy, source bindings, and presentation metadata. Use Harn's adapters instead
 of generating parallel dispatch code:
 
 ```sh
-harn tool schema ./server.harn --pretty
-harn tool run ./server.harn --help
-harn serve mcp ./server.harn
+harn tool schema ./src/main.harn --pretty
+harn tool run ./src/main.harn --help
+harn serve mcp ./src/main.harn
 ```
 
 Generated modules also export `adapter_catalog(authority, client) ->
-ToolCatalog`, a typed convenience wrapper over Harn's versioned
-`harn-tools/1.0` projection. See
+ToolCatalog`, a typed convenience wrapper over Harn's versioned tool-contract
+projection. See
 [Generated tool adapters](docs/tool-adapters.md) for the exact `x-harn`
-contract, portable schema graph, and server example.
+contract and portable schema graph. Start with
+[Generate an adapter package](docs/generate-adapter-package.md) for the runnable
+path.
 
 ### Pagination and rate-limit helpers
 

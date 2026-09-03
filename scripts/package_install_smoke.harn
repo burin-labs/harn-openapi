@@ -85,22 +85,53 @@ version = "0.0.0"
     """
 import {
   AdapterJsonSchema,
-  AdapterSchemaGraph,
+  PreparedAdapterSchemaGraph,
+  AdapterSecurityPlan,
+  adapter_security_plan,
+  codegen_entrypoint,
+  codegen_module,
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
   operations,
   parse,
 } from "harn-openapi/default"
 
 pipeline default(harness: Harness) {
-  const raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
+  const raw = json_stringify({
+    openapi: "3.1.0",
+    info: {title: "Package Smoke", version: "0.0.0"},
+    servers: [{url: "https://api.example.test"}],
+    paths: {
+      "/ping": {
+        get: {
+          operationId: "ping",
+          security: [],
+          responses: {"200": {description: "ok"}},
+        },
+      },
+      "/write": {
+        post: {
+          operationId: "write",
+          security: [{bearerAuth: [], headerKey: []}, {basicAuth: []}],
+          responses: {"204": {description: "done"}},
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {type: "http", scheme: "bearer"},
+        headerKey: {type: "apiKey", in: "header", name: "X-Package-Key"},
+        basicAuth: {type: "http", scheme: "basic"},
+      },
+    },
+  },)
   const doc: OpenApiDoc = parse(raw)
   const ops: list<Operation> = operations(doc)
-  require len(ops) == 1, "package import should parse and walk one operation"
+  require len(ops) == 2, "package import should parse and walk both operations"
   const op = ops[0]
   require op != nil, "package import should expose the parsed operation"
   require op.operation_id == "ping", "operation id should round-trip"
-  const graph: AdapterSchemaGraph = normalize_adapter_schema_graph(
+  const graph: PreparedAdapterSchemaGraph = prepare_adapter_schema_graph(
     doc.openapi,
     {Ping: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]}},
     doc.jsonSchemaDialect,
@@ -117,8 +148,32 @@ pipeline default(harness: Harness) {
     doc.jsonSchemaDialect,
   )
   require len(graph.schemas) == 1, "package import should retain one component"
+  require graph.work.component_count == 1,
+    "package import should expose the prepared graph work receipt"
   require input.properties.ping.get("$ref") == "#/components/schemas/Ping",
     "package import should preserve a component reference"
+  const security: AdapterSecurityPlan = adapter_security_plan(doc, "PACKAGE_SMOKE")
+  require len(security.operations.write.alternatives) == 2,
+    "package import should retain security alternatives"
+  const first_alternative = security.operations.write.alternatives[0]
+  require first_alternative != nil, "package import should expose the first alternative"
+  require len(first_alternative.schemes) == 2,
+    "package import should retain AND requirements"
+  harness.fs.write_text(
+    "./generated.harn",
+    codegen_module(harness.fs, doc, {
+      module_name: "package_smoke",
+      client_name: "PackageSmokeClient",
+      environment_prefix: "PACKAGE_SMOKE",
+    },),
+  )
+  harness.fs.write_text(
+    "./main.harn",
+    codegen_entrypoint(harness.fs, doc, {
+      module_import: "./generated",
+      environment_prefix: "PACKAGE_SMOKE",
+    },),
+  )
   harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,
@@ -134,6 +189,12 @@ pipeline default(harness: Harness) {
     smoke_root,
     "run consumer smoke",
     _sh_quote(harn_bin) + " run smoke.harn",
+  )
+  _run(
+    {stdio: harness.stdio, process: harness.process},
+    smoke_root,
+    "check generated package files",
+    _sh_quote(harn_bin) + " check generated.harn main.harn",
   )
   harness.fs.delete(smoke_root)
   harness.stdio.println("package_install_smoke: ok")

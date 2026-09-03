@@ -1,0 +1,156 @@
+/**
+ * Standard HTTP method facts shared by generated retry policy and adapter
+ * annotations. Application metadata may refine advisory hints, but it cannot
+ * change the protocol facts in this record.
+ */
+pub type AdapterHttpSemantics = {
+  method: string,
+  safe: bool,
+  idempotent: bool,
+  destructive_hint?: bool,
+}
+
+/** Deployment-wide annotation defaults that OpenAPI cannot infer. */
+pub type AdapterAnnotationDefaults = {openWorldHint?: bool}
+
+/** Closed MCP annotation record emitted by every adapter projection. */
+pub type AdapterToolAnnotations = {
+  title?: string,
+  readOnlyHint: bool,
+  destructiveHint?: bool,
+  idempotentHint: bool,
+  openWorldHint?: bool,
+}
+
+const _ADAPTER_HTTP_SEMANTICS: list<AdapterHttpSemantics> = [
+  {method: "GET", safe: true, idempotent: true, destructive_hint: false},
+  {method: "HEAD", safe: true, idempotent: true, destructive_hint: false},
+  {method: "OPTIONS", safe: true, idempotent: true, destructive_hint: false},
+  {method: "TRACE", safe: true, idempotent: true, destructive_hint: false},
+  {method: "PUT", safe: false, idempotent: true},
+  {method: "DELETE", safe: false, idempotent: true, destructive_hint: true},
+  {method: "POST", safe: false, idempotent: false},
+  {method: "PATCH", safe: false, idempotent: false},
+]
+
+/** Resolve one standard OpenAPI HTTP method or fail closed. */
+pub fn adapter_http_semantics(method: string) -> AdapterHttpSemantics {
+  const normalized = method.upper()
+  for semantics in _ADAPTER_HTTP_SEMANTICS {
+    if semantics.method == normalized {
+      return semantics
+    }
+  }
+  throw "harn-openapi: unsupported HTTP method '" + method + "'"
+}
+
+/** Validate the optional adapter-root annotation default record. */
+pub fn normalize_adapter_annotation_defaults(value: any) -> AdapterAnnotationDefaults {
+  const defaults = value ?? {}
+  if type_of(defaults) != "dict" {
+    throw "harn-openapi.codegen_module: top-level x-harn.annotationDefaults must be an object"
+  }
+  for entry in defaults {
+    if entry.key != "openWorldHint" {
+      throw "harn-openapi.codegen_module: unknown top-level x-harn.annotationDefaults field '"
+        + entry.key
+        + "'"
+    }
+    if type_of(entry.value) != "bool" {
+      throw "harn-openapi.codegen_module: top-level x-harn.annotationDefaults.openWorldHint must be a bool"
+    }
+  }
+  return schema_expect(defaults, AdapterAnnotationDefaults)
+}
+
+/**
+ * Normalize one operation's advisory annotations. Explicit metadata may refine
+ * facts that HTTP leaves unknown, but cannot contradict a protocol guarantee.
+ */
+pub fn normalize_adapter_annotations(
+  method: string,
+  operation_id: string,
+  explicit_value: any,
+  defaults: AdapterAnnotationDefaults,
+) -> AdapterToolAnnotations {
+  const semantics = adapter_http_semantics(method)
+  let annotations: AdapterToolAnnotations = {
+    readOnlyHint: semantics.safe,
+    idempotentHint: semantics.idempotent,
+  }
+  if semantics.destructive_hint != nil {
+    annotations = schema_expect(
+      {...annotations, destructiveHint: semantics.destructive_hint},
+      AdapterToolAnnotations,
+    )
+  }
+  if defaults.get("openWorldHint") != nil {
+    annotations = schema_expect(
+      {...annotations, openWorldHint: defaults.openWorldHint},
+      AdapterToolAnnotations,
+    )
+  }
+  const explicit = explicit_value ?? {}
+  if type_of(explicit) != "dict" {
+    throw "harn-openapi.codegen_module: x-harn.annotations on '" + operation_id
+      + "' must be an object"
+  }
+  for entry in explicit {
+    if !["title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].contains(
+      entry.key,
+    ) {
+      throw "harn-openapi.codegen_module: unknown x-harn.annotations field '" + entry.key
+        + "' on '"
+        + operation_id
+        + "'"
+    }
+    if entry.key == "title" {
+      if type_of(entry.value) != "string" || entry.value == "" {
+        throw "harn-openapi.codegen_module: x-harn.annotations.title on '" + operation_id
+          + "' must be a non-empty string"
+      }
+    } else if type_of(entry.value) != "bool" {
+      throw "harn-openapi.codegen_module: x-harn.annotations." + entry.key + " on '"
+        + operation_id
+        + "' must be a bool"
+    }
+  }
+  if semantics.safe && explicit.get("readOnlyHint") == false {
+    throw "harn-openapi.codegen_module: x-harn.annotations.readOnlyHint on '"
+      + operation_id
+      + "' contradicts HTTP "
+      + semantics.method
+      + " semantics"
+  }
+  if semantics.idempotent && explicit.get("idempotentHint") == false {
+    throw "harn-openapi.codegen_module: x-harn.annotations.idempotentHint on '"
+      + operation_id
+      + "' contradicts HTTP "
+      + semantics.method
+      + " semantics"
+  }
+  if semantics.safe && explicit.get("destructiveHint") == true {
+    throw "harn-openapi.codegen_module: x-harn.annotations.destructiveHint on '"
+      + operation_id
+      + "' contradicts HTTP "
+      + semantics.method
+      + " semantics"
+  }
+  return schema_expect({...annotations, ...explicit}, AdapterToolAnnotations)
+}
+
+/**
+ * Connector retries derive from the same method facts as public annotations.
+ * An idempotency key makes one POST/PATCH invocation retryable; it does not
+ * rewrite the operation-level HTTP or MCP semantics.
+ */
+pub fn adapter_retry_attempts(method: string, has_idempotency_key: bool) -> int {
+  const semantics = adapter_http_semantics(method)
+  if semantics.idempotent {
+    return 3
+  }
+  if has_idempotency_key && ["POST", "PATCH"].contains(semantics.method) {
+    return 3
+  }
+  return 1
+}

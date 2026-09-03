@@ -175,14 +175,14 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn get_page(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n  id: any,\n) -> PageObject",
+      "pub fn get_page(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n  id: any,\n) -> PageObject",
     ),
     "get_page must return PageObject",
   )
   assert(
     contains(
       src,
-      "pub fn get_page_by_slug(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n  slug: any,\n) -> PageObject",
+      "pub fn get_page_by_slug(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n  slug: any,\n) -> PageObject",
     ),
     "get_page_by_slug must return PageObject",
   )
@@ -191,7 +191,7 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn search_items(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: dict,\n) -> SearchItemsResponse",
+      "pub fn search_items(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n) -> SearchItemsResponse",
     ),
     "search_items must return SearchItemsResponse",
   )
@@ -202,7 +202,7 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn delete_page(harness: {clock: HarnessClock, net: HarnessNet}, client: dict, id: any) -> nil",
+      "pub fn delete_page(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n  id: any,\n) -> nil",
     ),
     "delete_page (204) must return nil",
   )
@@ -213,7 +213,7 @@ pipeline test_main(harness: Harness) {
   assert(
     contains(
       src,
-      "pub fn get_raw_bytes(harness: {clock: HarnessClock, net: HarnessNet}, client: dict) -> dict",
+      "pub fn get_raw_bytes(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n) -> dict",
     ),
     "non-JSON response body must fall back to dict",
   )

@@ -315,7 +315,7 @@ pipeline test_main(harness: Harness) {
     {
       module_name: "regression",
       client_name: "RegressionClient",
-      header_overrides: {"X-Escaped": "line\nnext\tend"},
+      header_overrides: {"X-Escaped": "line\"next\\end"},
     },
   )
   require_contains(
@@ -350,7 +350,10 @@ pipeline test_main(harness: Harness) {
     "new_client, return_, upload_file, secure_op",
     """
       harness.testing.http_mock_clear()
-      let client = new_client("https://api.example.com/", "token", nil, {["query-key"]: "query-secret"}, nil, {})
+      let client = new_client("https://api.example.com/", {
+        bearerAuth: {token: "token"},
+        "query-key": {value: "query-secret"},
+      })
       harness.testing.http_mock(
         "GET",
         "https://api.example.com/things/a%20b%2Fc",

@@ -22,20 +22,24 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  const registry = adapter_tools({clock: harness.clock, net: harness.net}, client)\n"
     + "  assert_eq(len(registry.tools), 2)\n"
     + "  const catalog = adapter_catalog({clock: harness.clock, net: harness.net}, client)\n"
-    + "  assert_eq(len(catalog.tools), 1)\n"
+    + "  assert_eq(len(catalog.tools), 2)\n"
     + "  assert_eq(catalog.schema_version, \"harn-tools/1.0\")\n"
     + "  assert_eq(catalog.info.name, \"widgets\")\n"
     + "  assert_eq(catalog.info.version, \"2026-08-29\")\n"
     + "  const catalog_widget = named_tool(catalog.tools, \"lookup_widget\")\n"
     + "  const catalog_reindex = named_tool(catalog.tools, \"reindex_widgets\")\n"
     + "  require catalog_widget != nil, \"catalog tool must be named\"\n"
-    + "  assert_eq(catalog_reindex, nil)\n"
+    + "  require catalog_reindex != nil, \"catalog must include its selective tool\"\n"
     + "  assert_eq(catalog_widget.cli.command, [\"widgets\", \"get\"])\n"
     + "  assert_eq(catalog_widget.governance.audiences, [\"cli\", \"mcp\", \"catalog\", \"agent\"])\n"
     + "  assert_eq(catalog_widget.icons[0].src, \"https://api.example.test/assets/widget.svg\")\n"
     + "  assert_eq(catalog_widget.icons[0].theme, \"light\")\n"
     + "  assert_eq(catalog_widget.execution.taskSupport, \"optional\")\n"
     + "  assert_eq(catalog_widget.policy.kind, \"fetch\")\n"
+    + "  assert_eq(catalog_reindex.policy.kind, \"execute\")\n"
+    + "  assert_eq(catalog_reindex.policy.side_effect_level, \"network\")\n"
+    + "  assert_eq(catalog_reindex.annotations.title, \"Reindex safely\")\n"
+    + "  assert_eq(catalog_reindex.annotations.openWorldHint, true)\n"
     + "  assert_eq(catalog_widget.source.binding.method, \"GET\")\n"
     + "  const registered = named_tool(registry.tools, \"lookup_widget\")\n"
     + "  const registered_reindex = named_tool(registry.tools, \"reindex_widgets\")\n"
@@ -46,7 +50,13 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(registered.icons[0].mimeType, \"image/svg+xml\")\n"
     + "  assert_eq(registered.execution.taskSupport, \"optional\")\n"
     + "  assert_eq(registered.governance.audiences, catalog_widget.governance.audiences)\n"
-    + "  assert_eq(registered_reindex.governance.audiences, [\"mcp\"])\n"
+    + "  assert_eq(registered_reindex.governance.audiences, [\"mcp\", \"catalog\"])\n"
+    + "  assert_eq(registered.annotations.openWorldHint, false)\n"
+    + "  assert_eq(registered_reindex.annotations.openWorldHint, true)\n"
+    + "  assert_eq(registered_reindex.annotations.title, \"Reindex safely\")\n"
+    + "  assert_eq(registered_reindex.annotations.readOnlyHint, false)\n"
+    + "  assert_eq(registered_reindex.annotations.idempotentHint, false)\n"
+    + "  assert_eq(registered_reindex.annotations.destructiveHint, false)\n"
     + "  assert_eq(registered.parameters.widget_id.required, true)\n"
     + "  assert_eq(registered.outputSchema.required, [\"id\", \"label\"])\n"
     + "  harness.testing.http_mock_clear()\n"
@@ -71,12 +81,17 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + server_path + "\"])\n" + "  const discovered = harness.tools.mcp_list_tools(mcp)\n"
     + "  assert_eq(discovered.count, 2)\n"
     + "  const discovered_widget = named_tool(discovered, \"lookup_widget\")\n"
+    + "  const discovered_reindex = named_tool(discovered, \"reindex_widgets\")\n"
     + "  require discovered_widget != nil, \"MCP must discover the included widget tool\"\n"
-    + "  assert(named_tool(discovered, \"reindex_widgets\") != nil, \"MCP must discover its selective tool\")\n"
+    + "  require discovered_reindex != nil, \"MCP must discover its selective tool\"\n"
     + "  assert_eq(discovered_widget.inputSchema.required, [\"widget_id\"])\n"
     + "  assert_eq(discovered_widget.outputSchema.required, [\"id\", \"label\"])\n"
     + "  assert_eq(discovered_widget.annotations.readOnlyHint, true)\n"
     + "  assert_eq(discovered_widget.annotations.openWorldHint, false)\n"
+    + "  assert_eq(discovered_reindex.annotations.title, \"Reindex safely\")\n"
+    + "  assert_eq(discovered_reindex.annotations.openWorldHint, true)\n"
+    + "  assert_eq(discovered_reindex.annotations.destructiveHint, false)\n"
+    + "  assert_eq(discovered_reindex.annotations.idempotentHint, false)\n"
     + "  assert_eq(discovered_widget.icons[0].sizes, [\"any\"])\n"
     + "  assert_eq(discovered_widget._meta[\"com.burin.harn/audience\"], \"developer\")\n"
     + "  harness.tools.mcp_disconnect(mcp)\n"
@@ -223,6 +238,34 @@ pipeline default(harness: Harness) {
       extension: {execution: {taskSupport: "optional", retry: true}},
       expected: "unknown x-harn.execution field 'retry' on 'get-widget'",
     },
+    {
+      extension: {annotations: {title: ""}},
+      expected: "x-harn.annotations.title on 'get-widget' must be a non-empty string",
+    },
+    {
+      extension: {annotations: "safe"},
+      expected: "x-harn.annotations on 'get-widget' must be an object",
+    },
+    {
+      extension: {annotations: {riskHint: true}},
+      expected: "unknown x-harn.annotations field 'riskHint' on 'get-widget'",
+    },
+    {
+      extension: {annotations: {openWorldHint: "yes"}},
+      expected: "x-harn.annotations.openWorldHint on 'get-widget' must be a bool",
+    },
+    {
+      extension: {annotations: {readOnlyHint: false}},
+      expected: "x-harn.annotations.readOnlyHint on 'get-widget' contradicts HTTP GET semantics",
+    },
+    {
+      extension: {annotations: {destructiveHint: true}},
+      expected: "x-harn.annotations.destructiveHint on 'get-widget' contradicts HTTP GET semantics",
+    },
+    {
+      extension: {annotations: {idempotentHint: false}},
+      expected: "x-harn.annotations.idempotentHint on 'get-widget' contradicts HTTP GET semantics",
+    },
   ]
   for invalid in invalid_extensions {
     const message = extension_error(harness.fs, raw, invalid.extension)
@@ -313,6 +356,37 @@ pipeline default(harness: Harness) {
   require normalize_adapter_governance({audiences: ["agent", "catalog", "mcp", "cli"]}, "op")
     == {audiences: ["cli", "mcp", "catalog", "agent"]},
     "governance normalization should have one typed canonical order"
+  const invalid_roots = [
+    {
+      extension: {annotationDefaults: {openWorldHint: "closed"}},
+      expected: "top-level x-harn.annotationDefaults.openWorldHint must be a bool",
+    },
+    {
+      extension: {annotationDefaults: "closed"},
+      expected: "top-level x-harn.annotationDefaults must be an object",
+    },
+    {
+      extension: {annotationDefaults: {world: "closed"}},
+      expected: "unknown top-level x-harn.annotationDefaults field 'world'",
+    },
+    {
+      extension: {annotationDefaults: {}, retry: true},
+      expected: "unknown top-level x-harn field 'retry'",
+    },
+  ]
+  for invalid in invalid_roots {
+    let malformed_root = json_parse(raw)
+    malformed_root["x-harn"] = invalid.extension
+    const malformed_root_error = try {
+      codegen_module(harness.fs, parse(json_stringify(malformed_root)), {module_name: "widgets"})
+      nil
+    } catch (error) {
+      error
+    }
+    require to_string(malformed_root_error).contains(invalid.expected),
+      "root annotation defaults must reject "
+      + invalid.expected
+  }
   const module_path = scratch_path(
     {fs: harness.fs, random: harness.random},
     "harn-openapi-adapter-module",
