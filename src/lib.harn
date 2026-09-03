@@ -39,6 +39,13 @@
 //   enum_values(schema)          -> list | nil
 //       Return the enum variant list on a schema, or nil if absent.
 //
+//   normalize_adapter_schema_graph(openapi_version, schemas)
+//       Preserve reusable OpenAPI components as one validated, self-contained
+//       Draft 2020-12 graph for CLI, MCP, catalog, and typed-client projections.
+//
+//   normalize_adapter_schema(openapi_version, schema, graph)
+//       Normalize one tool schema against the same reusable component graph.
+//
 //   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
 //       Guard helpers for common dynamic boundaries.
 //
@@ -85,6 +92,12 @@
 // fixture.
 import { filter_nil } from "std/collections"
 import { normalize_adapter_governance } from "./adapter_governance"
+pub import {
+  AdapterJsonSchema,
+  AdapterSchemaGraph,
+  normalize_adapter_schema,
+  normalize_adapter_schema_graph,
+} from "./adapter_schema_graph"
 
 // -------------------------------------------------------------------------------------------------
 // Types
