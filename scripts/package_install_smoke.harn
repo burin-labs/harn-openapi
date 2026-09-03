@@ -83,7 +83,14 @@ version = "0.0.0"
   harness.fs.write_text(
     smoke_root + "/smoke.harn",
     """
-import { operations, parse } from "harn-openapi/default"
+import {
+  AdapterJsonSchema,
+  AdapterSchemaGraph,
+  normalize_adapter_schema,
+  normalize_adapter_schema_graph,
+  operations,
+  parse,
+} from "harn-openapi/default"
 
 pipeline default(harness: Harness) {
   const raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}"
@@ -93,6 +100,25 @@ pipeline default(harness: Harness) {
   const op = ops[0]
   require op != nil, "package import should expose the parsed operation"
   require op.operation_id == "ping", "operation id should round-trip"
+  const graph: AdapterSchemaGraph = normalize_adapter_schema_graph(
+    doc.openapi,
+    {Ping: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]}},
+    doc.jsonSchemaDialect,
+  )
+  const input: AdapterJsonSchema = normalize_adapter_schema(
+    doc.openapi,
+    {
+      type: "object",
+      properties: {ping: {"$ref": "#/components/schemas/Ping"}},
+      required: ["ping"],
+      additionalProperties: false,
+    },
+    graph,
+    doc.jsonSchemaDialect,
+  )
+  require len(graph.schemas) == 1, "package import should retain one component"
+  require input.properties.ping.get("$ref") == "#/components/schemas/Ping",
+    "package import should preserve a component reference"
   harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,
