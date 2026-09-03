@@ -1,0 +1,368 @@
+import { codegen_entrypoint, codegen_harn_toml, codegen_module, parse } from "../src/lib"
+
+fn harn_bin(env: HarnessEnv) -> string {
+  return env.get("HARN_BIN") ?? "harn"
+}
+
+fn sh_quote(value: string) -> string {
+  return "'" + replace(value, "'", "'\"'\"'") + "'"
+}
+
+fn scratch_stem(harness: {fs: HarnessFs, random: HarnessRandom}, label: string) -> string {
+  const root = harness.fs.source_dir() + "/../.harn/tmp"
+  harness.fs.mkdir(root)
+  return root + "/" + label + "-" + harness.random.uuid()
+}
+
+fn check_generated(harness: Harness, path: string, label: string) {
+  const checked = harness.process.run({program: harn_bin(harness.env), args: ["check", path]})
+  if !checked.success {
+    harness.stdio.println(checked.stderr)
+    harness.stdio.println(checked.stdout)
+  }
+  require checked.success, "${label} must type-check"
+  const formatted = harness.process.run(
+    {program: harn_bin(harness.env), args: ["fmt", "--check", path]},
+  )
+  if !formatted.success {
+    harness.stdio.println(formatted.stderr)
+    harness.stdio.println(formatted.stdout)
+  }
+  require formatted.success, "${label} must be formatter-clean"
+}
+
+fn secured_doc() -> string {
+  return json_stringify(
+    {
+      openapi: "3.1.0",
+      info: {title: "Entrypoint fixture", version: "1.0.0"},
+      servers: [{url: "https://api.example.test"}],
+      paths: {
+        "/public": {
+          get: {
+            operationId: "public-ping",
+            security: [],
+            responses: {
+              "200": {
+                description: "ok",
+                content: {
+                  "application/json": {schema: {"$ref": "#/components/schemas/PublicResult"}},
+                },
+              },
+            },
+          },
+        },
+        "/bearer": {
+          get: {
+            operationId: "bearer-ping",
+            security: [{bearerAuth: []}],
+            responses: {
+              "200": {description: "ok", content: {"application/json": {schema: {type: "object"}}}},
+            },
+          },
+        },
+        "/combined": {
+          post: {
+            operationId: "combined-write",
+            security: [{bearerAuth: [], headerKey: []}, {basicAuth: []}],
+            responses: {"204": {description: "done"}},
+          },
+        },
+      },
+      components: {
+        schemas: {
+          PublicResult: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]},
+        },
+        securitySchemes: {
+          bearerAuth: {type: "http", scheme: "bearer"},
+          headerKey: {type: "apiKey", in: "header", name: "X-Widget-Key"},
+          basicAuth: {type: "http", scheme: "basic"},
+        },
+      },
+    },
+  )
+}
+
+fn registry_runner(module_stem: string) -> string {
+  return "import { AdapterRuntimeConfig, adapter_registry } from \""
+    + module_stem
+    + "\"\n\n"
+    + "fn named_tool(tools: list, name: string) {\n"
+    + "  for entry in tools { if entry.name == name { return entry } }\n"
+    + "  return nil\n"
+    + "}\n\n"
+    + "@test\n"
+    + "pipeline test_main(harness: Harness) {\n"
+    + "  const config: AdapterRuntimeConfig = {\n"
+    + "    base_url: \"https://api.example.test\",\n"
+    + "    credentials: {\n"
+    + "      bearerAuth: {token: \"bearer-token\"},\n"
+    + "      headerKey: {value: \"header-key\"},\n"
+    + "    },\n"
+    + "    extra_headers: {},\n"
+    + "  }\n"
+    + "  const authority = {clock: harness.clock, net: harness.net}\n"
+    + "  const registry = adapter_registry(authority, config)\n"
+    + "  assert_eq(len(registry.tools), 3)\n"
+    + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/public\", {status: 200, body: \"{}\", headers: {}})\n"
+    + "  named_tool(registry.tools, \"public_ping\").handler({})\n"
+    + "  let public_call = harness.testing.http_mock_calls({include_sensitive: true})[0]\n"
+    + "  assert_eq(public_call.headers.get(\"authorization\"), nil)\n"
+    + "  assert_eq(public_call.headers.get(\"x-widget-key\"), nil)\n"
+    + "  harness.testing.http_mock_clear()\n"
+    + "  harness.testing.http_mock(\"POST\", \"https://api.example.test/combined\", {status: 204, body: \"\", headers: {}})\n"
+    + "  named_tool(registry.tools, \"combined_write\").handler({})\n"
+    + "  let combined_call = harness.testing.http_mock_calls({include_sensitive: true})[0]\n"
+    + "  assert_eq(combined_call.headers.authorization, \"Bearer bearer-token\")\n"
+    + "  assert_eq(combined_call.headers[\"x-widget-key\"], \"header-key\")\n"
+    + "  const missing: AdapterRuntimeConfig = {\n"
+    + "    base_url: \"https://api.example.test\",\n"
+    + "    credentials: {bearerAuth: {token: \"bearer-token\"}},\n"
+    + "    extra_headers: {},\n"
+    + "  }\n"
+    + "  const rejected = try { adapter_registry(authority, missing); nil } catch (error) { error }\n"
+    + "  assert_eq(to_string(rejected), \"harn-openapi.generated: operation 'combined-write' requires one of [bearerAuth+headerKey, basicAuth]\")\n"
+    + "  const missing_base: AdapterRuntimeConfig = {\n"
+    + "    base_url: \"\",\n"
+    + "    credentials: config.credentials,\n"
+    + "    extra_headers: {},\n"
+    + "  }\n"
+    + "  const base_rejected = try { adapter_registry(authority, missing_base); nil } catch (error) { error }\n"
+    + "  assert_eq(to_string(base_rejected), \"harn-openapi.generated: base URL configuration is required\")\n"
+    + "}\n"
+}
+
+@test
+pipeline test_main(harness: Harness) {
+  const doc = parse(secured_doc())
+  const module_stem = scratch_stem(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-entrypoint-module",
+  )
+  const entrypoint_stem = scratch_stem(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-entrypoint-main",
+  )
+  const runner_path = scratch_stem(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-entrypoint-runner",
+  )
+    + ".harn"
+  const site_path = scratch_stem(
+    {fs: harness.fs, random: harness.random},
+    "harn-openapi-entrypoint-site",
+  )
+    + ".harn"
+  const site_log = site_path + ".log"
+  const rpc_call_path = site_path + ".rpc"
+  const module_source = codegen_module(
+    harness.fs,
+    doc,
+    {module_name: "widgets", client_name: "WidgetClient", environment_prefix: "WIDGETS"},
+  )
+  harness.fs.write_text(module_stem + ".harn", module_source)
+  const entrypoint = codegen_entrypoint(
+    harness.fs,
+    doc,
+    {module_import: module_stem, environment_prefix: "WIDGETS"},
+  )
+  const entrypoint_path = entrypoint_stem + ".harn"
+  harness.fs.write_text(entrypoint_path, entrypoint)
+  check_generated(harness, module_stem + ".harn", "generated module")
+  check_generated(harness, entrypoint_path, "generated entrypoint")
+  assert(module_source.contains("WIDGETS_BASE_URL"), "base URL environment name must be generated")
+  assert(
+    module_source.contains("WIDGETS_BEARERAUTH_TOKEN"),
+    "bearer environment name must be generated",
+  )
+  assert(
+    module_source.contains("WIDGETS_HEADERKEY_API_KEY"),
+    "API-key environment name must be generated",
+  )
+  assert(
+    module_source.contains("WIDGETS_BASICAUTH_USERNAME"),
+    "basic username name must be generated",
+  )
+  assert(
+    module_source.contains("WIDGETS_BASICAUTH_PASSWORD"),
+    "basic password name must be generated",
+  )
+  assert(
+    !module_source.contains("bearer-token") && !entrypoint.contains("bearer-token"),
+    "generated source must not contain credential values",
+  )
+  assert(!entrypoint.contains("pub fn"), "executable entrypoint must not leak helper tools")
+  harness.fs.write_text(runner_path, registry_runner(module_stem))
+  const runtime = harness.process.run({program: harn_bin(harness.env), args: ["test", runner_path]})
+  if !runtime.success {
+    harness.stdio.println(runtime.stderr)
+    harness.stdio.println(runtime.stdout)
+  }
+  assert(runtime.success, "generated entrypoint registry must execute")
+  const configured_environment = {
+    WIDGETS_BASE_URL: "https://api.example.test",
+    WIDGETS_BEARERAUTH_TOKEN: "fixture-bearer-token",
+    WIDGETS_HEADERKEY_API_KEY: "fixture-header-key",
+  }
+  const help = harness.process.run(
+    {
+      program: harn_bin(harness.env),
+      args: ["tool", "run", entrypoint_path, "--help"],
+      env: configured_environment,
+    },
+  )
+  assert(help.success, "generated entrypoint must project CLI help")
+  assert(help.stdout.contains("public-ping"), "CLI help must come from the generated registry")
+  const schema = harness.process.run(
+    {
+      program: harn_bin(harness.env),
+      args: ["tool", "schema", entrypoint_path, "--pretty"],
+      env: configured_environment,
+    },
+  )
+  assert(schema.success, "generated entrypoint must project a static schema")
+  assert(schema.stdout.contains("combined_write"), "static schema must contain the same registry")
+  const rpc_input = json_stringify(
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: {name: "entrypoint-test", version: "1"},
+      },
+    },
+  )
+    + "\n"
+    + json_stringify({jsonrpc: "2.0", method: "notifications/initialized", params: {}})
+    + "\n"
+    + json_stringify({jsonrpc: "2.0", id: 2, method: "tools/list", params: {}})
+    + "\n"
+  const mcp = harness.process.run(
+    {
+      program: harn_bin(harness.env),
+      args: ["serve", "mcp", entrypoint_path],
+      env: configured_environment,
+      stdin: rpc_input,
+    },
+  )
+  assert(mcp.success, "generated entrypoint must serve MCP over stdio")
+  if !mcp.stdout.contains("public_ping") {
+    harness.stdio.println(mcp.stdout)
+    harness.stdio.println(mcp.stderr)
+  }
+  assert(mcp.stdout.contains("public_ping"), "MCP must discover the generated registry")
+  assert(mcp.stdout.contains("combined_write"), "MCP and static schema must share tool identity")
+  harness.fs.write_text(
+    site_path,
+    "@route(\"GET\", \"/public\")\n"
+      + "pub fn public_route(req: dict) -> dict {\n"
+      + "  return http_ok({ok: true, marker: \"public-via-http\", authorization: req.headers.get(\"authorization\")})\n"
+      + "}\n",
+  )
+  const rpc_call = json_stringify(
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: {name: "entrypoint-call-test", version: "1"},
+      },
+    },
+  )
+    + "\n"
+    + json_stringify({jsonrpc: "2.0", method: "notifications/initialized", params: {}})
+    + "\n"
+    + json_stringify(
+      {jsonrpc: "2.0", id: 2, method: "tools/call", params: {name: "public_ping", arguments: {}}},
+    )
+    + "\n"
+  harness.fs.write_text(rpc_call_path, rpc_call)
+  const projection_calls = harness.process.shell(
+    "set -eu\n"
+      + sh_quote(harn_bin(harness.env))
+      + " serve site --bind 127.0.0.1:0 "
+      + sh_quote(site_path)
+      + " >"
+      + sh_quote(site_log)
+      + " 2>&1 &\n"
+      + "site_pid=$!\n"
+      + "cleanup() { kill \"$site_pid\" 2>/dev/null || true; wait \"$site_pid\" 2>/dev/null || true; }\n"
+      + "trap cleanup EXIT HUP INT TERM\n"
+      + "attempt=0\n"
+      + "until grep -q 'Site server ready' "
+      + sh_quote(site_log)
+      + "; do\n"
+      + "  kill -0 \"$site_pid\" 2>/dev/null || { cat "
+      + sh_quote(site_log)
+      + "; exit 1; }\n"
+      + "  attempt=$((attempt + 1))\n"
+      + "  [ \"$attempt\" -lt 10000 ] || { cat "
+      + sh_quote(site_log)
+      + "; exit 1; }\n"
+      + "done\n"
+      + "ready_line=$(grep 'Site server ready' "
+      + sh_quote(site_log)
+      + ")\n"
+      + "export WIDGETS_BASE_URL=$"
+      + "{ready_line##*ready on }\n"
+      + "export WIDGETS_BEARERAUTH_TOKEN=fixture-bearer-token\n"
+      + "export WIDGETS_HEADERKEY_API_KEY=fixture-header-key\n"
+      + "echo CLI_CALL\n"
+      + sh_quote(harn_bin(harness.env))
+      + " tool run "
+      + sh_quote(entrypoint_path)
+      + " public_ping\n"
+      + "echo MCP_CALL\n"
+      + sh_quote(harn_bin(harness.env))
+      + " serve mcp "
+      + sh_quote(entrypoint_path)
+      + " <"
+      + sh_quote(rpc_call_path),
+  )
+  if !projection_calls.success {
+    harness.stdio.println(projection_calls.stdout)
+    harness.stdio.println(projection_calls.stderr)
+    harness.stdio.println(harness.fs.read_text(site_log))
+  }
+  assert(projection_calls.success, "CLI and MCP must execute against a real local HTTP handler")
+  const call_output = projection_calls.stdout + projection_calls.stderr
+  assert(call_output.contains("CLI_CALL"), "CLI invocation must run")
+  assert(call_output.contains("MCP_CALL"), "MCP tools/call invocation must run")
+  const call_sections = call_output.split("MCP_CALL")
+  assert_eq(len(call_sections), 2, "projection output must retain the CLI/MCP boundary")
+  assert(call_sections[0].contains("public-via-http"), "CLI must reach the shared HTTP route")
+  assert(call_sections[1].contains("public-via-http"), "MCP must reach the shared HTTP route")
+  const missing = harness.process.run(
+    {
+      program: harn_bin(harness.env),
+      args: ["tool", "schema", entrypoint_path],
+      env: {
+        WIDGETS_BASE_URL: "https://api.example.test",
+        WIDGETS_BEARERAUTH_TOKEN: "must-not-appear-in-diagnostics",
+      },
+    },
+  )
+  assert(!missing.success, "missing AND credential must fail before registry publication")
+  const missing_output = missing.stdout + missing.stderr
+  assert(
+    missing_output.contains("operation 'combined-write' requires one of"),
+    "startup failure must identify the unavailable operation",
+  )
+  assert(
+    !missing_output.contains("must-not-appear-in-diagnostics"),
+    "startup failure must not echo configured credential values",
+  )
+  const manifest = codegen_harn_toml(
+    {
+      package_name: "widgets",
+      entrypoint_export: "src/main.harn",
+      dependencies: {"harn-openapi": {version: "0.2"}},
+    },
+  )
+  assert(manifest.contains("entrypoint = \"src/main.harn\""), "manifest must export entrypoint")
+}

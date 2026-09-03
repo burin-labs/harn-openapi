@@ -1,0 +1,122 @@
+import { codegen_module, is_schema, parse, schema } from "../src/lib"
+
+fn harn_cmd(env: HarnessEnv) -> string {
+  return env.get("HARN_BIN") ?? "harn"
+}
+
+fn generated_runner(module_path: string) -> string {
+  return "import { adapter_catalog, new_client } from \""
+    + module_path
+    + "\"\n\n"
+    + "fn named_tool(tools: list, name: string) -> dict? {\n"
+    + "  for entry in tools { if entry.name == name { return entry } }\n"
+    + "  return nil\n"
+    + "}\n\n"
+    + "@test\n"
+    + "pipeline default(harness: Harness) {\n"
+    + "  const client = new_client(\"https://api.example.test\")\n"
+    + "  const catalog = adapter_catalog({clock: harness.clock, net: harness.net}, client)\n"
+    + "  const any_tool = named_tool(catalog.tools, \"accept_any\")\n"
+    + "  const impossible_tool = named_tool(catalog.tools, \"impossible\")\n"
+    + "  require any_tool != nil, \"true-schema tool must project\"\n"
+    + "  require impossible_tool != nil, \"false-schema tool must project\"\n"
+    + "  const any_params = ((any_tool ?? {}).get(\"inputSchema\") ?? {}).get(\"properties\") ?? {}\n"
+    + "  const impossible_params = ((impossible_tool ?? {}).get(\"inputSchema\") ?? {}).get(\"properties\") ?? {}\n"
+    + "  assert_eq(any_params.get(\"anything\"), {})\n"
+    + "  assert_eq(any_params.get(\"body\"), {})\n"
+    + "  assert_eq((any_tool ?? {}).get(\"outputSchema\"), {})\n"
+    + "  assert_eq(impossible_params.get(\"blocked\"), {not: {}})\n"
+    + "  assert_eq((impossible_tool ?? {}).get(\"outputSchema\"), {not: {}})\n"
+    + "}\n"
+}
+
+const _BOOLEAN_DOC = """
+  {
+    "openapi": "3.1.1",
+    "info": {"title": "Boolean schemas", "version": "1"},
+    "servers": [{"url": "https://api.example.test"}],
+    "paths": {
+      "/any": {
+        "post": {
+          "operationId": "acceptAny",
+          "parameters": [{"name": "anything", "in": "query", "schema": true}],
+          "requestBody": {
+            "required": true,
+            "content": {"application/json": {"schema": true}}
+          },
+          "responses": {
+            "200": {
+              "description": "Any JSON value",
+              "content": {"application/json": {"schema": true}}
+            }
+          }
+        }
+      },
+      "/impossible": {
+        "get": {
+          "operationId": "impossible",
+          "parameters": [{"name": "blocked", "in": "query", "schema": false}],
+          "responses": {
+            "200": {
+              "description": "No JSON value",
+              "content": {
+                "application/json": {
+                  "schema": {"$ref": "#/components/schemas/Impossible"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {"schemas": {"Anything": true, "Impossible": false}}
+  }
+  """
+
+@test
+pipeline default(harness: Harness) {
+  const doc = parse(_BOOLEAN_DOC)
+  require is_schema(true), "true is a complete JSON Schema"
+  require is_schema(false), "false is a complete JSON Schema"
+  require !is_schema(nil), "nil is not a JSON Schema"
+  require schema(doc, {"$ref": "#/components/schemas/Anything"}) == true,
+    "a reference to true must resolve to true"
+  require schema(doc, {"$ref": "#/components/schemas/Impossible"}) == false,
+    "a reference to false must resolve to false"
+  require schema(doc, {allOf: [true, {type: "string"}]}) == {type: "string"},
+    "true must be the identity for allOf"
+  require schema(doc, {allOf: [{type: "string"}, false]}) == false, "false must absorb allOf"
+  const generated = codegen_module(
+    harness.fs,
+    doc,
+    {module_name: "boolean_schemas", default_base_url: "https://api.example.test"},
+  )
+  require generated.contains(") -> any"), "true response schemas must lower to any"
+  require generated.contains(") -> never"), "false response schemas must lower to never"
+  require generated.contains("received a response forbidden by its JSON Schema"),
+    "a false response contract must fail closed at runtime"
+  const root = harness.fs.temp_dir() + "/harn-openapi-boolean-schema-" + harness.random.uuid()
+  harness.fs.mkdir(root)
+  const module_path = root + "/generated.harn"
+  const runner_path = root + "/runner.harn"
+  harness.fs.write_text(module_path, generated)
+  harness.fs.write_text(runner_path, generated_runner(module_path))
+  const checked = harness.process.run(
+    {program: harn_cmd(harness.env), args: ["check", module_path]},
+  )
+  require checked.success, "generated boolean-schema module must check: " + checked.stderr
+  const tested = harness.process.run(
+    {
+      program: harn_cmd(harness.env),
+      args: ["test", runner_path],
+      env: {HARN_BIN: harn_cmd(harness.env)},
+    },
+  )
+  require tested.success,
+    "generated catalog must preserve boolean schemas (status "
+    + to_string(tested.status)
+    + "): stdout="
+    + tested.stdout
+    + " stderr="
+    + tested.stderr
+}

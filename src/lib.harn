@@ -39,12 +39,12 @@
 //   enum_values(schema)          -> list | nil
 //       Return the enum variant list on a schema, or nil if absent.
 //
-//   normalize_adapter_schema_graph(openapi_version, schemas)
+//   prepare_adapter_schema_graph(openapi_version, schemas)
 //       Preserve reusable OpenAPI components as one validated, self-contained
 //       Draft 2020-12 graph for CLI, MCP, catalog, and typed-client projections.
 //
 //   normalize_adapter_schema(openapi_version, schema, graph)
-//       Normalize one tool schema against the same reusable component graph.
+//       Normalize one tool schema against the same prepared component graph.
 //
 //   is_openapi_doc(value) / is_reference(value) / is_schema(value) -> bool
 //       Guard helpers for common dynamic boundaries.
@@ -52,6 +52,10 @@
 //   auth_helpers(doc)           -> list<AuthHelper>
 //       Classify reusable auth helper metadata for each declared security
 //       scheme without choosing provider-specific credential policy.
+//
+//   adapter_security_plan(doc, environment_prefix) -> AdapterSecurityPlan
+//       Normalize OpenAPI security into one typed OR-of-AND plan shared by
+//       generated clients, environment configuration, CLI, MCP, and catalogs.
 //
 //   pagination_plans(doc)       -> list<PaginationPlan>
 //       Detect simple cursor, page-number, and next-link list patterns from
@@ -71,21 +75,20 @@
 //       Uses Harn's stdlib `render_string` template engine so generated-code
 //       rendering stays aligned with the runtime instead of a local template
 //       parser.
-//       The generated client handles per-operation security: a helper
-//       `_headers_<scheme>(client)` is emitted for each scheme declared
-//       in `components.securitySchemes` and actually referenced by at
-//       least one operation (bearer / basic / apiKey-in-{header,query,
-//       cookie} / oauth2 / openIdConnect). Operations with `security: []`
-//       dispatch through `_no_auth_headers(client)` so they never send
-//       an Authorization header. `new_client`'s parameter set is restricted
-//       to the fields the emitted helpers actually read and also accepts
-//       SecretProvider-friendly hooks (`token_provider`, `api_key_provider`,
-//       `basic_provider`) so generated SDKs do not embed static secrets.
+//       The generated AdapterClient keys credentials by the original OpenAPI
+//       scheme name. Each operation selects the first configured security
+//       alternative, requires every scheme in that alternative, and preserves
+//       explicit anonymous access. Provider closures support request-time
+//       secret lookup without embedding values in generated source.
+//
+//   codegen_entrypoint(fs, doc, options) -> string
+//       Emit one executable registry entrypoint. It reads only generated
+//       environment names and feeds the same ToolRegistry to CLI and MCP hosts.
 //
 //   codegen_harn_toml(options) -> string
 //       Emit package metadata for generated SDK repos. Options:
 //       { package_name, version?, description?, default_export?,
-//       types_export?, dependencies? }.
+//       types_export?, entrypoint_export?, dependencies? }.
 //
 // See README.md for end-to-end usage; scripts/regen_demo.harn runs a
 // full parse -> codegen -> write loop against the bundled Notion
@@ -93,17 +96,37 @@
 import { filter_nil } from "std/collections"
 import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
+  AdapterAnnotationDefaults,
+  AdapterHttpSemantics,
+  AdapterToolAnnotations,
+  adapter_http_semantics,
+  adapter_retry_attempts,
+  normalize_adapter_annotation_defaults,
+  normalize_adapter_annotations,
+} from "./adapter_http_semantics"
+import { adapter_http_response_key } from "./adapter_http_semantics"
+pub import {
   AdapterJsonSchema,
-  AdapterSchemaGraph,
+  AdapterSchemaGraphWork,
+  PreparedAdapterSchemaGraph,
+  close_adapter_schema,
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
 } from "./adapter_schema_graph"
+pub import {
+  AdapterOperationSecurityPlan,
+  AdapterSecurityAlternative,
+  AdapterSecurityEnvironment,
+  AdapterSecurityPlan,
+  AdapterSecuritySchemeKind,
+  AdapterSecuritySchemePlan,
+  normalize_adapter_security_plan,
+  select_adapter_security_alternative,
+} from "./adapter_security"
 
 // -------------------------------------------------------------------------------------------------
 // Types
 // -------------------------------------------------------------------------------------------------
-
-type JsonSchemaType = "null" | "boolean" | "object" | "array" | "number" | "string" | "integer"
 
 /**
  * Harn shape fields cannot currently spell "$ref", so Reference is open and
@@ -137,54 +160,13 @@ type Tag = {name: string, description?: string, externalDocs?: ExternalDocumenta
 
 type SecurityRequirement = dict<string, list<string>>
 
-type Discriminator = {propertyName: string, mapping?: dict<string, string>}
-
 /**
- * Schema is open-shaped by design. JSON Schema 2020-12 permits "$ref"
- * siblings, so schema(doc, value) merges referenced content with any sibling
- * keywords instead of treating "$ref" as an exclusive replacement.
- * exclusiveMinimum / exclusiveMaximum are numeric in OAS 3.1, and oneOf /
- * anyOf are first-class so polymorphic request bodies remain representable.
+ * OpenAPI 3.1 schemas use the complete JSON Schema representation: an open
+ * object or a boolean. AdapterJsonSchema is the single owner of that wire
+ * shape, so parsing, reference resolution, catalogs, CLI, and MCP cannot drift
+ * into competing subsets.
  */
-type Schema = {
-  title?: string,
-  multipleOf?: float,
-  maximum?: float,
-  exclusiveMaximum?: float,
-  minimum?: float,
-  exclusiveMinimum?: float,
-  maxLength?: int,
-  minLength?: int,
-  pattern?: string,
-  maxItems?: int,
-  minItems?: int,
-  uniqueItems?: bool,
-  maxProperties?: int,
-  minProperties?: int,
-  required?: list<string>,
-  enum?: list,
-  const?: any,
-  type?: JsonSchemaType | list<JsonSchemaType>,
-  allOf?: list<dict>,
-  oneOf?: list<dict>,
-  anyOf?: list<dict>,
-  not?: dict,
-  items?: dict | list<dict>,
-  properties?: dict<string, dict>,
-  additionalProperties?: bool | dict,
-  description?: string,
-  format?: string,
-  default?: any,
-  nullable?: bool,
-  discriminator?: Discriminator,
-  readOnly?: bool,
-  writeOnly?: bool,
-  xml?: dict,
-  externalDocs?: ExternalDocumentation,
-  example?: any,
-  examples?: list<any>,
-  deprecated?: bool,
-}
+type Schema = AdapterJsonSchema
 
 type Example = {summary?: string, description?: string, value?: any, externalValue?: string}
 
@@ -361,6 +343,7 @@ type OpenApiDoc = {
   tags?: list<Tag>,
   externalDocs?: ExternalDocumentation,
   security_schemes?: dict<string, RefOr<SecurityScheme>>,
+  x_harn?: dict,
 }
 
 type WebhookOperation = {
@@ -381,11 +364,14 @@ type WebhookOperation = {
 type AuthHelper = {
   scheme_name: string,
   kind: string,
-  client_fields: list<string>,
+  credential_fields: list<string>,
   location?: string,
   parameter_name?: string,
   scopes?: list<string>,
 }
+
+/** Inputs required to generate an executable registry entrypoint. */
+pub type AdapterEntrypointOptions = {module_import: string, environment_prefix: string}
 
 type PaginationPlan = {
   operation_id: string,
@@ -448,6 +434,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     security: raw.get("security") ?? [],
     tags: raw.get("tags") ?? [],
     externalDocs: raw.get("externalDocs"),
+    x_harn: raw.get("x-harn"),
   }
   return schema_expect(filter_nil(doc), OpenApiDoc)
 }
@@ -599,6 +586,9 @@ fn _schema(doc: any, ref_or_inline: any) {
 
 fn _schema_inner(doc: any, ref_or_inline: any, seen_refs: any) {
   const resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
+  if type_of(resolved) == "bool" {
+    return resolved
+  }
   const all_of = resolved.get("allOf")
   if all_of == nil {
     return resolved
@@ -637,6 +627,9 @@ fn _resolve_ref(doc: any, node: any) {
 }
 
 fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
+  if type_of(node) == "bool" {
+    return node
+  }
   if type_of(node) != "dict" {
     return {}
   }
@@ -693,6 +686,21 @@ const _MAX_ALL_OF = 64
 const _MAX_PROPERTIES = 1024
 
 fn _merge_schema(base: any, overlay: any) {
+  if base == false || overlay == false {
+    return false
+  }
+  if base == true && type_of(overlay) == "dict" && len(overlay) == 0 {
+    return true
+  }
+  if overlay == true && type_of(base) == "dict" && len(base) == 0 {
+    return true
+  }
+  if base == true {
+    return overlay
+  }
+  if overlay == true {
+    return base
+  }
   if type_of(overlay) != "dict" {
     return base
   }
@@ -792,9 +800,9 @@ pub fn is_reference(value: unknown) -> bool {
   return type_of(value.get("$ref")) == "string"
 }
 
-/** True when a value is object-like enough to be used as an OAS Schema. */
+/** True when a value has the complete OpenAPI 3.1 JSON Schema wire shape. */
 pub fn is_schema(value: unknown) -> bool {
-  return schema_is(value, {type: "dict"})
+  return type_of(value) == "bool" || type_of(value) == "dict"
 }
 
 /** Classify reusable auth helper metadata for declared security schemes. */
@@ -808,7 +816,7 @@ pub fn auth_helpers(doc: OpenApiDoc) -> list<AuthHelper> {
     let helper = {
       scheme_name: name,
       kind: kind,
-      client_fields: _client_fields_for_scheme_kind(kind),
+      credential_fields: _credential_fields_for_scheme_kind(kind),
     }
     if starts_with(kind, "apiKey-") {
       helper = {
@@ -825,15 +833,32 @@ pub fn auth_helpers(doc: OpenApiDoc) -> list<AuthHelper> {
   return out
 }
 
-fn _client_fields_for_scheme_kind(kind: any) {
+/** Build the shared authentication plan for every generated projection. */
+pub fn adapter_security_plan(doc: OpenApiDoc, environment_prefix: string) -> AdapterSecurityPlan {
+  let security_operations = []
+  for op in _operations(doc) {
+    security_operations = security_operations
+      + [{operation_id: op.operation_id, security: op.security ?? []}]
+  }
+  return normalize_adapter_security_plan(
+    doc.get("security_schemes") ?? {},
+    security_operations,
+    environment_prefix,
+  )
+}
+
+fn _credential_fields_for_scheme_kind(kind: any) {
   if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
     return ["token", "token_provider"]
   }
   if kind == "basic" {
-    return ["basic_user", "basic_password", "basic_provider"]
+    return ["username", "password", "basic_provider"]
   }
   if kind == "apiKey-header" || kind == "apiKey-query" || kind == "apiKey-cookie" {
-    return ["api_keys", "api_key_provider"]
+    return ["value", "value_provider"]
+  }
+  if kind == "mutualTLS" {
+    return ["host_configured"]
   }
   return []
 }
@@ -895,6 +920,9 @@ fn _pagination_plan_for_op(doc: any, op: any) {
     return nil
   }
   const full = _schema(doc, picked.schema)
+  if type_of(full) != "dict" {
+    return nil
+  }
   const props = full.get("properties") ?? {}
   const items_field = _first_present_key(
     props,
@@ -955,6 +983,9 @@ fn _request_body_json_properties(doc: any, op: any) -> dict {
     return {}
   }
   const full = _schema(doc, request_schema)
+  if type_of(full) != "dict" {
+    return {}
+  }
   const props = full.get("properties")
   if type_of(props) == "dict" {
     return props
@@ -1096,8 +1127,13 @@ fn _rate_limit_metadata_for_op(doc: any, op: any) {
 // Codegen
 // -------------------------------------------------------------------------------------------------
 
-fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
+fn _adapter_operations(
+  doc: OpenApiDoc,
+  schema_graph: PreparedAdapterSchemaGraph,
+  options: dict = {},
+) -> list {
   const header_overrides = options.get("header_overrides") ?? {}
+  const annotation_defaults: AdapterAnnotationDefaults = _adapter_annotation_defaults(doc)
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
@@ -1105,7 +1141,14 @@ fn _adapter_operations(doc: OpenApiDoc, options: dict = {}) -> list {
   for op in _operations(doc) {
     const function_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
     taken_names = taken_names + [function_name]
-    const adapter = _adapter_operation(doc, op, function_name, header_overrides)
+    const adapter = _adapter_operation(
+      doc,
+      op,
+      function_name,
+      header_overrides,
+      annotation_defaults,
+      schema_graph,
+    )
     if adapter.expose {
       if exposed_names.contains(adapter.name) {
         throw "harn-openapi.codegen_module: duplicate generated tool name '" + adapter.name + "'"
@@ -1154,6 +1197,37 @@ const _MODULE_TEMPLATE = """
    * Source doc: {{ doc_title }} (OpenAPI {{ openapi_version }})
    * Module:     {{ module_name }}
    */
+  /** Complete HTTP Basic material returned by a request-time provider. */
+  pub type AdapterBasicCredential = {username: string, password: string}
+
+  /** One OpenAPI scheme's host-owned credential material. */
+  pub type AdapterCredential = {
+    token?: string,
+    username?: string,
+    password?: string,
+    value?: string,
+    token_provider?: fn() -> string,
+    basic_provider?: fn() -> AdapterBasicCredential,
+    value_provider?: fn() -> string,
+    host_configured?: bool,
+  }
+
+  /** Extra HTTP headers supplied by the host. */
+  pub type AdapterHeaders = dict<string, string>
+
+  pub type AdapterClient = {
+    base_url: string,
+    credentials: dict<string, AdapterCredential>,
+    extra_headers: AdapterHeaders,
+  }
+
+  /** Host-owned runtime configuration; secret values never enter the static catalog. */
+  pub type AdapterRuntimeConfig = {
+    base_url: string,
+    credentials: dict<string, AdapterCredential>,
+    extra_headers: AdapterHeaders,
+  }
+
   {{ for alias in response_aliases }}
   {{ alias.source }}
   {{ end }}
@@ -1163,6 +1237,7 @@ const _MODULE_TEMPLATE = """
    * This registry is the single source for MCP, CLI, and static catalog adapters.
    */
   pub fn {{ adapter_tools_decl }} {
+    validate_client(client)
     let tools = tool_registry({{ registry_info }})
     {{ for op in adapter_operations }}{{ if op.adapter_expose }}tools = tool_define(
       tools,
@@ -1198,16 +1273,56 @@ const _MODULE_TEMPLATE = """
     {{ new_client_return }}
   }
 
-  fn _no_auth_headers(client: dict) -> dict {
-    let hs: dict = {"Content-Type": "application/json"}
+  /** Read the generated portable environment projection. */
+  pub fn adapter_environment_config(env: HarnessEnv) -> AdapterRuntimeConfig {
+    let credentials: dict<string, AdapterCredential> = {}
+    {{ for scheme in environment_schemes }}{{ scheme.read_lines }}
+    {{ end }}const configured_base_url = env.get("{{ base_url_environment }}")
+    const base_url = if configured_base_url != nil && configured_base_url != "" {
+      configured_base_url
+    } else {
+      "{{ default_base_url }}"
+    }
+    return {base_url: base_url, credentials: credentials, extra_headers: {}}
+  }
+
+  /** Construct the one registry projected by CLI, MCP, and static schema commands. */
+  pub fn adapter_registry(
+    harness: {clock: HarnessClock, net: HarnessNet},
+    config: AdapterRuntimeConfig,
+  ) -> ToolRegistry {
+    const client = new_client(config.base_url, config.credentials, config.extra_headers)
+    return adapter_tools({{ adapter_authority }}, client)
+  }
+
+  /** Validate runtime configuration before publishing any generated tool. */
+  pub fn validate_client(client: AdapterClient) -> nil {
+    if client.base_url.trim() == "" {
+      throw "harn-openapi.generated: base URL configuration is required"
+    }
+    {{ for op in published_operations }}_validate_{{ op.fn_name }}_client(client)
+    {{ end }}return nil
+  }
+
+  {{ for op in published_operations }}fn _validate_{{ op.fn_name }}_client(client: AdapterClient) -> nil {
+    if !{{ op.security_available_call }}(client) {
+      throw "{{ op.security_error }}"
+    }
+    return nil
+  }
+
+  {{ end }}
+
+  fn _no_auth_headers(client: AdapterClient) -> AdapterHeaders {
+    let hs: AdapterHeaders = {"Content-Type": "application/json"}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
     return hs
   }
 
-  fn _merge_header_dicts(header_sets: list) -> dict {
-    let out = {}
+  fn _merge_header_dicts(header_sets: list<AdapterHeaders>) -> AdapterHeaders {
+    let out: AdapterHeaders = {}
     for hs in header_sets {
       for entry in hs {
         out = {...out, [entry.key]: entry.value}
@@ -1216,7 +1331,7 @@ const _MODULE_TEMPLATE = """
     return out
   }
 
-  fn _with_extra_headers(headers: dict, client: dict) -> dict {
+  fn _with_extra_headers(headers: AdapterHeaders, client: AdapterClient) -> AdapterHeaders {
     let hs = headers
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
@@ -1224,7 +1339,7 @@ const _MODULE_TEMPLATE = """
     return hs
   }
 
-  fn _append_cookie_header(headers: dict, name: string, value: any) -> dict {
+  fn _append_cookie_header(headers: AdapterHeaders, name: string, value: any) -> AdapterHeaders {
     if value == nil {
       return headers
     }
@@ -1237,7 +1352,7 @@ const _MODULE_TEMPLATE = """
   }
 
   /** Build a token-provider hook backed by the active connector SecretProvider. */
-  pub fn token_from_secret(secrets: HarnessSecrets, secret_id: string) {
+  pub fn token_from_secret(secrets: HarnessSecrets, secret_id: string) -> fn() -> string {
     return fn() {
       let value = secrets.read(secret_id)
       if value == nil {
@@ -1248,12 +1363,8 @@ const _MODULE_TEMPLATE = """
   }
 
   /** Build an api-key-provider hook backed by the active connector SecretProvider. */
-  pub fn api_key_from_secret(secrets: HarnessSecrets, secret_ids: dict) {
-    return fn(scheme_name) {
-      let secret_id = secret_ids.get(scheme_name)
-      if secret_id == nil {
-        return ""
-      }
+  pub fn api_key_from_secret(secrets: HarnessSecrets, secret_id: string) -> fn() -> string {
+    return fn() {
       let value = secrets.read(secret_id)
       if value == nil {
         return ""
@@ -1262,32 +1373,57 @@ const _MODULE_TEMPLATE = """
     }
   }
 
-  fn _client_token(client: dict) -> string {
-    let provider = client.get("token_provider")
+  fn _client_credential(client: AdapterClient, scheme_name: string) -> dict {
+    return client.credentials.get(scheme_name) ?? {}
+  }
+
+  fn _credential_available(client: AdapterClient, scheme_name: string, kind: string) -> bool {
+    const credential = _client_credential(client, scheme_name)
+    if kind == "bearer" {
+      return credential.get("token_provider") != nil
+        || to_string(credential.get("token") ?? "") != ""
+    }
+    if starts_with(kind, "api_key_") {
+      return credential.get("value_provider") != nil
+        || to_string(credential.get("value") ?? "") != ""
+    }
+    if kind == "basic" {
+      return credential.get("basic_provider") != nil
+        || (to_string(credential.get("username") ?? "") != ""
+          && to_string(credential.get("password") ?? "") != "")
+    }
+    if kind == "mutual_tls" {
+      return credential.get("host_configured") == true
+    }
+    return false
+  }
+
+  fn _client_token(client: AdapterClient, scheme_name: string) -> string {
+    const credential = _client_credential(client, scheme_name)
+    let provider = credential.get("token_provider")
     if provider != nil {
       return to_string(provider())
     }
-    return to_string(client.get("token") ?? "")
+    return to_string(credential.get("token") ?? "")
   }
 
-  fn _client_api_key(client: dict, scheme_name: string) -> string {
-    let provider = client.get("api_key_provider")
+  fn _client_api_key(client: AdapterClient, scheme_name: string) -> string {
+    const credential = _client_credential(client, scheme_name)
+    let provider = credential.get("value_provider")
     if provider != nil {
-      return to_string(provider(scheme_name))
+      return to_string(provider())
     }
-    return to_string((client.get("api_keys") ?? {}).get(scheme_name) ?? "")
+    return to_string(credential.get("value") ?? "")
   }
 
-  fn _client_basic(client: dict) -> dict {
-    let provider = client.get("basic_provider")
+  fn _client_basic(client: AdapterClient, scheme_name: string) -> dict {
+    const credential = _client_credential(client, scheme_name)
+    let provider = credential.get("basic_provider")
     if provider != nil {
-      let provided = provider()
-      if type_of(provided) == "dict" {
-        return {user: provided.get("user") ?? "", password: provided.get("password") ?? ""}
-      }
-      return {user: "", password: ""}
+      const provided = provider()
+      return {user: provided.username, password: provided.password}
     }
-    return {user: client.get("basic_user") ?? "", password: client.get("basic_password") ?? ""}
+    return {user: credential.get("username") ?? "", password: credential.get("password") ?? ""}
   }
 
   {{ for helper in auth_helpers }}
@@ -1450,9 +1586,13 @@ const _MODULE_TEMPLATE = """
   }
 
   {{ for op in operations }}
-  {{ op.doc_comment }}{{ if op.security_note }}
-  // {{ op.security_note }}{{ end }}
+  {{ op.security_available_helper }}
+
+  {{ op.security_helper }}
+
+  {{ op.doc_comment }}
   {{ op.fn_decl }} {
+    const operation_auth = {{ op.security_call }}(client)
     let path_bindings = {{ op.path_bindings }}
     let path = _interpolate("{{ op.path }}", path_bindings)
     {{ if op.has_query }}let query_bindings = {{ op.query_bindings }}
@@ -1468,6 +1608,21 @@ const _MODULE_TEMPLATE = """
   {{ end }}
   """
 
+const _ENTRYPOINT_TEMPLATE = """
+  import {
+    adapter_environment_config,
+    adapter_registry,
+  } from "{{ module_import }}"
+
+  pipeline main(harness: Harness) {
+    const registry = adapter_registry(
+      {clock: harness.clock, net: harness.net},
+      adapter_environment_config(harness.env),
+    )
+    harness.tools.mcp_tools(registry)
+  }
+  """
+
 /** Emit a Harn SDK module as source code. */
 pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const module_name = options.get("module_name") ?? "generated_sdk"
@@ -1476,37 +1631,32 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const header_overrides = options.get("header_overrides") ?? {}
   const transport = _transport_kind(options.get("transport") ?? "connector_policy")
   const schemes = doc.get("security_schemes") ?? {}
-  const doc_security = doc.get("security") ?? []
   const ops_raw = _operations(doc)
-  const adapters = _adapter_operations(doc, options)
-  // First pass (security): resolve each op's security choice so we can
-  // collect the set of schemes actually referenced. An explicit
-  // `security: []` at either the operation or document level means
-  // "no auth" and must NOT pull in a scheme.
+  const schema_graph = prepare_adapter_schema_graph(
+    doc.openapi,
+    (doc.components ?? {}).get("schemas") ?? {},
+  )
+  const adapters = _adapter_operations(doc, schema_graph, options)
+  const environment_prefix = options.get("environment_prefix")
+    ?? _default_environment_prefix(module_name)
+  const security_plan = adapter_security_plan(doc, environment_prefix)
+  const environment_schemes = _entrypoint_environment_bindings(security_plan)
   let used_schemes = []
-  for op in ops_raw {
-    const choice = _resolve_security(op.security, doc_security)
-    for scheme_name in choice.scheme_names {
-      if !used_schemes.contains(scheme_name) {
-        used_schemes = used_schemes + [scheme_name]
-      }
-    }
+  for entry in security_plan.schemes {
+    used_schemes = used_schemes + [entry.key]
   }
-  // Derive which client fields are needed from the used schemes.
-  const client_fields = _derive_client_fields(used_schemes, schemes)
-  const new_client_decl = _render_new_client_decl(client_fields, default_base_url, header_overrides)
-  const helper_names = _allocate_auth_helper_names(used_schemes, schemes)
+  const new_client_decl = _render_new_client_decl(default_base_url, header_overrides)
+  const helper_names = _allocate_auth_helper_names(used_schemes, security_plan.schemes)
   // Emit per-scheme header/query helpers.
   let auth_helpers = []
   for scheme_name in used_schemes {
-    const def = schemes.get(scheme_name)
-    if def != nil {
+    const scheme = security_plan.schemes.get(scheme_name)
+    if scheme != nil {
       auth_helpers = auth_helpers
         + [
           {
             body: _render_auth_helper(
-              scheme_name,
-              def,
+              scheme,
               helper_names.headers.get(scheme_name),
               helper_names.queries.get(scheme_name),
             ),
@@ -1532,19 +1682,23 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     const op = entry.value
     const adapter = adapters[entry.index]
     const ret = op_return_types[entry.index]
-    const choice = _resolve_security(op.security, doc_security)
+    const choice = security_plan.operations.get(op.operation_id)
+    if choice == nil {
+      throw "harn-openapi.codegen_module: security plan lost operation '" + op.operation_id + "'"
+    }
     const model = _build_op_model(
       doc,
       op,
       seen_names,
       choice,
-      schemes,
+      security_plan.schemes,
       ret,
       helper_names,
       header_overrides,
       transport,
       module_name,
       adapter,
+      schema_graph,
     )
     seen_names = seen_names + [model.fn_name] + model.body_variant_fn_names
     ops = ops + [model]
@@ -1567,6 +1721,12 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const registry_info = filter_nil(
     {name: module_name, version: doc.info.version, description: doc.info.description},
   )
+  let published_operations = []
+  for op in ops {
+    if op.adapter_expose {
+      published_operations = published_operations + [op]
+    }
+  }
   const bindings = {
     doc_title: (doc.get("info") ?? {}).get("title") ?? module_name,
     openapi_version: doc.openapi,
@@ -1574,21 +1734,28 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     client_name: client_name,
     default_base_url: default_base_url,
     new_client_decl: new_client_decl,
-    new_client_return: _render_new_client_return(client_fields),
-    client_fields: client_fields,
+    new_client_return: _render_new_client_return(),
     has_connector_imports: connector_imports != "",
     connector_imports: connector_imports,
     auth_helpers: auth_helpers,
+    environment_schemes: environment_schemes,
+    base_url_environment: _escape_string(security_plan.base_url_environment),
+    adapter_authority: if transport == "connector_policy" {
+      "{clock: harness.clock, net: harness.net}"
+    } else {
+      "harness.net"
+    },
     operations: ops,
+    published_operations: published_operations,
     adapter_operations: ops,
     adapter_tools_decl: _render_fn_decl_suffix(
       "adapter_tools",
-      [adapter_authority_decl, "client: dict"],
+      [adapter_authority_decl, "client: AdapterClient"],
       "ToolRegistry",
     ),
     adapter_catalog_decl: _render_fn_decl_suffix(
       "adapter_catalog",
-      [adapter_authority_decl, "client: dict"],
+      [adapter_authority_decl, "client: AdapterClient"],
       "ToolCatalog",
     ),
     adapter_tools_call: "adapter_tools(" + adapter_authority_name + ", client)",
@@ -1603,6 +1770,114 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   return _normalize_generated_source(fs.render_template(_MODULE_TEMPLATE, bindings), module_name)
 }
 
+fn _render_entrypoint_environment_read(scheme: AdapterSecuritySchemePlan, ident: string) -> string {
+  if scheme.kind == "bearer" {
+    const variable = ident + "_token"
+    return "const "
+      + variable
+      + " = env.get(\""
+      + _escape_string(scheme.environment.token)
+      + "\")\n"
+      + "  if "
+      + variable
+      + " != nil && "
+      + variable
+      + " != \"\" {\n"
+      + "    credentials = {...credentials, "
+      + _harn_dict_entry(scheme.name, "{token: " + variable + "}")
+      + "}\n"
+      + "  }"
+  }
+  if scheme.kind == "basic" {
+    const username = ident + "_username"
+    const password = ident + "_password"
+    return "const "
+      + username
+      + " = env.get(\""
+      + _escape_string(scheme.environment.username)
+      + "\")\n"
+      + "  const "
+      + password
+      + " = env.get(\""
+      + _escape_string(scheme.environment.password)
+      + "\")\n"
+      + "  if "
+      + username
+      + " != nil && "
+      + username
+      + " != \"\"\n"
+      + "    && "
+      + password
+      + " != nil\n"
+      + "    && "
+      + password
+      + " != \"\" {\n"
+      + "    credentials = {\n"
+      + "      ...credentials,\n"
+      + "      "
+      + _harn_dict_key(scheme.name)
+      + ": {\n"
+      + "        username: "
+      + username
+      + ",\n"
+      + "        password: "
+      + password
+      + ",\n"
+      + "      },\n"
+      + "    }\n"
+      + "  }"
+  }
+  if starts_with(scheme.kind, "api_key_") {
+    const variable = ident + "_value"
+    return "const "
+      + variable
+      + " = env.get(\""
+      + _escape_string(scheme.environment.value)
+      + "\")\n"
+      + "  if "
+      + variable
+      + " != nil && "
+      + variable
+      + " != \"\" {\n"
+      + "    credentials = {...credentials, "
+      + _harn_dict_entry(scheme.name, "{value: " + variable + "}")
+      + "}\n"
+      + "  }"
+  }
+  return ""
+}
+
+fn _entrypoint_environment_bindings(plan: AdapterSecurityPlan) -> list {
+  let schemes = []
+  let taken_idents = []
+  for entry in plan.schemes {
+    const ident = _unique_fn_name("credential_" + _sanitize_ident(entry.key), taken_idents)
+    taken_idents = taken_idents + [ident]
+    const read_lines = _render_entrypoint_environment_read(entry.value, ident)
+    if read_lines != "" {
+      schemes = schemes + [{read_lines: read_lines}]
+    }
+  }
+  return schemes
+}
+
+/** Emit one executable registry entrypoint shared by CLI and MCP hosts. */
+pub fn codegen_entrypoint(
+  fs: HarnessFs,
+  doc: OpenApiDoc,
+  options: AdapterEntrypointOptions,
+) -> string {
+  if options.module_import.trim() == "" {
+    throw "harn-openapi.codegen_entrypoint: module_import must be a non-empty package export"
+  }
+  const _ = adapter_security_plan(doc, options.environment_prefix)
+  const bindings = {module_import: _escape_string(options.module_import)}
+  return _normalize_generated_source(
+    fs.render_template(_ENTRYPOINT_TEMPLATE, bindings),
+    "adapter_entrypoint",
+  )
+}
+
 /** Emit a harn.toml manifest for a generated SDK package. */
 pub fn codegen_harn_toml(options: dict) -> string {
   const package_name = options.get("package_name") ?? options.get("module_name") ?? "generated-sdk"
@@ -1610,6 +1885,7 @@ pub fn codegen_harn_toml(options: dict) -> string {
   const description = options.get("description") ?? "Generated Harn SDK package."
   const default_export = options.get("default_export") ?? "src/lib.harn"
   const types_export = options.get("types_export")
+  const entrypoint_export = options.get("entrypoint_export")
   const dependencies = options.get("dependencies") ?? {}
   let out = "[package]\n"
   out = out + "name = \"" + _escape_toml_string(package_name) + "\"\n"
@@ -1620,73 +1896,14 @@ pub fn codegen_harn_toml(options: dict) -> string {
   if types_export != nil {
     out = out + "types = \"" + _escape_toml_string(types_export) + "\"\n"
   }
+  if entrypoint_export != nil {
+    out = out + "entrypoint = \"" + _escape_toml_string(entrypoint_export) + "\"\n"
+  }
   out = out + "\n[dependencies]\n"
   for entry in dependencies {
     out = out + _render_manifest_dependency(entry.key, entry.value)
   }
   return out
-}
-
-/**
- * Resolve which security requirement applies to a given operation.
- *
- * Returns a dict with:
- *   scheme_name:   string | nil  — first selected scheme, nil means "no auth"
- *   scheme_names:  list<string>  — every scheme in the selected AND requirement
- *   alternatives:  list<string>  — alternate requirement sets we dropped
- *   explicit_none: bool          — true when the spec said `security: []`
- */
-fn _resolve_security(op_security: any, doc_security: any) {
-  // operation.security wins even when it's an empty list (means "no auth").
-  const reqs = if op_security != nil {
-    op_security
-  } else {
-    doc_security
-  }
-  if type_of(reqs) != "list" || len(reqs) == 0 {
-    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
-  }
-  const first = reqs[0]
-  if type_of(first) != "dict" {
-    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
-  }
-  // The first requirement object is an AND: every scheme key in it applies.
-  let picked_names = []
-  let picked = nil
-  for entry in first {
-    if picked == nil {
-      picked = entry.key
-    }
-    if !picked_names.contains(entry.key) {
-      picked_names = picked_names + [entry.key]
-    }
-  }
-  if picked == nil {
-    return {scheme_name: nil, scheme_names: [], alternatives: [], explicit_none: true}
-  }
-  let alternatives = []
-  let i = 1
-  while i < len(reqs) {
-    const alt = reqs[i]
-    if type_of(alt) == "dict" {
-      let alt_names = []
-      for entry in alt {
-        if !picked_names.contains(entry.key) && !alt_names.contains(entry.key) {
-          alt_names = alt_names + [entry.key]
-        }
-      }
-      if len(alt_names) > 0 {
-        alternatives = alternatives + [join(alt_names, "+")]
-      }
-    }
-    i = i + 1
-  }
-  return {
-    scheme_name: picked,
-    scheme_names: picked_names,
-    alternatives: alternatives,
-    explicit_none: false,
-  }
 }
 
 fn _allocate_auth_helper_names(used_schemes: any, schemes: any) {
@@ -1698,8 +1915,8 @@ fn _allocate_auth_helper_names(used_schemes: any, schemes: any) {
     const header_name = _unique_fn_name(header_base, taken)
     taken = taken + [header_name]
     header_names = {...header_names, [scheme_name]: header_name}
-    const def = schemes.get(scheme_name)
-    if def != nil && _scheme_kind(def) == "apiKey-query" {
+    const scheme = schemes.get(scheme_name)
+    if scheme != nil && scheme.kind == "api_key_query" {
       const query_base = "_query_" + _sanitize_ident(scheme_name) + "_dict"
       const query_name = _unique_fn_name(query_base, taken)
       taken = taken + [query_name]
@@ -1707,41 +1924,6 @@ fn _allocate_auth_helper_names(used_schemes: any, schemes: any) {
     }
   }
   return {headers: header_names, queries: query_names}
-}
-
-/** Which client-struct fields are needed given the schemes actually used? */
-fn _derive_client_fields(used_schemes: any, schemes: any) {
-  let want_token = false
-  let want_basic = false
-  let want_api_keys = false
-  for name in used_schemes {
-    const def = schemes.get(name)
-    if def != nil {
-      const kind = _scheme_kind(def)
-      if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
-        want_token = true
-      } else if kind == "basic" {
-        want_basic = true
-      } else if kind == "apiKey-header" || kind == "apiKey-query" || kind == "apiKey-cookie" {
-        want_api_keys = true
-      }
-    }
-  }
-  let fields = []
-  if want_token {
-    fields = fields + [{name: "token", kind: "string", default: "\"\""}]
-    fields = fields + [{name: "token_provider", kind: "dynamic", default: "nil"}]
-  }
-  if want_basic {
-    fields = fields + [{name: "basic_user", kind: "string", default: "\"\""}]
-    fields = fields + [{name: "basic_password", kind: "string", default: "\"\""}]
-    fields = fields + [{name: "basic_provider", kind: "dynamic", default: "nil"}]
-  }
-  if want_api_keys {
-    fields = fields + [{name: "api_keys", kind: "dict", default: "{}"}]
-    fields = fields + [{name: "api_key_provider", kind: "dynamic", default: "nil"}]
-  }
-  return fields
 }
 
 /**
@@ -1788,27 +1970,17 @@ fn _scheme_kind(def: any) {
   return "unknown"
 }
 
-fn _render_new_client_decl(fields: any, default_base_url: any, header_overrides: any) {
-  let parts = ["base_url: string = \"" + _escape_string(default_base_url) + "\""]
-  for f in fields {
-    if f.kind == "string" {
-      parts = parts + [f.name + ": string = " + f.default]
-    } else if f.kind == "dict" {
-      parts = parts + [f.name + ": dict = " + f.default]
-    } else {
-      parts = parts + [f.name + ": any = " + f.default]
-    }
-  }
-  parts = parts + ["extra_headers: dict = " + _render_dict_literal(header_overrides)]
-  return _render_fn_decl_suffix("new_client", parts, "dict")
+fn _render_new_client_decl(default_base_url: any, header_overrides: any) {
+  const parts = [
+    "base_url: string = \"" + _escape_string(default_base_url) + "\"",
+    "credentials: dict<string, AdapterCredential> = {}",
+    "extra_headers: AdapterHeaders = " + _render_dict_literal(header_overrides),
+  ]
+  return _render_fn_decl_suffix("new_client", parts, "AdapterClient")
 }
 
-fn _render_new_client_return(fields: any) {
-  let parts = ["base_url: base_url"]
-  for field in fields {
-    parts = parts + [field.name + ": " + field.name]
-  }
-  parts = parts + ["extra_headers: extra_headers"]
+fn _render_new_client_return() {
+  const parts = ["base_url: base_url", "credentials: credentials", "extra_headers: extra_headers"]
   const inline = "{" + join(parts, ", ") + "}"
   if len("  return " + inline) <= 100 {
     return "return " + inline
@@ -1863,11 +2035,19 @@ fn _transport_kind(value: any) {
     + "' (expected 'raw' or 'connector_policy')"
 }
 
-fn _render_auth_helper(scheme_name: any, def: any, fn_name: any, query_fn_name: any) {
-  const kind = _scheme_kind(def)
-  if kind == "bearer" || kind == "oauth2" || kind == "openIdConnect" {
-    return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  const token = _client_token(client)\n"
+fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
+  const scheme_name = scheme.name
+  const kind = scheme.kind
+  if kind == "bearer" {
+    return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
+      + "  const token = _client_token(client, \""
+      + _escape_string(scheme_name)
+      + "\")\n"
+      + "  if token == \"\" {\n"
+      + "    throw \"harn-openapi.generated: security scheme '"
+      + _escape_string(scheme_name)
+      + "' produced no credential\"\n"
+      + "  }\n"
       + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
@@ -1878,58 +2058,69 @@ fn _render_auth_helper(scheme_name: any, def: any, fn_name: any, query_fn_name: 
       + "}"
   }
   if kind == "basic" {
-    return "fn " + fn_name + "(client: dict) -> dict {\n"
-      + "  const basic = _client_basic(client)\n"
+    return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
+      + "  const basic = _client_basic(client, \""
+      + _escape_string(scheme_name)
+      + "\")\n"
+      + "  if basic.get(\"user\") == \"\" || basic.get(\"password\") == \"\" {\n"
+      + "    throw \"harn-openapi.generated: security scheme '"
+      + _escape_string(scheme_name)
+      + "' requires both username and password\"\n"
+      + "  }\n"
       + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  if basic.get(\"user\") != \"\" || basic.get(\"password\") != \"\" {\n"
-      + "    const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
-      + "    hs = {...hs, Authorization: \"Basic \" + encoded}\n"
-      + "  }\n"
+      + "  const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
+      + "  hs = {...hs, Authorization: \"Basic \" + encoded}\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
-  if kind == "apiKey-header" {
-    const header_name = def.get("name") ?? scheme_name
-    return "fn " + fn_name + "(client: dict) -> dict {\n"
+  if kind == "api_key_header" {
+    const header_name = scheme.parameter_name
+    return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
       + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
+      + "  if api_key == \"\" {\n"
+      + "    throw \"harn-openapi.generated: security scheme '"
+      + _escape_string(scheme_name)
+      + "' produced no credential\"\n"
+      + "  }\n"
       + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  if api_key != \"\" {\n"
-      + "    hs = {...hs, "
+      + "  hs = {...hs, "
       + _harn_dict_entry(header_name, "api_key")
       + "}\n"
-      + "  }\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
-  if kind == "apiKey-cookie" {
-    const cookie_name = def.get("name") ?? scheme_name
-    return "fn " + fn_name + "(client: dict) -> dict {\n"
+  if kind == "api_key_cookie" {
+    const cookie_name = scheme.parameter_name
+    return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
       + "  const api_key = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
+      + "  if api_key == \"\" {\n"
+      + "    throw \"harn-openapi.generated: security scheme '"
+      + _escape_string(scheme_name)
+      + "' produced no credential\"\n"
+      + "  }\n"
       + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
-      + "  if api_key != \"\" {\n"
-      + "    hs = _append_cookie_header(hs, \""
+      + "  hs = _append_cookie_header(hs, \""
       + _escape_string(cookie_name)
       + "\", api_key)\n"
-      + "  }\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}"
   }
-  if kind == "apiKey-query" {
+  if kind == "api_key_query" {
     // Headers helper adds nothing beyond Content-Type; a parallel
     // _query_<scheme>_dict helper contributes the auth parameter dict
     // which is spread into each operation's query bindings.
-    const query_name = def.get("name") ?? scheme_name
-    return "fn " + fn_name + "(client: dict) -> dict {\n"
+    const query_name = scheme.parameter_name
+    return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
       + "  let hs: dict = "
       + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
       + "\n"
@@ -1938,26 +2129,21 @@ fn _render_auth_helper(scheme_name: any, def: any, fn_name: any, query_fn_name: 
       + "\n"
       + "fn "
       + query_fn_name
-      + "(client: dict) -> dict {\n"
+      + "(client: AdapterClient) -> dict {\n"
       + "  const v = _client_api_key(client, \""
       + _escape_string(scheme_name)
       + "\")\n"
       + "  if v == \"\" {\n"
-      + "    return {}\n"
+      + "    throw \"harn-openapi.generated: security scheme '"
+      + _escape_string(scheme_name)
+      + "' produced no credential\"\n"
       + "  }\n"
       + "  return {"
       + _harn_dict_entry(query_name, "v")
       + "}\n"
       + "}"
   }
-  // mutualTLS and unknown kinds fall back to no-auth behavior with a note.
-  return "// NOTE: security scheme '" + _escape_string(scheme_name) + "' (kind='" + kind
-    + "') is not supported by this codegen. Operations that reference it\n"
-    + "// will fall back to _no_auth_headers. File an issue upstream if you need\n"
-    + "// first-class support.\n"
-    + "fn "
-    + fn_name
-    + "(client: dict) -> dict {\n"
+  return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
     + "  return _no_auth_headers(client)\n"
     + "}"
 }
@@ -1968,6 +2154,15 @@ fn _default_server_url(doc: any) {
     return ""
   }
   return servers[0].get("url") ?? ""
+}
+
+fn _default_environment_prefix(module_name: string) -> string {
+  const stem =
+    regex_replace("^_+|_+$", "", regex_replace("[^A-Za-z0-9]+", "_", module_name)).upper()
+  if stem == "" {
+    throw "harn-openapi.codegen_module: module_name must produce a portable environment prefix"
+  }
+  return "HARN_" + stem
 }
 
 fn _operation_param_models(params: any) {
@@ -2149,40 +2344,23 @@ fn _adapter_execution(op: any, extension: any) {
   return {taskSupport: task_support}
 }
 
-fn _adapter_annotations(op: any, extension: any) -> dict {
-  const method = op.method.upper()
-  const read_only = ["GET", "HEAD", "OPTIONS"].contains(method)
-  let annotations: dict = {
-    readOnlyHint: read_only,
-    destructiveHint: !read_only,
-    idempotentHint: ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"].contains(method),
-    openWorldHint: true,
+fn _adapter_annotation_defaults(doc: OpenApiDoc) -> AdapterAnnotationDefaults {
+  const root = doc.get("x_harn") ?? {}
+  if type_of(root) != "dict" {
+    throw "harn-openapi.codegen_module: top-level x-harn must be an object"
   }
-  for entry in extension.get("annotations") ?? {} {
-    if !["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].contains(entry.key) {
-      throw "harn-openapi.codegen_module: unknown x-harn.annotations field '" + entry.key
-        + "' on '"
-        + op.operation_id
-        + "'"
+  for entry in root {
+    if entry.key != "annotationDefaults" {
+      throw "harn-openapi.codegen_module: unknown top-level x-harn field '" + entry.key + "'"
     }
-    if type_of(entry.value) != "bool" {
-      throw "harn-openapi.codegen_module: x-harn.annotations." + entry.key + " on '"
-        + op.operation_id
-        + "' must be a bool"
-    }
-    annotations = {...annotations, [entry.key]: entry.value}
   }
-  if annotations.readOnlyHint && annotations.destructiveHint {
-    throw "harn-openapi.codegen_module: x-harn.annotations on '" + op.operation_id
-      + "' cannot be both read-only and destructive"
-  }
-  return annotations
+  return normalize_adapter_annotation_defaults(root.get("annotationDefaults"))
 }
 
 fn _adapter_policy(op: any) -> dict {
-  const method = op.method.upper()
+  const semantics = adapter_http_semantics(op.method)
   return {
-    kind: if ["GET", "HEAD", "OPTIONS"].contains(method) {
+    kind: if semantics.safe {
       "fetch"
     } else {
       "execute"
@@ -2191,7 +2369,7 @@ fn _adapter_policy(op: any) -> dict {
   }
 }
 
-fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
+fn _adapter_parameter_schema(doc: any, parameter: any) -> AdapterJsonSchema {
   const raw = parameter.get("schema")
   if raw == nil {
     return {}
@@ -2199,7 +2377,26 @@ fn _adapter_parameter_schema(doc: any, parameter: any) -> dict {
   return _schema(doc, raw)
 }
 
-fn _adapter_input_schema(doc: any, op: any, header_overrides: any) -> dict {
+fn _adapter_closed_schema(openapi_version: string, schema: any, graph: PreparedAdapterSchemaGraph) {
+  const closed = close_adapter_schema(openapi_version, schema, graph)
+  // Harn and MCP tool contracts require schema objects. JSON Schema's boolean
+  // forms have exact object equivalents, so project them at this boundary while
+  // retaining booleans in the reusable OpenAPI graph and typed SDK lowering.
+  if closed == true {
+    return {}
+  }
+  if closed == false {
+    return {not: {}}
+  }
+  return closed
+}
+
+fn _adapter_input_schema(
+  doc: any,
+  op: any,
+  header_overrides: any,
+  graph: PreparedAdapterSchemaGraph,
+) {
   const params = _operation_param_models(op.parameters)
   let properties = {}
   let required = []
@@ -2209,7 +2406,9 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any) -> dict {
     }
     let property_schema = _adapter_parameter_schema(doc, parameter)
     const description = parameter.get("description")
-    if description != nil && property_schema.get("description") == nil {
+    if description != nil
+      && type_of(property_schema) == "dict"
+      && property_schema.get("description") == nil {
       property_schema = {...property_schema, description: description}
     }
     properties = {...properties, [parameter.ident]: property_schema}
@@ -2234,22 +2433,29 @@ fn _adapter_input_schema(doc: any, op: any, header_overrides: any) -> dict {
   return {type: "object", properties: properties, required: required, additionalProperties: false}
 }
 
-fn _adapter_output_schema(doc: any, op: any) {
+fn _adapter_output_schema(doc: any, op: any, graph: PreparedAdapterSchemaGraph) {
   const picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" || picked.schema == nil {
     return nil
   }
-  return _schema(doc, picked.schema)
+  return _adapter_closed_schema(doc.openapi, _schema(doc, picked.schema), graph)
 }
 
-fn _adapter_tool_parameters(input_schema: any) -> dict {
+fn _adapter_tool_parameters(
+  input_schema: any,
+  openapi_version: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> dict {
   const properties = input_schema.get("properties") ?? {}
   const required = input_schema.get("required") ?? []
   let parameters = {}
   for entry in properties {
     parameters = {
       ...parameters,
-      [entry.key]: {schema: entry.value, required: required.contains(entry.key)},
+      [entry.key]: {
+        schema: _adapter_closed_schema(openapi_version, entry.value, graph),
+        required: required.contains(entry.key),
+      },
     }
   }
   return parameters
@@ -2298,11 +2504,19 @@ fn _adapter_cli(op: any, extension: any, name: any) -> dict {
   return {...explicit, command: command_path}
 }
 
-fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: any) {
+fn _adapter_operation(
+  doc: any,
+  op: any,
+  function_name: any,
+  header_overrides: any,
+  annotation_defaults: AdapterAnnotationDefaults,
+  schema_graph: PreparedAdapterSchemaGraph,
+) {
   const extension = _x_harn_config(op)
   const name = extension.get("name") ?? function_name
-  const title = if extension.get("title") != nil {
-    extension.title
+  const extension_title = extension.get("title")
+  const title = if type_of(extension_title) == "string" && extension_title != "" {
+    extension_title
   } else if op.summary != "" {
     op.summary
   } else {
@@ -2319,9 +2533,14 @@ fn _adapter_operation(doc: any, op: any, function_name: any, header_overrides: a
     name: name,
     title: title,
     description: description,
-    input_schema: _adapter_input_schema(doc, op, header_overrides),
-    output_schema: _adapter_output_schema(doc, op),
-    annotations: _adapter_annotations(op, extension),
+    input_schema: _adapter_input_schema(doc, op, header_overrides, schema_graph),
+    output_schema: _adapter_output_schema(doc, op, schema_graph),
+    annotations: normalize_adapter_annotations(
+      op.method,
+      op.operation_id,
+      extension.get("annotations"),
+      annotation_defaults,
+    ),
     icons: _adapter_icons(op, extension),
     execution: _adapter_execution(op, extension),
     governance: extension.governance,
@@ -2348,7 +2567,7 @@ fn _signature_model(
   cookie_params: any,
   header_overrides: any,
 ) {
-  let required_sig = ["client: dict"]
+  let required_sig = ["client: AdapterClient"]
   let optional_sig = []
   let required_arg_names = []
   let optional_arg_names = []
@@ -2428,6 +2647,7 @@ fn _build_op_model(
   transport: any,
   module_name: any,
   adapter: any,
+  schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
   const param_model = _operation_param_models(op.parameters)
@@ -2457,18 +2677,18 @@ fn _build_op_model(
   const body_required = sig.body_required
   const path_bindings_parts = sig.path_bindings_parts
   const query_bindings_parts = sig.query_bindings_parts
-  const scheme_names = choice.scheme_names
-  const headers_call = _render_headers_call(scheme_names, helper_names)
-  let query_scheme_names = []
-  for scheme_name in scheme_names {
-    const def = schemes.get(scheme_name)
-    if def != nil && _scheme_kind(def) == "apiKey-query" {
-      query_scheme_names = query_scheme_names + [scheme_name]
-    }
-  }
-  const has_query_params = len(query_params) > 0
-  const has_apikey_query = len(query_scheme_names) > 0
-  const has_query = has_query_params || has_apikey_query
+  const security_helper = _render_operation_security_helper(
+    fn_name,
+    op.operation_id,
+    choice,
+    schemes,
+    helper_names,
+  )
+  const security_available_helper = _render_operation_security_available_helper(
+    fn_name,
+    choice,
+    schemes,
+  )
   const doc_lines = split(op.summary, "\n")
   const first = if len(doc_lines) > 0 {
     doc_lines[0]
@@ -2481,14 +2701,6 @@ fn _build_op_model(
     first
   }
   const doc_comment = "/** " + _escape_comment(safe_summary) + " */"
-  // If the op had multiple security requirement alternatives, preserve the
-  // discarded names in a note so a human can retarget manually.
-  const alts = choice.alternatives
-  const security_note = if type_of(alts) == "list" && len(alts) > 0 {
-    "NOTE: security alternatives also accepted: " + join(alts, ", ")
-  } else {
-    ""
-  }
   const body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
   const body_prepare = _render_body_prepare(fn_name, body_variants)
   const idempotency_key_param = _idempotency_key_param(header_params)
@@ -2498,8 +2710,8 @@ fn _build_op_model(
     path: op.path,
     fn_decl: _render_pub_fn_decl(fn_name, sig_parts, ret.type_name),
     path_bindings: path_bindings_parts_render(path_bindings_parts),
-    query_bindings: _render_query_bindings(query_bindings_parts, query_scheme_names, helper_names),
-    has_query: has_query,
+    query_bindings: _render_binding_dict(query_bindings_parts + ["...operation_auth.query"]),
+    has_query: true,
     has_body: has_body,
     body_prepare: body_prepare,
     header_cookie_lines: _render_header_cookie_lines(header_params, cookie_params),
@@ -2517,8 +2729,12 @@ fn _build_op_model(
     body_variant_constructors: _render_body_variant_constructors(body_variants),
     body_variant_fn_names: _body_variant_fn_names(body_variants),
     doc_comment: doc_comment,
-    headers_call: headers_call,
-    security_note: security_note,
+    headers_call: "operation_auth.headers",
+    security_available_helper: security_available_helper,
+    security_available_call: "_security_available_" + fn_name,
+    security_error: _escape_string(_operation_security_error(op.operation_id, choice)),
+    security_helper: security_helper,
+    security_call: "_security_" + fn_name,
     return_type: ret.type_name,
     returns_nil: ret.returns_nil,
     return_lines: _render_return_lines(fn_name, ret, transport),
@@ -2528,7 +2744,7 @@ fn _build_op_model(
     adapter_title: _escape_string(adapter.title),
     adapter_description: _escape_string(adapter.description),
     adapter_parameters: _render_json_parse_expr_at(
-      _adapter_tool_parameters(adapter.input_schema),
+      _adapter_tool_parameters(adapter.input_schema, doc.openapi, schema_graph),
       "      ",
       67,
     ),
@@ -2620,7 +2836,7 @@ fn _render_error_lines(fn_name: any, transport: any) {
       + "    throw resp\n"
       + "  }"
   }
-  return "if resp.status >= 400 {\n"
+  return "if resp.status < 200 || resp.status >= 300 {\n"
     + "    "
     + _render_error_throw(fn_name)
     + "\n"
@@ -2649,6 +2865,114 @@ fn _render_headers_call(scheme_names: any, helper_names: any) {
     return calls[0]
   }
   return "_merge_header_dicts([" + join(calls, ", ") + "])"
+}
+
+fn _render_operation_security_helper(
+  function_name: string,
+  operation_id: string,
+  operation: any,
+  schemes: any,
+  helper_names: any,
+) -> string {
+  const helper_name = "_security_" + function_name
+  let out = "fn " + helper_name + "(client: AdapterClient) -> dict {\n"
+  let unconditionally_satisfied = false
+  for alternative in operation.alternatives {
+    if len(alternative.schemes) == 0 {
+      out = out + "  return {headers: _no_auth_headers(client), query: {}}\n"
+      unconditionally_satisfied = true
+      break
+    } else {
+      let query_schemes = []
+      for scheme_name in alternative.schemes {
+        const scheme = schemes.get(scheme_name)
+        if scheme.kind == "api_key_query" {
+          query_schemes = query_schemes + [scheme_name]
+        }
+      }
+      out = out + "  if " + _render_security_condition(alternative, schemes) + " {\n"
+      out = out
+        + _render_security_result(
+          _render_headers_call(alternative.schemes, helper_names),
+          _render_query_bindings([], query_schemes, helper_names),
+        )
+      out = out + "  }\n"
+    }
+  }
+  if unconditionally_satisfied {
+    return out + "}"
+  }
+  out = out + "  throw \"" + _escape_string(_operation_security_error(operation_id, operation))
+    + "\"\n"
+  return out + "}"
+}
+
+fn _render_security_result(headers: string, query: string) -> string {
+  const inline = "{headers: " + headers + ", query: " + query + "}"
+  if 11 + len(inline) <= 100 {
+    return "    return " + inline + "\n"
+  }
+  return "    return {\n"
+    + "      headers: "
+    + headers
+    + ",\n"
+    + "      query: "
+    + query
+    + ",\n"
+    + "    }\n"
+}
+
+fn _operation_security_error(operation_id: string, operation: any) -> string {
+  let rendered_alternatives = []
+  for alternative in operation.alternatives {
+    rendered_alternatives = rendered_alternatives
+      + [
+        if len(alternative.schemes) == 0 {
+          "anonymous"
+        } else {
+          join(alternative.schemes, "+")
+        },
+      ]
+  }
+  return "harn-openapi.generated: operation '" + operation_id + "' requires one of ["
+    + join(rendered_alternatives, ", ")
+    + "]"
+}
+
+fn _render_security_condition(alternative: any, schemes: any) -> string {
+  if len(alternative.schemes) == 0 {
+    return "true"
+  }
+  let checks = []
+  for scheme_name in alternative.schemes {
+    const scheme = schemes.get(scheme_name)
+    checks = checks
+      + [
+        "_credential_available(client, \""
+          + _escape_string(scheme_name)
+          + "\", \""
+          + scheme.kind
+          + "\")",
+      ]
+  }
+  return join(checks, "\n    && ")
+}
+
+fn _render_operation_security_available_helper(
+  function_name: string,
+  operation: any,
+  schemes: any,
+) -> string {
+  const helper_name = "_security_available_" + function_name
+  let out = "fn " + helper_name + "(client: AdapterClient) -> bool {\n"
+  for alternative in operation.alternatives {
+    if len(alternative.schemes) == 0 {
+      return out + "  return true\n}"
+    }
+    out = out + "  if " + _render_security_condition(alternative, schemes) + " {\n"
+    out = out + "    return true\n  }\n"
+  }
+  return out + "  return false\n}"
 }
 
 fn _render_query_bindings(parts: any, query_scheme_names: any, helper_names: any) {
@@ -2730,14 +3054,7 @@ fn _connector_imports(return_types: any, transport: string) -> string {
 }
 
 fn _connector_retry_attempts(method: any, idempotency_key_param: any) {
-  const normalized = to_string(method ?? "").lower()
-  if ["get", "head", "put", "delete", "options"].contains(normalized) {
-    return 3
-  }
-  if (normalized == "post" || normalized == "patch") && idempotency_key_param != nil {
-    return 3
-  }
-  return 1
+  return adapter_retry_attempts(to_string(method ?? ""), idempotency_key_param != nil)
 }
 
 fn _render_connector_options(
@@ -2881,6 +3198,11 @@ fn _render_return_lines(fn_name: any, ret: any, transport: any) {
   if ret.response_mode == "opaque" {
     return "return {status: resp.status, headers: resp.headers, body: resp.body}"
   }
+  if ret.response_mode == "json_never" {
+    return "throw \""
+      + fn_name
+      + ": received a response forbidden by its JSON Schema\""
+  }
   if transport == "connector_policy" {
     if ret.response_mode == "json_any" {
       return "return resp.json"
@@ -2965,6 +3287,9 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
     return []
   }
   const root = _schema(doc, raw_schema)
+  if type_of(root) != "dict" {
+    return []
+  }
   const variant_nodes = if root.get("oneOf") != nil {
     root.get("oneOf")
   } else {
@@ -3352,11 +3677,27 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
       cache: cache,
     }
   }
-  const ref = schema_raw.get("$ref")
+  const ref = if type_of(schema_raw) == "dict" {
+    schema_raw.get("$ref")
+  } else {
+    nil
+  }
   // For classification we always work off the fully-resolved (allOf-
   // merged) schema, since components often declare the interesting
   // shape inside `allOf: [...]`.
   const full = _schema(doc, schema_raw)
+  if full == false {
+    return {
+      info: {type_name: "never", returns_nil: false, alias_name: nil, response_mode: "json_never"},
+      cache: cache,
+    }
+  }
+  if full == true {
+    return {
+      info: {type_name: "any", returns_nil: false, alias_name: nil, response_mode: "json_any"},
+      cache: cache,
+    }
+  }
   const shape = _schema_shape_kind(full)
   if shape == "nil" {
     return {
@@ -3541,7 +3882,7 @@ fn _is_success_code(code: any) {
   if type_of(code) != "string" {
     return false
   }
-  return starts_with(code, "2")
+  return adapter_http_response_key(code)?.success_only ?? false
 }
 
 fn _schema_shape_kind(sch: any) {
@@ -3883,10 +4224,14 @@ fn _escape_comment(s: any) {
 }
 
 fn _harn_dict_entry(key: any, value_expr: any) {
+  return _harn_dict_key(key) + ": " + value_expr
+}
+
+fn _harn_dict_key(key: any) {
   if _is_plain_identifier(key) {
-    return key + ": " + value_expr
+    return key
   }
-  return "\"" + _escape_string(key) + "\": " + value_expr
+  return "\"" + _escape_string(key) + "\""
 }
 
 fn _is_plain_identifier(s: any) {

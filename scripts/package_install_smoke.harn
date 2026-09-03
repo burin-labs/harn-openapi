@@ -7,10 +7,6 @@
  * to test a published ref such as
  * `github.com/burin-labs/harn-openapi@v0.2.0-rc.1`.
  */
-import { ToolCatalog } from "std/tools"
-
-type PingResult = {ok: bool}
-
 fn _repo_root(fs: HarnessFs) -> string {
   return fs.source_dir() + "/.."
 }
@@ -89,43 +85,53 @@ version = "0.0.0"
     """
 import {
   AdapterJsonSchema,
-  AdapterSchemaGraph,
+  PreparedAdapterSchemaGraph,
+  AdapterSecurityPlan,
+  adapter_security_plan,
+  codegen_entrypoint,
   codegen_module,
   normalize_adapter_schema,
-  normalize_adapter_schema_graph,
+  prepare_adapter_schema_graph,
   operations,
   parse,
 } from "harn-openapi/default"
 
 pipeline default(harness: Harness) {
-  const raw = "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Package Smoke\",\"version\":\"0.0.0\"},\"paths\":{\"/ping\":{\"get\":{\"operationId\":\"ping\",\"x-harn\":{\"cli\":{\"command\":[\"ping\"]}},\"responses\":{\"200\":{\"description\":\"ok\",\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"],\"additionalProperties\":false}}}}}}}}}"
+  const raw = json_stringify({
+    openapi: "3.1.0",
+    info: {title: "Package Smoke", version: "0.0.0"},
+    servers: [{url: "https://api.example.test"}],
+    paths: {
+      "/ping": {
+        get: {
+          operationId: "ping",
+          security: [],
+          responses: {"200": {description: "ok"}},
+        },
+      },
+      "/write": {
+        post: {
+          operationId: "write",
+          security: [{bearerAuth: [], headerKey: []}, {basicAuth: []}],
+          responses: {"204": {description: "done"}},
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {type: "http", scheme: "bearer"},
+        headerKey: {type: "apiKey", in: "header", name: "X-Package-Key"},
+        basicAuth: {type: "http", scheme: "basic"},
+      },
+    },
+  },)
   const doc: OpenApiDoc = parse(raw)
   const ops: list<Operation> = operations(doc)
-  require len(ops) == 1, "package import should parse and walk one operation"
+  require len(ops) == 2, "package import should parse and walk both operations"
   const op = ops[0]
   require op != nil, "package import should expose the parsed operation"
   require op.operation_id == "ping", "operation id should round-trip"
-  const root = harness.fs.source_dir()
-  harness.fs.write_text(
-    root + "/generated.harn",
-    codegen_module(harness.fs, doc, {
-      module_name: "package_smoke",
-      client_name: "PackageSmokeClient",
-      default_base_url: "https://api.example.test",
-    }),
-  )
-  harness.fs.write_text(
-    root + "/server.harn",
-    "import { adapter_tools, new_client } from \"./generated\"\n\n"
-      + "fn main(harness: Harness) {\n"
-      + "  harness.testing.http_mock_clear()\n"
-      + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/ping\", {status: 200, body: \"{\\\"ok\\\":true}\"})\n"
-      + "  const client = new_client()\n"
-      + "  harness.tools.mcp_tools(adapter_tools({clock: harness.clock, net: harness.net}, client))\n"
-      + "}\n",
-  )
-
-  const graph: AdapterSchemaGraph = normalize_adapter_schema_graph(
+  const graph: PreparedAdapterSchemaGraph = prepare_adapter_schema_graph(
     doc.openapi,
     {Ping: {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"]}},
     doc.jsonSchemaDialect,
@@ -142,8 +148,32 @@ pipeline default(harness: Harness) {
     doc.jsonSchemaDialect,
   )
   require len(graph.schemas) == 1, "package import should retain one component"
+  require graph.work.component_count == 1,
+    "package import should expose the prepared graph work receipt"
   require input.properties.ping.get("$ref") == "#/components/schemas/Ping",
     "package import should preserve a component reference"
+  const security: AdapterSecurityPlan = adapter_security_plan(doc, "PACKAGE_SMOKE")
+  require len(security.operations.write.alternatives) == 2,
+    "package import should retain security alternatives"
+  const first_alternative = security.operations.write.alternatives[0]
+  require first_alternative != nil, "package import should expose the first alternative"
+  require len(first_alternative.schemes) == 2,
+    "package import should retain AND requirements"
+  harness.fs.write_text(
+    "./generated.harn",
+    codegen_module(harness.fs, doc, {
+      module_name: "package_smoke",
+      client_name: "PackageSmokeClient",
+      environment_prefix: "PACKAGE_SMOKE",
+    },),
+  )
+  harness.fs.write_text(
+    "./main.harn",
+    codegen_entrypoint(harness.fs, doc, {
+      module_import: "./generated",
+      environment_prefix: "PACKAGE_SMOKE",
+    },),
+  )
   harness.stdio.println("package_install_smoke consumer: ok")
 }
 """,
@@ -160,33 +190,12 @@ pipeline default(harness: Harness) {
     "run consumer smoke",
     _sh_quote(harn_bin) + " run smoke.harn",
   )
-  const server_path = smoke_root + "/server.harn"
-  const schema = harness.process.run({program: harn_bin, args: ["tool", "schema", server_path]})
-  require schema.success, "installed package schema projection failed: " + schema.stderr
-  const catalog: ToolCatalog = schema_expect(json_parse(schema.stdout), ToolCatalog)
-  require catalog.schema_version == "harn-tools/1.0", "catalog version should be stable"
-  require len(catalog.tools) == 1, "installed package should generate one tool"
-  const generated_tool = catalog.tools[0]
-  require generated_tool != nil, "installed package should generate a tool entry"
-  require generated_tool.name == "ping", "installed package should retain the operation"
-  require generated_tool.title == "ping", "operation id should backfill an absent summary"
-  const help = harness.process.run(
-    {program: harn_bin, args: ["tool", "run", server_path, "ping", "--help"]},
+  _run(
+    {stdio: harness.stdio, process: harness.process},
+    smoke_root,
+    "check generated package files",
+    _sh_quote(harn_bin) + " check generated.harn main.harn",
   )
-  require help.success, "installed package CLI help failed: " + help.stderr
-  const called = harness.process.run(
-    {program: harn_bin, args: ["tool", "run", server_path, "ping", "--harn-output", "json"]},
-  )
-  require called.success, "installed package CLI dispatch failed: " + called.stderr
-  const called_output: PingResult = schema_expect(json_parse(called.stdout), PingResult)
-  require called_output.ok == true, "installed package CLI should return typed JSON"
-  const mcp = harness.tools.mcp_connect(harn_bin, ["serve", "mcp", server_path])
-  const tools = harness.tools.mcp_list_tools(mcp)
-  require tools.count == 1, "installed package MCP server should expose one tool"
-  require tools[0].name == "ping", "CLI and MCP should expose the same tool"
-  const mcp_output: PingResult = schema_expect(harness.tools.mcp_call(mcp, "ping"), PingResult)
-  require mcp_output.ok == true, "installed package MCP dispatch should return typed JSON"
-  harness.tools.mcp_disconnect(mcp)
   harness.fs.delete(smoke_root)
   harness.stdio.println("package_install_smoke: ok")
 }

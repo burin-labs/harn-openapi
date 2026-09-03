@@ -27,11 +27,11 @@ pipeline test_main(harness: Harness) {
     },
   )
   assert(contains(src, "pub fn token_from_secret"), "generated token provider helper")
-  assert(contains(src, "token_provider: any = nil"), "generated client token-provider hook")
-  assert(contains(src, "api_key_provider: any = nil"), "generated client api-key-provider hook")
+  assert(contains(src, "credentials: dict<string, AdapterCredential>"), "typed credential map")
+  assert(contains(src, "token_provider?: fn() -> string"), "generated token provider hook")
   assert(
     contains(src, "_client_api_key(client, \"queryKey\")"),
-    "generated apiKey helpers use provider hook",
+    "generated apiKey helpers use a typed provider hook",
   )
   assert(contains(src, "pub fn pagination_plans() -> list"), "generated pagination metadata")
   assert(contains(src, "pub fn rate_limit_metadata() -> list"), "generated rate-limit metadata")

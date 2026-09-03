@@ -131,10 +131,12 @@ pipeline test_main(harness: Harness) {
   const src_a = codegen_module(harness.fs, parse(doc_a), {module_name: "a", client_name: "A"})
   require_contains(harness.stdio, src_a, "_headers_bearer_auth(client)", "A/dispatch")
   require_contains(harness.stdio, src_a, "Authorization: \"Bearer \" + token", "A/bearer-helper")
-  require_contains(harness.stdio, src_a, "token: string = \"\"", "A/client-has-token")
-  require_contains(harness.stdio, src_a, "token_provider: any = nil", "A/client-has-token-provider")
-  require_not_contains(harness.stdio, src_a, "basic_user: string", "A/no-basic-field")
-  require_not_contains(harness.stdio, src_a, "api_keys: dict", "A/no-apikey-field")
+  require_contains(
+    harness.stdio,
+    src_a,
+    "credentials: dict<string, AdapterCredential> = {}",
+    "A/client-has-scheme-credentials",
+  )
   check_generates(harness, src_a, "A")
   run_generated(
     harness,
@@ -144,7 +146,9 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", "bearer-token")
+      let client = new_client("https://api.example.com", {
+        bearerAuth: {token_provider: fn() { return "bearer-token" }},
+      })
       get_self({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer bearer-token")
@@ -153,15 +157,22 @@ pipeline test_main(harness: Harness) {
   run_generated(
     harness,
     src_a,
-    "A-empty-token",
+    "A-missing-token",
     "new_client, get_self",
     """
       harness.testing.http_mock_clear()
-      harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       let client = new_client("https://api.example.com")
-      get_self({clock: harness.clock, net: harness.net}, client)
-      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
-      assert_eq(call.headers.get("authorization"), nil)
+      const rejected = try {
+        get_self({clock: harness.clock, net: harness.net}, client)
+        nil
+      } catch (error) {
+        error
+      }
+      assert_eq(
+        to_string(rejected),
+        "harn-openapi.generated: operation 'get-self' requires one of [bearerAuth]",
+      )
+      assert_eq(len(harness.testing.http_mock_calls({include_sensitive: true})), 0)
     """,
   )
   // ------------------------------------------------------------------
@@ -179,28 +190,12 @@ pipeline test_main(harness: Harness) {
   require_contains(harness.stdio, src_b, "let hs: dict =", "B/dynamic-header-map-is-typed")
   // Authed op still uses the bearer helper.
   require_contains(harness.stdio, src_b, "_headers_bearer_auth(client)", "B/authed-dispatch")
-  // The no-auth op must route through _no_auth_headers.
-  const b_lines = split(src_b, "\n")
-  let b_public_line = ""
-  let b_collect_public = false
-  for line in b_lines {
-    if contains(line, "pub fn public_ping") {
-      b_collect_public = true
-    }
-    if b_collect_public {
-      if contains(line, "let request_headers = ") {
-        b_public_line = line
-        b_collect_public = false
-      }
-    }
-  }
-  assert(
-    contains(b_public_line, "_no_auth_headers(client)"),
-    "B/public-op-must-use-no-auth-headers: got \"${b_public_line}\"",
-  )
-  assert(
-    !contains(b_public_line, "_headers_bearer_auth"),
-    "B/public-op-must-NOT-use-bearer-helper: got \"${b_public_line}\"",
+  // The no-auth selector must return before inspecting any credentials.
+  require_contains(
+    harness.stdio,
+    src_b,
+    "fn _security_public_ping(client: AdapterClient) -> dict {\n  return {headers: _no_auth_headers(client), query: {}}\n}",
+    "B/public-op-must-use-no-auth-headers",
   )
   check_generates(harness, src_b, "B")
   run_generated(
@@ -212,7 +207,7 @@ pipeline test_main(harness: Harness) {
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
       harness.testing.http_mock("GET", "https://api.example.com/health", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", "bearer-token")
+      let client = new_client("https://api.example.com", {bearerAuth: {token: "bearer-token"}})
       get_self({clock: harness.clock, net: harness.net}, client)
       public_ping({clock: harness.clock, net: harness.net}, client)
       let calls = harness.testing.http_mock_calls({include_sensitive: true})
@@ -232,14 +227,8 @@ pipeline test_main(harness: Harness) {
   require_contains(harness.stdio, src_c, "_headers_basic_auth(client)", "C/dispatch")
   require_contains(harness.stdio, src_c, "base64_encode", "C/basic-uses-base64")
   require_contains(harness.stdio, src_c, "Authorization: \"Basic \" + encoded", "C/basic-header")
-  require_contains(harness.stdio, src_c, "basic_user: string = \"\"", "C/client-has-basic-user")
-  require_contains(
-    harness.stdio,
-    src_c,
-    "basic_password: string = \"\"",
-    "C/client-has-basic-password",
-  )
-  require_not_contains(harness.stdio, src_c, "token: string", "C/no-token-field")
+  require_contains(harness.stdio, src_c, "username?: string", "C/client-has-basic-user")
+  require_contains(harness.stdio, src_c, "password?: string", "C/client-has-basic-password")
   check_generates(harness, src_c, "C")
   run_generated(
     harness,
@@ -249,7 +238,7 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("POST", "https://api.example.com/login", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", "basic-user", "basic-pass")
+      let client = new_client("https://api.example.com", {basicAuth: {username: "basic-user", password: "basic-pass"}})
       login({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
@@ -272,14 +261,13 @@ pipeline test_main(harness: Harness) {
     "_client_api_key(client, \"xApiKey\")",
     "D/reads-from-api-keys",
   )
-  require_contains(harness.stdio, src_d, "api_keys: dict = {}", "D/client-has-api-keys")
+  require_contains(harness.stdio, src_d, "value?: string", "D/client-has-api-key-value")
   require_contains(
     harness.stdio,
     src_d,
-    "api_key_provider: any = nil",
-    "D/client-has-api-key-provider",
+    "value_provider?: fn() -> string",
+    "D/client-has-provider-hook",
   )
-  require_not_contains(harness.stdio, src_d, "token: string", "D/no-token-field")
   check_generates(harness, src_d, "D")
   run_generated(
     harness,
@@ -289,7 +277,7 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", {xApiKey: "header-key"})
+      let client = new_client("https://api.example.com", {xApiKey: {value: "header-key"}})
       get_thing({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers["x-api-key"], "header-key")
@@ -317,7 +305,7 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/things?api_key=query-key", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", {qKey: "query-key"})
+      let client = new_client("https://api.example.com", {qKey: {value: "query-key"}})
       list_things({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.url, "https://api.example.com/things?api_key=query-key")
@@ -354,7 +342,7 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/me", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", {sessId: "cookie key;admin=true"})
+      let client = new_client("https://api.example.com", {sessId: {value: "cookie key;admin=true"}})
       me({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.cookie, "sid=cookie%20key%3Badmin%3Dtrue")
@@ -376,8 +364,8 @@ pipeline test_main(harness: Harness) {
   const src_g = codegen_module(harness.fs, parse(doc_g), {module_name: "g", client_name: "G"})
   require_contains(harness.stdio, src_g, "_headers_oauth2_auth(client)", "G/dispatch")
   require_contains(harness.stdio, src_g, "Authorization: \"Bearer \" + token", "G/bearer-shape")
-  require_contains(harness.stdio, src_g, "token: string = \"\"", "G/client-has-token")
-  require_contains(harness.stdio, src_g, "token_provider: any = nil", "G/client-has-token-provider")
+  require_contains(harness.stdio, src_g, "token?: string", "G/client-has-token")
+  require_contains(harness.stdio, src_g, "token_provider?: fn() -> string", "G/client-has-provider")
   check_generates(harness, src_g, "G")
   run_generated(
     harness,
@@ -387,7 +375,7 @@ pipeline test_main(harness: Harness) {
     """
       harness.testing.http_mock_clear()
       harness.testing.http_mock("GET", "https://api.example.com/thing", {status: 200, body: "{}", headers: {}})
-      let client = new_client("https://api.example.com", "oauth-token")
+      let client = new_client("https://api.example.com", {oauth2Auth: {token: "oauth-token"}})
       do_thing({clock: harness.clock, net: harness.net}, client)
       let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
       assert_eq(call.headers.authorization, "Bearer oauth-token")
@@ -414,43 +402,30 @@ pipeline test_main(harness: Harness) {
   // Bearer helper defined and used by the default op.
   require_contains(harness.stdio, src_h, "fn _headers_bearer_auth(", "H/bearer-helper-defined")
   require_contains(harness.stdio, src_h, "fn _headers_basic_auth(", "H/basic-helper-defined")
-  // Check per-op dispatch line by line.
-  const h_lines = split(src_h, "\n")
-  let h_get_me_line = ""
-  let h_token_line = ""
-  let h_collect_me = false
-  let h_collect_token = false
-  for line in h_lines {
-    if contains(line, "pub fn get_me") {
-      h_collect_me = true
-    }
-    if contains(line, "pub fn create_a_token") {
-      h_collect_token = true
-    }
-    if h_collect_me && contains(line, "let request_headers = ") {
-      h_get_me_line = line
-      h_collect_me = false
-    }
-    if h_collect_token && contains(line, "let request_headers = ") {
-      h_token_line = line
-      h_collect_token = false
-    }
-  }
-  assert(
-    contains(h_get_me_line, "_headers_bearer_auth(client)"),
-    "H/get_me-uses-bearer: got \"${h_get_me_line}\"",
-  )
-  assert(
-    contains(h_token_line, "_headers_basic_auth(client)"),
-    "H/create_a_token-uses-basic: got \"${h_token_line}\"",
-  )
-  assert(
-    !contains(h_token_line, "_headers_bearer_auth"),
-    "H/create_a_token-must-NOT-use-bearer: got \"${h_token_line}\"",
-  )
   check_generates(harness, src_h, "H")
+  run_generated(
+    harness,
+    src_h,
+    "H",
+    "new_client, get_me, create_a_token",
+    """
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/v1/users/me", {status: 200, body: "{}", headers: {}})
+      harness.testing.http_mock("POST", "https://api.example.com/v1/oauth/token", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {
+        bearerAuth: {token: "bearer-token"},
+        basicAuth: {username: "basic-user", password: "basic-pass"},
+      })
+      get_me({clock: harness.clock, net: harness.net}, client)
+      create_a_token({clock: harness.clock, net: harness.net}, client)
+      let calls = harness.testing.http_mock_calls({include_sensitive: true})
+      assert_eq(calls[0].headers.authorization, "Bearer bearer-token")
+      assert_eq(calls[1].headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
+    """,
+  )
   // ------------------------------------------------------------------
-  // Scenario I: mutualTLS — v0 fallback to no-auth with a NOTE comment.
+  // Scenario I: mutualTLS remains host-owned and requires an explicit
+  // readiness signal instead of silently degrading to no authentication.
   // ------------------------------------------------------------------
   const doc_i = build_doc(
     {mtls: {type: "mutualTLS"}},
@@ -461,20 +436,37 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src_i,
-    "// NOTE: security scheme 'mtls'",
-    "I/fallback-note-emitted",
-  )
-  require_contains(harness.stdio, src_i, "_headers_mtls(client)", "I/fallback-helper-called")
-  require_contains(
-    harness.stdio,
-    src_i,
-    "return _no_auth_headers(client)",
-    "I/falls-back-to-no-auth",
+    "_credential_available(client, \"mtls\", \"mutual_tls\")",
+    "I/host-readiness-is-required",
   )
   check_generates(harness, src_i, "I")
+  run_generated(
+    harness,
+    src_i,
+    "I",
+    "new_client, mtls_op",
+    """
+      harness.testing.http_mock_clear()
+      let missing_client = new_client("https://api.example.com")
+      const missing = try {
+        mtls_op({clock: harness.clock, net: harness.net}, missing_client)
+        nil
+      } catch (error) {
+        error
+      }
+      assert_eq(
+        to_string(missing),
+        "harn-openapi.generated: operation 'mtls-op' requires one of [mtls]",
+      )
+      assert_eq(len(harness.testing.http_mock_calls({include_sensitive: true})), 0)
+      harness.testing.http_mock("GET", "https://api.example.com/secure", {status: 200, body: "{}", headers: {}})
+      let ready_client = new_client("https://api.example.com", {mtls: {host_configured: true}})
+      mtls_op({clock: harness.clock, net: harness.net}, ready_client)
+      assert_eq(len(harness.testing.http_mock_calls({include_sensitive: true})), 1)
+    """,
+  )
   // ------------------------------------------------------------------
-  // Scenario J: multiple security alternatives are preserved as a NOTE,
-  // not a TODO, so generated code can be committed without open TODOs.
+  // Scenario J: multiple security alternatives remain executable OR branches.
   // ------------------------------------------------------------------
   const doc_j = build_doc(
     {bearerAuth: {type: "http", scheme: "bearer"}, basicAuth: {type: "http", scheme: "basic"}},
@@ -482,13 +474,41 @@ pipeline test_main(harness: Harness) {
     [{operation_id: "either-auth", method: "get", path: "/either"}],
   )
   const src_j = codegen_module(harness.fs, parse(doc_j), {module_name: "j", client_name: "J"})
-  require_contains(
-    harness.stdio,
-    src_j,
-    "NOTE: security alternatives also accepted: basicAuth",
-    "J/security-alternative-note",
-  )
+  require_contains(harness.stdio, src_j, "_headers_bearer_auth(client)", "J/bearer-branch")
+  require_contains(harness.stdio, src_j, "_headers_basic_auth(client)", "J/basic-branch")
   require_not_contains(harness.stdio, src_j, "TODO", "J/generated-source-has-no-todos")
   check_generates(harness, src_j, "J")
+  run_generated(
+    harness,
+    src_j,
+    "J-basic",
+    "new_client, either_auth",
+    """
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/either", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {
+        basicAuth: {
+          basic_provider: fn() { return {username: "basic-user", password: "basic-pass"} },
+        },
+      })
+      either_auth({clock: harness.clock, net: harness.net}, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.authorization, "Basic YmFzaWMtdXNlcjpiYXNpYy1wYXNz")
+    """,
+  )
+  run_generated(
+    harness,
+    src_j,
+    "J-bearer",
+    "new_client, either_auth",
+    """
+      harness.testing.http_mock_clear()
+      harness.testing.http_mock("GET", "https://api.example.com/either", {status: 200, body: "{}", headers: {}})
+      let client = new_client("https://api.example.com", {bearerAuth: {token: "bearer-token"}})
+      either_auth({clock: harness.clock, net: harness.net}, client)
+      let call = harness.testing.http_mock_calls({include_sensitive: true})[0]
+      assert_eq(call.headers.authorization, "Bearer bearer-token")
+    """,
+  )
   harness.stdio.println("security_smoke: ok")
 }
