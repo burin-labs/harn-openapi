@@ -23,7 +23,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(len(registry.tools), 2)\n"
     + "  const catalog = adapter_catalog({clock: harness.clock, net: harness.net}, client)\n"
     + "  assert_eq(len(catalog.tools), 2)\n"
-    + "  assert_eq(catalog.schema_version, \"harn-tools/1.0\")\n"
+    + "  assert_eq(catalog.schema_version, \"harn-tools/2.0\")\n"
     + "  assert_eq(catalog.info.name, \"widgets\")\n"
     + "  assert_eq(catalog.info.version, \"2026-08-29\")\n"
     + "  const catalog_widget = named_tool(catalog.tools, \"lookup_widget\")\n"
@@ -106,7 +106,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  const wire_widget = named_tool(wire_tools, \"lookup_widget\")\n"
     + "  require wire_widget != nil, \"raw MCP tools/list must include the widget\"\n"
     + "  assert_eq(wire_widget.icons[0].sizes, [\"any\"])\n"
-    + "  assert_eq(wire_widget.execution.taskSupport, \"optional\")\n" + "}\n"
+    + "  assert_eq(wire_widget.get(\"execution\"), nil)\n" + "}\n"
 }
 
 /**
