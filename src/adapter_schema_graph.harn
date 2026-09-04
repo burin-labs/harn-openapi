@@ -392,7 +392,7 @@ fn direct_component_names(
     }
   }
   for keyword in MAP_SCHEMA_KEYWORDS {
-    for entry in value.get(keyword) ?? {} {
+    for entry in (value.get(keyword) ?? {}) {
       names = direct_component_names(entry.value, names, field + "." + keyword + "." + entry.key)
     }
   }
@@ -439,7 +439,7 @@ fn schema_node_count(value: AdapterJsonSchema) -> int {
     }
   }
   for keyword in MAP_SCHEMA_KEYWORDS {
-    for entry in value.get(keyword) ?? {} {
+    for entry in (value.get(keyword) ?? {}) {
       count = count + schema_node_count(entry.value)
     }
   }
