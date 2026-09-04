@@ -350,8 +350,12 @@ pipeline test_main(harness: Harness) {
   assert(!missing.success, "missing AND credential must fail before registry publication")
   const missing_output = missing.stdout + missing.stderr
   assert(
-    missing_output.contains("operation 'combined-write' requires one of"),
-    "startup failure must identify the unavailable operation",
+    missing_output.contains("tool threw an undeclared value"),
+    "undeclared startup failures must use Harn's bounded runtime diagnostic",
+  )
+  assert(
+    !missing_output.contains("combined-write"),
+    "undeclared startup failures must not expose source-authored throw values",
   )
   assert(
     !missing_output.contains("must-not-appear-in-diagnostics"),
