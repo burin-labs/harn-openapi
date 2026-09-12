@@ -148,7 +148,7 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
   const harn_bin = install_root + "/bin/harn"
   if !harness.fs.exists(harn_bin) {
     _run(
-      {stdio: harness.stdio, process: harness.process},
+      pick(harness, ["stdio", "process"]),
       repo_root,
       "install harn-cli " + version,
       "CARGO_TARGET_DIR="
@@ -189,13 +189,13 @@ fn _verify_version(harness: Harness, repo_root: string, version: string) {
     },
   ]
   for step in steps {
-    _run({stdio: harness.stdio, process: harness.process}, repo_root, step.label, step.command)
+    _run(pick(harness, ["stdio", "process"]), repo_root, step.label, step.command)
   }
 }
 
 pipeline default(harness: Harness) {
   const args = _parse_args(harness)
-  _replace_version_file({stdio: harness.stdio, fs: harness.fs}, args.repo_root, args.version)
+  _replace_version_file(pick(harness, ["stdio", "fs"]), args.repo_root, args.version)
   if args.verify {
     _verify_version(harness, args.repo_root, args.version)
   } else {

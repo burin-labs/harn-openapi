@@ -35,10 +35,7 @@ fn require_not_contains(stdio: HarnessStdio, haystack: string, needle: string, l
 }
 
 fn check_generates(harness: Harness, src: string) -> string {
-  const module_stem = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-connector-policy",
-  )
+  const module_stem = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-connector-policy")
   const module_path = module_stem + ".harn"
   harness.fs.write_text(module_path, src)
   const check_result = harness.process.shell(harn_cmd(harness.env, "check " + module_path))
@@ -62,7 +59,7 @@ fn check_generates(harness: Harness, src: string) -> string {
 
 fn run_generated(harness: Harness, module_stem: string) {
   const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-connector-policy-runtime",
   )
     + ".harn"

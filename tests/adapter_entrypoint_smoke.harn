@@ -137,22 +137,19 @@ fn registry_runner(module_stem: string) -> string {
 pipeline test_main(harness: Harness) {
   const doc = parse(secured_doc())
   const module_stem = scratch_stem(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-entrypoint-module",
   )
   const entrypoint_stem = scratch_stem(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-entrypoint-main",
   )
   const runner_path = scratch_stem(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-entrypoint-runner",
   )
     + ".harn"
-  const site_path = scratch_stem(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-entrypoint-site",
-  )
+  const site_path = scratch_stem(pick(harness, ["fs", "random"]), "harn-openapi-entrypoint-site")
     + ".harn"
   const site_log = site_path + ".log"
   const rpc_call_path = site_path + ".rpc"

@@ -61,7 +61,7 @@ fn require_not_contains(stdio: HarnessStdio, haystack: string, needle: string, l
 
 fn check_generates(harness: Harness, src: string, label: string) {
   const tmp_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-security-smoke-${label}",
   )
     + ".harn"
@@ -86,12 +86,12 @@ fn check_generates(harness: Harness, src: string, label: string) {
 
 fn run_generated(harness: Harness, src: string, label: string, imports: string, body: string) {
   const module_stem = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-security-smoke-${label}",
   )
   const module_path = module_stem + ".harn"
   const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-security-runtime-${label}",
   )
     + ".harn"

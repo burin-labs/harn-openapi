@@ -156,7 +156,7 @@ pipeline test_main(harness: Harness) {
     },
   )
   const module_stem = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-polymorphic-generated",
   )
   const out_path = module_stem + ".harn"
@@ -201,7 +201,7 @@ pipeline test_main(harness: Harness) {
   )
   check_file(harness, out_path, "poly")
   const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-polymorphic-runner",
   )
     + ".harn"

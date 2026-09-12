@@ -410,20 +410,11 @@ pipeline default(harness: Harness) {
       "root annotation defaults must reject "
       + invalid.expected
   }
-  const module_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-adapter-module",
-  )
+  const module_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-adapter-module")
     + ".harn"
-  const server_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-adapter-server",
-  )
+  const server_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-adapter-server")
     + ".harn"
-  const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-adapter-runner",
-  )
+  const runner_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-adapter-runner")
     + ".harn"
   harness.fs.write_text(
     module_path,
@@ -445,20 +436,11 @@ pipeline cli_surface(harness: Harness) {
     harness.fs.source_dir() + "/fixtures/adapter_catalog.openapi.json",
   )
   const doc = parse(raw)
-  const module_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-cli-module",
-  )
+  const module_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-cli-module")
     + ".harn"
-  const server_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-cli-server",
-  )
+  const server_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-cli-server")
     + ".harn"
-  const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
-    "harn-openapi-cli-runner",
-  )
+  const runner_path = scratch_path(pick(harness, ["fs", "random"]), "harn-openapi-cli-runner")
     + ".harn"
   harness.fs.write_text(
     module_path,
