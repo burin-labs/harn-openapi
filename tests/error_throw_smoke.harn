@@ -64,12 +64,12 @@ pipeline test_main(harness: Harness) {
   // Drive the generated function against a mocked 404 and assert the
   // thrown payload's shape.
   const module_stem = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-error-throw-smoke",
   )
   const module_path = module_stem + ".harn"
   const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-error-throw-runtime",
   )
     + ".harn"

@@ -38,7 +38,7 @@ fn require_contains(stdio: HarnessStdio, haystack: string, needle: string, label
 
 fn check_generated(harness: Harness, src: string, label: string) -> string {
   const module_stem = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-regression-" + label,
   )
   const module_path = module_stem + ".harn"
@@ -62,7 +62,7 @@ fn run_generated(
   body: string,
 ) {
   const runner_path = scratch_path(
-    {fs: harness.fs, random: harness.random},
+    pick(harness, ["fs", "random"]),
     "harn-openapi-regression-runner-" + label,
   )
     + ".harn"

@@ -69,13 +69,13 @@ version = "0.0.0"
 """,
   )
   _run(
-    {stdio: harness.stdio, process: harness.process},
+    pick(harness, ["stdio", "process"]),
     smoke_root,
     "add harn-openapi dependency",
     _sh_quote(harn_bin) + " add --alias harn-openapi " + _sh_quote(package_ref),
   )
   _run(
-    {stdio: harness.stdio, process: harness.process},
+    pick(harness, ["stdio", "process"]),
     smoke_root,
     "locked offline install",
     _sh_quote(harn_bin) + " install --locked --offline --json",
@@ -179,19 +179,19 @@ pipeline default(harness: Harness) {
 """,
   )
   _run(
-    {stdio: harness.stdio, process: harness.process},
+    pick(harness, ["stdio", "process"]),
     smoke_root,
     "check consumer smoke",
     _sh_quote(harn_bin) + " check smoke.harn",
   )
   _run(
-    {stdio: harness.stdio, process: harness.process},
+    pick(harness, ["stdio", "process"]),
     smoke_root,
     "run consumer smoke",
     _sh_quote(harn_bin) + " run smoke.harn",
   )
   _run(
-    {stdio: harness.stdio, process: harness.process},
+    pick(harness, ["stdio", "process"]),
     smoke_root,
     "check generated package files",
     _sh_quote(harn_bin) + " check generated.harn main.harn",
