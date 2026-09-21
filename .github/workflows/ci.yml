@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pinned Harn
-        uses: burin-labs/harn/.github/actions/setup-harn@11681af676a5e4dc4200cfee683150cdec26763f
+        uses: burin-labs/harn/.github/actions/setup-harn@f0839221164d965ef33cbe1512075b630993eb5c
       - name: Check fixture staleness
         run: harn run scripts/check_fixture_staleness.harn
       - name: Generate SDK from pinned Notion fixture
