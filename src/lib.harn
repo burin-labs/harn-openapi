@@ -1189,7 +1189,8 @@ fn _cli_commands_conflict(left: list<string>, right: list<string>) -> bool {
 }
 
 const _MODULE_TEMPLATE = """
-  {{ if has_connector_imports }}import { {{ connector_imports }} } from "std/connectors/shared"
+  {{ if has_adapter_handlers }}import { agent_tool_handler_result } from "std/agent/tool_lifecycle"
+  {{ end }}{{ if has_connector_imports }}import { {{ connector_imports }} } from "std/connectors/shared"
   {{ end }}import { ToolCatalog, ToolRegistry } from "std/tools"
 
   /*
@@ -1735,6 +1736,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     default_base_url: default_base_url,
     new_client_decl: new_client_decl,
     new_client_return: _render_new_client_return(),
+    has_adapter_handlers: len(published_operations) > 0,
     has_connector_imports: connector_imports != "",
     connector_imports: connector_imports,
     auth_helpers: auth_helpers,
@@ -2793,18 +2795,18 @@ fn _render_adapter_handler(function_name: any, argument_names: any, transport: a
   for name in argument_names {
     args = args + ["args.get(\"" + _escape_string(name) + "\")"]
   }
+  // Tool dispatch refuses freeform dict returns, so wrap the SDK result in
+  // the typed handler envelope: JSON text for the model, the result as data.
+  const outcome = "        agent_tool_handler_result(json_stringify(result), result)\n      }"
   const inline = function_name + "(" + join(args, ", ") + ")"
-  if len("      handler: { args -> " + inline + " },") <= 100 {
-    return "handler: { args -> " + inline + " }"
+  if 8 + len("const result = " + inline) <= 100 {
+    return "handler: { args ->\n        const result = " + inline + "\n" + outcome
   }
-  if 8 + len(inline) <= 100 {
-    return "handler: { args ->\n        " + inline + "\n      }"
-  }
-  let out = "handler: { args ->\n        " + function_name + "(\n"
+  let out = "handler: { args ->\n        const result = " + function_name + "(\n"
   for arg in args {
     out = out + "          " + arg + ",\n"
   }
-  return out + "        )\n      }"
+  return out + "        )\n" + outcome
 }
 
 /**
