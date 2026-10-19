@@ -877,7 +877,7 @@ fn _oauth_scope_names(def: any) {
       }
     }
   }
-  scopes = scopes.sort()
+  scopes.sort()
   return scopes
 }
 
@@ -2406,12 +2406,13 @@ fn _adapter_input_schema(
     if parameter.get("in") == "header" && header_overrides.get(parameter.name) != nil {
       continue
     }
-    let property_schema = _adapter_parameter_schema(doc, parameter)
+    const parameter_schema = _adapter_parameter_schema(doc, parameter)
+    let property_schema = parameter_schema
     const description = parameter.get("description")
     if description != nil
-      && type_of(property_schema) == "dict"
-      && property_schema.get("description") == nil {
-      property_schema = {...property_schema, description: description}
+      && type_of(parameter_schema) == "dict"
+      && parameter_schema.get("description") == nil {
+      property_schema = {...parameter_schema, description: description}
     }
     properties = {...properties, [parameter.ident]: property_schema}
     if parameter.get("in") == "path" || parameter.get("required") {
@@ -3415,7 +3416,7 @@ fn _variant_constructor_fields(doc: any, resolved: any) {
   for entry in props {
     keys = keys + [entry.key]
   }
-  keys = keys.sort()
+  keys.sort()
   let fields = []
   let taken_idents = []
   for key in keys {
@@ -3997,7 +3998,7 @@ fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
   for entry in props {
     keys = keys + [entry.key]
   }
-  keys = keys.sort()
+  keys.sort()
   let fields = []
   for key in keys {
     const prop_schema = props.get(key)

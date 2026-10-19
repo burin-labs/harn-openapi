@@ -101,8 +101,13 @@ pipeline test_main(harness: Harness) {
     "resolved commentCreated payload schema must expose properties/oneOf/allOf/anyOf/type",
   )
   if has_props {
-    const field_names = resolved.properties?.keys() ?? []
-    harness.stdio.println("commentCreated payload fields: ${len(field_names)}")
+    const properties = resolved.properties
+    const field_count = if type_of(properties) == "dict" {
+      len(properties.keys())
+    } else {
+      0
+    }
+    harness.stdio.println("commentCreated payload fields: ${field_count}")
   }
   harness.stdio.println("webhook_smoke: ok")
 }

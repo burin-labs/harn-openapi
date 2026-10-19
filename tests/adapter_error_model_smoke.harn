@@ -88,7 +88,7 @@ pipeline default() {
     "fallback errors must not publish an arbitrary upstream body"
   require fallback.properties.get("headers") == nil,
     "fallback errors must not publish arbitrary upstream headers"
-  const reversed = prepare_adapter_error_model("get-widget", "GetWidgetError", inputs.reverse())
+  const reversed = prepare_adapter_error_model("get-widget", "GetWidgetError", inputs.reversed())
   require reversed == model, "input map order must not affect generated error contracts"
   const duplicate = captured_error(
     { ->

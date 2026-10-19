@@ -167,7 +167,7 @@ pub fn prepare_adapter_error_model(
   let exact: list<AdapterErrorResponse> = []
   let ranges: list<AdapterErrorResponse> = []
   let fallback: list<AdapterErrorResponse> = []
-  for key in by_key.keys().sort() {
+  for key in by_key.keys().sorted() {
     const response = normalize_response(operation_id, by_key[key]!)
     if response.match_kind == "exact" {
       exact = exact + [response]

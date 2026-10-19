@@ -6,7 +6,7 @@ import { operations, parse, schema } from "../src/lib"
 
 fn _sorted_keys(d: any) {
   const ks = d.keys()
-  return ks.sort()
+  return ks.sorted()
 }
 
 fn _operation_key(op: any) -> string {
@@ -50,6 +50,9 @@ fn _schema_fields(doc: any, name: string) -> list<string> {
     return []
   }
   const resolved = schema(doc, raw)
+  if type_of(resolved) != "dict" {
+    return []
+  }
   const props = resolved.get("properties") ?? {}
   return _sorted_keys(props)
 }
