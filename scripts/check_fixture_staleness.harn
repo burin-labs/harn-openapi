@@ -117,7 +117,7 @@ pipeline default(harness: Harness) {
   }
   if age_days < _FAIL_AFTER_DAYS {
     harness.stdio.println(
-      "::warning title=Notion OpenAPI fixture stale::Pinned fixture is ${age_days} days old; run scripts/refresh_fixtures.harn and review scripts/fixture_diff.harn output.",
+      "::warning title=Notion OpenAPI fixture stale::Pinned fixture is ${age_days} days old; run `harn run --no-sandbox scripts/refresh_fixtures.harn` and review scripts/fixture_diff.harn output.",
     )
     return
   }

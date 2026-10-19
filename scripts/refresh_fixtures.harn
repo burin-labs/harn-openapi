@@ -1,8 +1,12 @@
 // Refresh the pinned Notion OpenAPI fixture and write capture metadata.
 //
-// Run from this checkout:
-//   harn run scripts/refresh_fixtures.harn
+// Run from this checkout. `harn run` denies network by default, so the fetch
+// needs `--no-sandbox`:
+//   harn run --no-sandbox scripts/refresh_fixtures.harn
 const _NOTION_OPENAPI_URL = "https://developers.notion.com/openapi.json"
+
+// The upstream document outgrew the 1 MiB default response cap.
+const _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 const _FIXTURE_REL_PATH = "tests/fixtures/notion.openapi.json"
 
@@ -54,7 +58,11 @@ pipeline default(harness: Harness) {
   harness.stdio.println("fetching ${_NOTION_OPENAPI_URL}")
   const response = harness.net.get(
     _NOTION_OPENAPI_URL,
-    {timeout_ms: 60000, headers: {"User-Agent": "harn-openapi-fixture-refresh"}},
+    {
+      timeout_ms: 60000,
+      max_response_bytes: _MAX_RESPONSE_BYTES,
+      headers: {"User-Agent": "harn-openapi-fixture-refresh"},
+    },
   )
   if !response.ok {
     throw "refresh_fixtures: upstream returned HTTP " + to_string(response.status)

@@ -47,7 +47,7 @@ Refresh the Notion fixture only for deliberate snapshot updates:
 
 ```sh
 cp tests/fixtures/notion.openapi.json /tmp/notion.openapi.old.json
-harn run scripts/refresh_fixtures.harn
+harn run --no-sandbox scripts/refresh_fixtures.harn
 harn run scripts/fixture_diff.harn -- \
   /tmp/notion.openapi.old.json \
   tests/fixtures/notion.openapi.json
