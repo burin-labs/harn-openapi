@@ -332,8 +332,8 @@ pipeline test_main(harness: Harness) {
   assert(call_output.contains("MCP_CALL"), "MCP tools/call invocation must run")
   const call_sections = call_output.split("MCP_CALL")
   assert_eq(len(call_sections), 2, "projection output must retain the CLI/MCP boundary")
-  assert(call_sections[0].contains("public-via-http"), "CLI must reach the shared HTTP route")
-  assert(call_sections[1].contains("public-via-http"), "MCP must reach the shared HTTP route")
+  assert(call_sections[0]!.contains("public-via-http"), "CLI must reach the shared HTTP route")
+  assert(call_sections[1]!.contains("public-via-http"), "MCP must reach the shared HTTP route")
   const missing = harness.process.run(
     {
       program: harn_bin(harness.env),

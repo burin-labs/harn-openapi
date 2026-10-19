@@ -67,7 +67,7 @@ pipeline default(harness: Harness) {
   require graph.work.component_count == 7, "preparation must report every component"
   require graph.work.dependency_edge_count == 3,
     "preparation must count direct dependency edges without transitive duplication"
-  require graph.schemas.Dialect.get("$schema")
+  require graph.schemas.Dialect["$schema"]
     == "https://json-schema.org/draft/2020-12/schema",
     "OpenAPI base dialect should canonicalize to Draft 2020-12"
   const input = normalize_adapter_schema(
@@ -89,12 +89,10 @@ pipeline default(harness: Harness) {
     == "https://example.invalid/instance-data",
     "reference-shaped instance data must stay opaque"
   const closed = close_adapter_schema("3.1.1", input, graph)
-  require len(closed.get("$defs")) == 2,
-    "tool schemas must carry only the transitive component closure"
-  require closed.get("$defs").get("Widget") != nil, "direct component references must be bundled"
-  require closed.get("$defs").get("Widget/Id") != nil,
-    "transitive component references must be bundled"
-  require closed.get("$defs").get("Tree") == nil,
+  require len(closed["$defs"]) == 2, "tool schemas must carry only the transitive component closure"
+  require closed["$defs"].get("Widget") != nil, "direct component references must be bundled"
+  require closed["$defs"].get("Widget/Id") != nil, "transitive component references must be bundled"
+  require closed["$defs"].get("Tree") == nil,
     "unreachable components must not be duplicated into a tool schema"
   require closed.properties.widget.get("$ref") == "#/$defs/Widget",
     "OpenAPI component pointers must project into Draft 2020-12 $defs"
@@ -110,21 +108,21 @@ pipeline default(harness: Harness) {
     },
     graph,
   )
-  require local_defs.get("$defs").get("Widget").get("type") == "integer",
+  require local_defs["$defs"].get("Widget").get("type") == "integer",
     "root-local definitions must not be overwritten"
   require local_defs.properties.local.get("$ref") == "#/$defs/Widget",
     "root-local references must retain their resource scope"
   require local_defs.properties.remote.get("$ref") == "#/$defs/__harn_component_Widget",
     "component collisions must allocate a deterministic definition key"
   const recursive = close_adapter_schema("3.1.1", {"$ref": "#/components/schemas/Tree"}, graph)
-  require recursive.get("$defs").Tree.properties.children.items.get("$ref") == "#/$defs/Tree",
+  require recursive["$defs"].Tree.properties.children.items.get("$ref") == "#/$defs/Tree",
     "component-local recursion must keep pointing at the component root"
   const bare_graph = prepare_adapter_schema_graph(
     "3.1.1",
     {Node: {type: "object", properties: {next: {"$ref": "#"}}}},
   )
   const bare = close_adapter_schema("3.1.1", {"$ref": "#/components/schemas/Node"}, bare_graph)
-  require bare.get("$defs").Node.properties.next.get("$ref") == "#/$defs/Node",
+  require bare["$defs"].Node.properties.next.get("$ref") == "#/$defs/Node",
     "a component-local bare fragment must be rebased to that component"
   const encoded_graph = prepare_adapter_schema_graph("3.1.1", {"Widget Id": {type: "string"}})
   const encoded = close_adapter_schema(
@@ -132,7 +130,7 @@ pipeline default(harness: Harness) {
     {"$ref": "#/components/schemas/Widget%20Id"},
     encoded_graph,
   )
-  require encoded.get("$ref") == "#/$defs/Widget Id",
+  require encoded["$ref"] == "#/$defs/Widget Id",
     "URI-fragment percent encoding must resolve before JSON Pointer decoding"
   const graph_cases = [
     {
