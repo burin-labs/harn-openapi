@@ -1,5 +1,5 @@
 upstream_url = "https://developers.notion.com/openapi.json"
-captured_at = "2026-04-20T12:08:23Z"
+captured_at = "2026-10-19T16:25:01.181Z"
 captured_by = "scripts/refresh_fixtures.harn"
-sha256 = "1acaa25d1e0ceab03e38f1f71deb8b2d63fd83a7d974ce32ed27e1342714af20"
-byte_size = 1019138
+sha256 = "1375bef24e0bcf34dc30d86c798582689dc007bf8e4c6b6a6f74c415846bbd74"
+byte_size = 1331744
