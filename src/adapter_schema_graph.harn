@@ -82,7 +82,7 @@ fn schema_dialect(value: unknown, field: string) -> nil {
     return nil
   }
   if type_of(value) != "string"
-    || ![JSON_SCHEMA_2020_12, OPENAPI_31_BASE_DIALECT].contains(value.trim().trim_end("#")) {
+    || ![JSON_SCHEMA_2020_12, OPENAPI_31_BASE_DIALECT].contains(value.trim()) {
     return reject_nil(
       field,
       "must declare Draft 2020-12 or the OpenAPI 3.1 base dialect when present",
@@ -96,7 +96,7 @@ fn normalized_schema_map(value: unknown, field: string) -> dict<string, AdapterJ
     return reject_schema_map(field, "must be an object of JSON Schemas")
   }
   let out: dict<string, AdapterJsonSchema> = {}
-  for key in value.keys().sort() {
+  for key in value.keys().sorted() {
     out = {...out, [key]: normalize_schema_node(value.get(key), field + "." + key)}
   }
   return out
@@ -420,7 +420,7 @@ fn component_closure(
     }
     index = index + 1
   }
-  return {names: seen.keys().sort(), visits: visits}
+  return {names: seen.keys().sorted(), visits: visits}
 }
 
 fn schema_node_count(value: AdapterJsonSchema) -> int {
@@ -607,7 +607,7 @@ pub fn close_adapter_schema(
   json_schema_dialect: string? = nil,
 ) -> AdapterJsonSchema {
   const normalized = normalize_adapter_schema(openapi_version, value, graph, json_schema_dialect)
-  const direct = direct_component_names(normalized, [], "schema").sort()
+  const direct = direct_component_names(normalized, [], "schema").sorted()
   if type_of(normalized) != "dict" || len(direct) == 0 {
     return normalized
   }
@@ -618,7 +618,7 @@ pub fn close_adapter_schema(
       included = {...included, [dependency]: true}
     }
   }
-  const names = included.keys().sort()
+  const names = included.keys().sorted()
   const local_definitions = normalized.get("$defs") ?? {}
   let used_keys: dict<string, bool> = {}
   for key in local_definitions.keys() {
@@ -631,6 +631,9 @@ pub fn close_adapter_schema(
     component_keys = {...component_keys, [name]: key}
   }
   const root = rewrite_schema_references(normalized, nil, component_keys)
+  if type_of(root) != "dict" {
+    return root
+  }
   let definitions: dict<string, AdapterJsonSchema> = root.get("$defs") ?? {}
   for name in names {
     const key = component_keys.get(name)
@@ -656,7 +659,7 @@ pub fn prepare_adapter_schema_graph(
   }
   let schemas: dict<string, AdapterJsonSchema> = {}
   let nodes = 0
-  for name in raw.keys().sort() {
+  for name in raw.keys().sorted() {
     if name.trim() == "" {
       return reject_graph("components.schemas", "contains an empty component name")
     }
@@ -669,15 +672,15 @@ pub fn prepare_adapter_schema_graph(
   }
   let direct_dependencies: dict<string, list<string>> = {}
   let dependency_edges = 0
-  for name in schemas.keys().sort() {
+  for name in schemas.keys().sorted() {
     const dependencies = direct_component_names(schemas.get(name), [], "components.schemas." + name)
-      .sort()
+      .sorted()
     direct_dependencies = {...direct_dependencies, [name]: dependencies}
     dependency_edges = dependency_edges + len(dependencies)
   }
   let transitive_dependencies: dict<string, list<string>> = {}
   let closure_visits = 0
-  for name in schemas.keys().sort() {
+  for name in schemas.keys().sorted() {
     const closure = component_closure(name, direct_dependencies)
     transitive_dependencies = {...transitive_dependencies, [name]: closure.names}
     closure_visits = closure_visits + closure.visits

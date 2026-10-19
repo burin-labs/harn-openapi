@@ -98,7 +98,7 @@ fn resolve_security_scheme(name: string, schemes: dict, seen: list<string> = [])
       "must target a local '#/components/securitySchemes/<name>' object",
     )
   }
-  return resolve_security_scheme(pointer_token(parts[3]), schemes, seen + [name])
+  return resolve_security_scheme(pointer_token(parts[3]!), schemes, seen + [name])
 }
 
 fn portable_environment_prefix(value: string) -> bool {
@@ -184,7 +184,7 @@ fn normalize_scopes(value: unknown, field: string) -> list<string> {
     }
     scopes = scopes + [scope]
   }
-  return scopes.sort()
+  return scopes.sorted()
 }
 
 fn normalize_alternative(
@@ -215,7 +215,7 @@ fn normalize_alternative(
     names = names + [entry.key]
     scopes = {...scopes, [entry.key]: normalized_scopes}
   }
-  return {schemes: names.sort(), scopes: scopes}
+  return {schemes: names.sorted(), scopes: scopes}
 }
 
 fn normalize_operation(
@@ -303,7 +303,7 @@ pub fn normalize_adapter_security_plan(
     const stem = environment_stem(name)
     stem_counts = {...stem_counts, [stem]: (stem_counts.get(stem) ?? 0) + 1}
   }
-  for name in referenced.sort() {
+  for name in referenced.sorted() {
     const value = resolve_security_scheme(name, raw_schemes)
     const kind = scheme_kind(name, value)
     const base_stem = environment_stem(name)
