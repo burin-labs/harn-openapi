@@ -2575,44 +2575,23 @@ fn _signature_model(
   let required_arg_names = []
   let optional_arg_names = []
   let path_bindings_parts = []
-  for p in path_params {
-    const name = p.get("name")
-    const nm = p.ident
-    required_sig = required_sig + [nm + ": any"]
-    required_arg_names = required_arg_names + [nm]
-    path_bindings_parts = path_bindings_parts + [_harn_dict_entry(name, nm)]
-  }
   let query_bindings_parts = []
-  for p in query_params {
-    const name = p.get("name")
+  for p in path_params + query_params + header_params + cookie_params {
+    const location = p.get("in") ?? "query"
     const nm = p.ident
-    if p.get("required") {
+    const required = location == "path"
+      || (p.get("required") && (location != "header" || header_overrides.get(p.name) == nil))
+    if required {
       required_sig = required_sig + [nm + ": any"]
       required_arg_names = required_arg_names + [nm]
     } else {
       optional_sig = optional_sig + [nm + ": any = nil"]
       optional_arg_names = optional_arg_names + [nm]
     }
-    query_bindings_parts = query_bindings_parts + [_harn_dict_entry(name, nm)]
-  }
-  for p in header_params {
-    const nm = p.ident
-    if p.get("required") && header_overrides.get(p.name) == nil {
-      required_sig = required_sig + [nm + ": any"]
-      required_arg_names = required_arg_names + [nm]
-    } else {
-      optional_sig = optional_sig + [nm + ": any = nil"]
-      optional_arg_names = optional_arg_names + [nm]
-    }
-  }
-  for p in cookie_params {
-    const nm = p.ident
-    if p.get("required") {
-      required_sig = required_sig + [nm + ": any"]
-      required_arg_names = required_arg_names + [nm]
-    } else {
-      optional_sig = optional_sig + [nm + ": any = nil"]
-      optional_arg_names = optional_arg_names + [nm]
+    if location == "path" {
+      path_bindings_parts = path_bindings_parts + [_harn_dict_entry(p.name, nm)]
+    } else if location == "query" {
+      query_bindings_parts = query_bindings_parts + [_harn_dict_entry(p.name, nm)]
     }
   }
   const has_body = op.request_body != nil
@@ -3651,34 +3630,34 @@ fn _render_json_parse_expr_at(value: any, base_indent: string, max_inline: int =
 
 // -------------------------------------------------------------------------------------------------
 
+fn _response_type(type_name: string, mode: string, cache: any, alias_name: string? = nil) {
+  return {
+    info: {
+      type_name: type_name,
+      returns_nil: type_name == "nil",
+      alias_name: alias_name,
+      response_mode: mode,
+    },
+    cache: cache,
+  }
+}
+
 fn _resolve_response_type(doc: any, op: any, cache: any) {
   const picked = _pick_success_response(doc, op)
   if picked == nil {
     // No 2xx declared at all — legacy `dict` with empty-body fallback.
-    return {
-      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-      cache: cache,
-    }
+    return _response_type("dict", "json_dict", cache)
   }
   if picked.kind == "nil" {
-    return {
-      info: {type_name: "nil", returns_nil: true, alias_name: nil, response_mode: "nil"},
-      cache: cache,
-    }
+    return _response_type("nil", "nil", cache)
   }
   if picked.kind == "opaque" {
-    return {
-      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "opaque"},
-      cache: cache,
-    }
+    return _response_type("dict", "opaque", cache)
   }
   const schema_raw = picked.schema
   if schema_raw == nil {
     // JSON content entry with no declared schema — fall back to dict.
-    return {
-      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-      cache: cache,
-    }
+    return _response_type("dict", "json_dict", cache)
   }
   const ref = if type_of(schema_raw) == "dict" {
     schema_raw.get("$ref")
@@ -3690,122 +3669,49 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
   // shape inside `allOf: [...]`.
   const full = _schema(doc, schema_raw)
   if full == false {
-    return {
-      info: {type_name: "never", returns_nil: false, alias_name: nil, response_mode: "json_never"},
-      cache: cache,
-    }
+    return _response_type("never", "json_never", cache)
   }
   if full == true {
-    return {
-      info: {type_name: "any", returns_nil: false, alias_name: nil, response_mode: "json_any"},
-      cache: cache,
-    }
+    return _response_type("any", "json_any", cache)
   }
   const shape = _schema_shape_kind(full)
   if shape == "nil" {
-    return {
-      info: {type_name: "nil", returns_nil: true, alias_name: nil, response_mode: "nil"},
-      cache: cache,
-    }
+    return _response_type("nil", "nil", cache)
   }
   const untyped_json_type = _untyped_json_return_type(full)
   if shape == "dict" && untyped_json_type != "dict" {
-    return {
-      info: {
-        type_name: untyped_json_type,
-        returns_nil: false,
-        alias_name: nil,
-        response_mode: "json_any",
-      },
-      cache: cache,
-    }
+    return _response_type(untyped_json_type, "json_any", cache)
   }
   if ref != nil {
     const cached = cache.by_ref.get(ref)
     if cached != nil {
       if shape == "dict" {
-        return {
-          info: {
-            type_name: "dict",
-            returns_nil: false,
-            alias_name: nil,
-            response_mode: "json_dict",
-          },
-          cache: cache,
-        }
+        return _response_type("dict", "json_dict", cache)
       }
-      return {
-        info: {
-          type_name: cached,
-          returns_nil: false,
-          alias_name: cached,
-          response_mode: "json_dict",
-        },
-        cache: cache,
-      }
-    }
-    if shape == "dict" {
-      // oneOf/anyOf/primitive/etc. — no struct alias for v0.
-      return {
-        info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-        cache: cache,
-      }
-    }
-    if !_struct_has_renderable_keys(full) {
-      return {
-        info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-        cache: cache,
-      }
-    }
-    const base_alias = _alias_name_from_ref(ref)
-    const alias_name = _unique_type_name(base_alias, cache)
-    const source = _emit_struct_alias(doc, alias_name, full)
-    const new_cache = {
-      by_ref: {...cache.by_ref, [ref]: alias_name},
-      by_name: {...cache.by_name, [alias_name]: source},
-      order: cache.order + [alias_name],
-    }
-    return {
-      info: {
-        type_name: alias_name,
-        returns_nil: false,
-        alias_name: alias_name,
-        response_mode: "json_dict",
-      },
-      cache: new_cache,
+      return _response_type(cached, "json_dict", cache, cached)
     }
   }
-  // Inline schema — classify, and if struct-shaped emit an alias named
-  // after the operation id.
-  if shape == "dict" {
-    return {
-      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-      cache: cache,
-    }
+  if shape == "dict" || !_struct_has_renderable_keys(full) {
+    return _response_type("dict", "json_dict", cache)
   }
-  if !_struct_has_renderable_keys(full) {
-    return {
-      info: {type_name: "dict", returns_nil: false, alias_name: nil, response_mode: "json_dict"},
-      cache: cache,
-    }
+  // Shared references reuse one alias; inline schemas keep operation-derived names.
+  const base = if ref == nil {
+    _alias_name_from_operation(op.operation_id)
+  } else {
+    _alias_name_from_ref(ref)
   }
-  const base = _alias_name_from_operation(op.operation_id)
   const alias_name = _unique_type_name(base, cache)
   const source = _emit_struct_alias(doc, alias_name, full)
   const new_cache = {
-    by_ref: cache.by_ref,
+    by_ref: if ref == nil {
+      cache.by_ref
+    } else {
+      {...cache.by_ref, [ref]: alias_name}
+    },
     by_name: {...cache.by_name, [alias_name]: source},
     order: cache.order + [alias_name],
   }
-  return {
-    info: {
-      type_name: alias_name,
-      returns_nil: false,
-      alias_name: alias_name,
-      response_mode: "json_dict",
-    },
-    cache: new_cache,
-  }
+  return _response_type(alias_name, "json_dict", new_cache, alias_name)
 }
 
 fn _pick_success_response(doc: any, op: any) {
