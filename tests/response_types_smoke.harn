@@ -230,3 +230,43 @@ pipeline test_main(harness: Harness) {
   assert(result.success, "generated module must pass `harn check` (status ${result.status})")
   harness.stdio.println("response_types_smoke: ok")
 }
+
+pipeline test_shared_and_inline_alias_name_collision(harness: Harness) {
+  const shape = {type: "object", properties: {id: {type: "string"}}}
+  const shared = {"$ref": "#/components/schemas/WidgetResponse"}
+  const operation = fn(id: string, response_schema: any) { return {
+    get: {
+      operationId: id,
+      responses: {
+        "200": {description: "OK", content: {"application/json": {schema: response_schema}}},
+      },
+    },
+  } }
+  const doc = parse(
+    json_stringify(
+      {
+        openapi: "3.1.0",
+        info: {title: "Alias collision", version: "1"},
+        paths: {
+          "/shared": operation("shared", shared),
+          "/inline": operation("widget", shape),
+          "/again": operation("again", shared),
+        },
+        components: {schemas: {WidgetResponse: shape}},
+      },
+    ),
+  )
+  const src = codegen_module(harness.fs, doc, {module_name: "collision"})
+  assert_eq(_count_occurrences(src, "type WidgetResponse = {"), 1, "shared reference dedupes")
+  assert_eq(_count_occurrences(src, "type WidgetResponse2 = {"), 1, "inline alias avoids collision")
+  assert_eq(
+    _count_occurrences(src, ") -> WidgetResponse {"),
+    2,
+    "shared calls reuse original alias",
+  )
+  assert_eq(
+    _count_occurrences(src, ") -> WidgetResponse2 {"),
+    1,
+    "inline call retains its own alias",
+  )
+}
