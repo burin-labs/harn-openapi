@@ -1,0 +1,57 @@
+import { codegen_module, parse, schema } from "../src/lib"
+
+fn reference_document(reference: string) -> string {
+  return json_stringify(
+    {
+      openapi: "3.1.1",
+      info: {title: "Nested references", version: "1"},
+      paths: {
+        "/value": {
+          get: {
+            operationId: "getValue",
+            responses: {
+              "200": {
+                description: "Value",
+                content: {"application/json": {schema: {"$ref": reference}}},
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          Envelope: {
+            type: "object",
+            properties: {
+              components: {type: "string", minLength: 2},
+              "a+b c/~": {type: "string", minLength: 2},
+            },
+            "$defs": {Choice: {anyOf: [{type: "string", minLength: 2}, {type: "integer"}]}},
+          },
+          Alias: {"$ref": reference},
+        },
+      },
+    },
+  )
+}
+
+@test(cases: [{name: "components property", args: ["#/components/schemas/Envelope/properties/components"]}, {name: "array element", args: ["#/components/schemas/Envelope/$defs/Choice/anyOf/0"]}, {name: "fragment escaping", args: ["#/components/schemas/Envelope/properties/a+b%20c~1~0"]}])
+pipeline test_nested_references(harness: Harness, reference: string) {
+  const doc = parse(reference_document(reference))
+  assert_eq(schema(doc, {"$ref": reference}), {type: "string", minLength: 2})
+  const source = codegen_module(harness.fs, doc, {module_name: "nested_references"})
+  require contains(source, ") -> string {"), "SDK must use the referenced string schema"
+}
+
+@test(cases: [{name: "leading zero", args: ["01"]}, {name: "negative", args: ["-1"]}, {name: "positive sign", args: ["+0"]}, {name: "out of range", args: ["2"]}, {name: "append", args: ["-"]}])
+pipeline test_invalid_array_references(suffix: string) {
+  const reference = "#/components/schemas/Envelope/$defs/Choice/anyOf/${suffix}"
+  const doc = parse(reference_document(reference))
+  const error = try {
+    schema(doc, {"$ref": reference})
+    nil
+  } catch (caught) {
+    caught
+  }
+  require error != nil, "invalid array references must fail"
+}
