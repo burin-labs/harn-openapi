@@ -28,13 +28,149 @@ fn run_generated(harness: Harness, document: dict, runner: string, transport: st
   harness.fs.write_text("${root}/generated.harn", source)
   harness.fs.write_text("${root}/runner.harn", runner)
   const checked = harness.process.run(
-    {program: harness.env.get("HARN_BIN") ?? "harn", args: ["check", "${root}/generated.harn"]},
+    {program: harness.env.get("HARN_BIN") ?? "harn", args: ["check", "${root}/runner.harn"]},
   )
   require checked.success, "${transport}: ${checked.stdout}\n${checked.stderr}"
   const result = harness.process.run(
     {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${root}/runner.harn"]},
   )
   require result.success, "${transport}: ${result.stdout}\n${result.stderr}"
+}
+
+@heavy(threads: 2)
+pipeline test_nullable_schema_types(harness: Harness) {
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "Nullable values", version: "1"},
+    paths: {
+      "/maybe": {
+        get: {
+          operationId: "getMaybe",
+          responses: {
+            "200": {
+              description: "Optional object",
+              content: {
+                "application/json": {
+                  schema: {type: ["object", "null"], properties: {id: {type: "string"}}},
+                },
+              },
+            },
+          },
+        },
+      },
+      "/record": {
+        get: {
+          operationId: "getRecord",
+          responses: {
+            "200": {
+              description: "Record",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["label", "items", "choice", "anything"],
+                    properties: {
+                      label: {"$ref": "#/components/schemas/NullableString"},
+                      items: {"$ref": "#/components/schemas/Items"},
+                      choice: {type: ["string", "integer"]},
+                      anything: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        NullableString: {type: ["string", "null"]},
+        Items: {type: "array", items: {type: "integer"}},
+      },
+    },
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_tools, get_maybe, get_record, new_client } from "./generated"
+
+      pipeline test_values(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        for value in [nil, {id: "found"}] {
+          harness.testing.http_mock_clear()
+          harness.testing.http_mock("GET", "https://api.example.test/maybe", {
+            status: 200, body: json_stringify(value),
+          })
+          assert_eq(get_maybe(AUTHORITY, client), value)
+          assert_eq(len(harness.testing.http_mock_calls()), 1)
+        }
+        harness.testing.http_mock_clear()
+        harness.testing.http_mock("GET", "https://api.example.test/record", {
+          status: 200, body: "{\"label\":null,\"items\":[1,2],\"choice\":7,\"anything\":true}",
+        })
+        const record = get_record(AUTHORITY, client)
+        const label: string? = record.label
+        const items: list = record.items
+        const choice: string | int = record.choice
+        assert_eq(label, nil)
+        assert_eq(items, [1, 2])
+        assert_eq(choice, 7)
+        assert_eq(record.anything, true)
+        assert_eq(len(harness.testing.http_mock_calls()), 1)
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
+}
+
+@heavy(threads: 2)
+pipeline test_server_variable_defaults(harness: Harness) {
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "Server defaults", version: "1"},
+    servers: [
+      {
+        url: "https://{tenant}.example.test:{port}/{basePath}",
+        variables: {
+          tenant: {default: "demo"},
+          port: {default: "8443", enum: ["8443", "443"]},
+          basePath: {default: "v1/sub"},
+        },
+      },
+    ],
+    paths: {"/items": {get: {operationId: "listItems", responses: {"204": {description: "Done"}}}}},
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { list_items, new_client } from "./generated"
+
+      pipeline test_default_url(harness: Harness) {
+        const client = new_client()
+        assert_eq(client.base_url, "https://demo.example.test:8443/v1/sub")
+        harness.testing.http_mock("GET", "https://demo.example.test:8443/v1/sub/items", {
+          status: 204, body: "",
+        })
+        list_items(AUTHORITY, client)
+        const custom = new_client("https://custom.example.test/v2")
+        harness.testing.http_mock("GET", "https://custom.example.test/v2/items", {
+          status: 204, body: "",
+        })
+        list_items(AUTHORITY, custom)
+        assert_eq(len(harness.testing.http_mock_calls()), 2)
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
 }
 
 @heavy(threads: 2)
@@ -73,7 +209,7 @@ pipeline test_parameter_names_preserve_every_input(harness: Harness) {
         const client = new_client("https://api.example.test")
         const registry = adapter_tools(AUTHORITY, client)
         const tool = registry.tools[0]
-        let args = {body: {name: "widget"}}
+        let args: dict = {body: {name: "widget"}}
         let pairs = []
         for entry in tool.parameters {
           if entry.key != "body" {

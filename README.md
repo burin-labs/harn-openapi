@@ -243,6 +243,11 @@ JSON responses with an omitted or empty schema return `any`, so arrays, scalar
 values, objects, and `null` pass through unchanged. An explicit object schema
 still produces an object return type.
 
+JSON Schema type lists become Harn unions, including nullable values. Referenced
+fields use the same types as inline fields. The default client URL expands the
+first server's variables using their declared defaults; you can still pass an
+explicit base URL to `new_client`.
+
 The generated environment projection creates stable names such as
 `WIDGETS_BASE_URL`, `WIDGETS_BEARERAUTH_TOKEN`, and
 `WIDGETS_HEADERKEY_API_KEY`. See

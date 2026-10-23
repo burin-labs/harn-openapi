@@ -2139,12 +2139,17 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
     + "}"
 }
 
-fn _default_server_url(doc: any) {
-  const servers = doc.get("servers") ?? []
+fn _default_server_url(doc: OpenApiDoc) -> string {
+  const servers = doc.servers
   if len(servers) == 0 {
     return ""
   }
-  return servers[0].get("url") ?? ""
+  const server = servers[0]
+  let url = server.url
+  for variable in (server.variables ?? {}) {
+    url = replace(url, "{${variable.key}}", variable.value.default)
+  }
+  return url
 }
 
 fn _default_environment_prefix(module_name: string) -> string {
@@ -3411,7 +3416,7 @@ fn _variant_constructor_fields(doc: any, resolved: any) {
     const ident_base = _sanitize_ident(key)
     const ident = _unique_fn_name(ident_base, taken_idents)
     taken_idents = taken_idents + [ident]
-    const ty = _harn_type_for_property(doc, prop_schema, 1).annotation
+    const ty = _schema_value_type(_schema(doc, prop_schema))
     fields = fields
       + [
         {
@@ -3673,25 +3678,18 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
   if full == true {
     return _response_type("any", "json_any", cache)
   }
-  const shape = _schema_shape_kind(full)
-  if shape == "nil" {
-    return _response_type("nil", "nil", cache)
+  const value_type = _schema_value_type(full)
+  if value_type != "dict" {
+    return _response_type(value_type, "json_any", cache)
   }
-  const untyped_json_type = _untyped_json_return_type(full)
-  if shape == "dict" && untyped_json_type != "dict" {
-    return _response_type(untyped_json_type, "json_any", cache)
+  if full.get("properties") == nil || !_struct_has_renderable_keys(full) {
+    return _response_type("dict", "json_dict", cache)
   }
   if ref != nil {
     const cached = cache.by_ref.get(ref)
     if cached != nil {
-      if shape == "dict" {
-        return _response_type("dict", "json_dict", cache)
-      }
       return _response_type(cached, "json_dict", cache, cached)
     }
-  }
-  if shape == "dict" || !_struct_has_renderable_keys(full) {
-    return _response_type("dict", "json_dict", cache)
   }
   // Shared references reuse one alias; inline schemas keep operation-derived names.
   const base = if ref == nil {
@@ -3793,46 +3791,30 @@ fn _is_success_code(code: any) {
   return adapter_http_response_key(code)?.success_only ?? false
 }
 
-fn _schema_shape_kind(sch: any) {
-  // Returns "struct" (emit an object alias), "dict" (polymorphic /
-  // primitive / unsupported — fall back to `dict`), or "nil" (no
-  // response body shape to speak of).
-  //
-  // A schema that declares both `properties` and `oneOf`/`anyOf` is an
-  // intersection ("has these fields AND matches one of these shapes").
-  // v0 treats that as a struct — the depth-1 properties provide useful
-  // narrowing, and the union narrowing is deferred to `schema_is` at
-  // the call site.
-  if sch == nil {
-    return "nil"
-  }
-  if type_of(sch) != "dict" {
-    return "dict"
-  }
-  if sch.get("properties") != nil {
-    return "struct"
-  }
-  if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
-    return "dict"
+fn _schema_value_type(sch: Schema) -> string {
+  if type_of(sch) == "bool" {
+    return if sch {
+      "any"
+    } else {
+      "never"
+    }
   }
   const ty = sch.get("type")
-  if ty == "object" {
-    // `type: object` with no explicit properties — treat as bag-of-kv.
+  if type_of(ty) == "list" {
+    let members = []
+    for member in ty {
+      const annotation = _schema_value_type({type: member})
+      if annotation == "any" {
+        return "any"
+      }
+      members = _dedupe(members + [annotation])
+    }
+    return join(members, " | ")
+  }
+  if ty == "object" || (ty == nil && sch.get("properties") != nil) {
     return "dict"
   }
-  // Primitive or unspecified.
-  return "dict"
-}
-
-fn _untyped_json_return_type(sch: any) -> string {
-  if type_of(sch) != "dict" {
-    return "any"
-  }
   if sch.get("oneOf") != nil || sch.get("anyOf") != nil {
-    return "any"
-  }
-  const ty = sch.get("type")
-  if ty == nil && sch.get("properties") == nil {
     return "any"
   }
   if ty == "array" {
@@ -3842,7 +3824,7 @@ fn _untyped_json_return_type(sch: any) -> string {
   if prim != nil {
     return prim
   }
-  return "dict"
+  return "any"
 }
 
 fn _alias_name_from_ref(ref: any) {
@@ -3910,8 +3892,8 @@ fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
   let fields = []
   for key in keys {
     const prop_schema = props.get(key)
-    const field_type = _harn_type_for_property(doc, prop_schema, 1)
-    fields = fields + [_harn_struct_field(key, field_type.annotation, required.contains(key))]
+    const field_type = _schema_value_type(_schema(doc, prop_schema))
+    fields = fields + [_harn_struct_field(key, field_type, required.contains(key))]
   }
   if len(fields) <= 4 {
     return "type " + alias_name + " = {" + join(fields, ", ") + "}"
@@ -3923,59 +3905,10 @@ fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
   return out + "}"
 }
 
-fn _harn_type_for_property(doc: any, prop_schema: any, depth: any) {
-  // Returns {annotation: string, comment: string}. `depth` starts at 1
-  // for direct properties of the response. v0 rule: stop narrowing at
-  // depth 2 — nested dicts/lists render as bare `dict`/`list`.
-  if type_of(prop_schema) != "dict" {
-    return {annotation: "dict", comment: ""}
+fn _primitive_harn_type(ty: any) -> string? {
+  if ty == "null" {
+    return "nil"
   }
-  const ref = prop_schema.get("$ref")
-  if ref != nil {
-    const resolved = _schema(doc, prop_schema)
-    const kind = _schema_shape_kind(resolved)
-    if kind == "dict" {
-      const ty = resolved.get("type")
-      const prim = _primitive_harn_type(ty)
-      if prim != nil {
-        return {annotation: prim, comment: ""}
-      }
-      const ref_name = _alias_name_from_ref(ref)
-      return {
-        annotation: "dict",
-        comment: ref_name + " (polymorphic or primitive) — narrow with schema_is.",
-      }
-    }
-    // Referenced schema is a struct. v0 does not recursively emit
-    // dependent aliases, so nested struct refs render as `dict` with a
-    // hint pointing at the schema name.
-    const ref_name = _alias_name_from_ref(ref)
-    return {annotation: "dict", comment: ref_name + " — nested; narrow with schema_is."}
-  }
-  if prop_schema.get("oneOf") != nil || prop_schema.get("anyOf") != nil {
-    return {annotation: "dict", comment: "polymorphic; narrow with schema_is."}
-  }
-  const ty = prop_schema.get("type")
-  if ty == "array" {
-    return {annotation: "list", comment: ""}
-  }
-  if ty == "object" {
-    if prop_schema.get("properties") != nil && depth < 2 {
-      // Could recurse inline, but v0 keeps it simple: bare dict with a
-      // nudge. Future work (issue follow-up) may emit nested aliases.
-      return {annotation: "dict", comment: "inline object; narrow with schema_is."}
-    }
-    return {annotation: "dict", comment: ""}
-  }
-  const prim = _primitive_harn_type(ty)
-  if prim != nil {
-    return {annotation: prim, comment: ""}
-  }
-  // Unknown / nullable-union / missing — fall back to dict.
-  return {annotation: "dict", comment: ""}
-}
-
-fn _primitive_harn_type(ty: any) {
   if ty == "string" {
     return "string"
   }
