@@ -1562,19 +1562,6 @@ const _MODULE_TEMPLATE = """
     return "?" + join(parts, "&")
   }
 
-  fn _strip_codegen_variant(body: any) -> dict {
-    if type_of(body) != "dict" {
-      throw "polymorphic request body must be a dict with a _variant marker"
-    }
-    let out = {}
-    for entry in body {
-      if entry.key != "_variant" {
-        out = {...out, [entry.key]: entry.value}
-      }
-    }
-    return out
-  }
-
   {{ for op in operations }}
   {{ op.security_available_helper }}
 
@@ -2177,7 +2164,6 @@ fn _operation_param_models(params: list) -> dict {
     "url",
     "request_headers",
     "body_str",
-    "body_variant",
     "resp",
     "raw",
   ]
@@ -2692,7 +2678,6 @@ fn _build_op_model(
   }
   const doc_comment = "/** " + _escape_comment(safe_summary) + " */"
   const body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
-  const body_prepare = _render_body_prepare(fn_name, body_variants)
   const idempotency_key_param = _idempotency_key_param(header_params)
   return {
     fn_name: fn_name,
@@ -2703,13 +2688,11 @@ fn _build_op_model(
     query_bindings: _render_binding_dict(query_bindings_parts + ["...operation_auth.query"]),
     has_query: true,
     has_body: has_body,
-    body_prepare: body_prepare,
     header_cookie_lines: _render_header_cookie_lines(header_params, cookie_params),
     request_lines: _render_request_lines(
       op.method,
       has_body,
       body_required,
-      body_prepare,
       transport,
       ret,
       fn_name,
@@ -3098,13 +3081,13 @@ fn _render_request_lines(
   method: any,
   has_body: any,
   body_required: any,
-  body_prepare: any,
   transport: any,
   ret: any,
   fn_name: any,
   module_name: any,
   idempotency_key_param: any,
 ) {
+  const body_prepare = "const body_str = json_stringify(body)"
   if transport == "connector_policy" {
     if !has_body {
       const options = _render_connector_options(
@@ -3289,11 +3272,6 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
     return []
   }
   const discriminator = root.get("discriminator")
-  const discriminator_property = if type_of(discriminator) == "dict" {
-    discriminator.get("propertyName")
-  } else {
-    nil
-  }
   let variants = []
   let taken_suffixes = []
   let taken_fn_names = taken_names + [fn_name]
@@ -3302,7 +3280,6 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
     const resolved = _schema(doc, raw_variant)
     const mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
     const display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
-    const tag = _variant_tag(discriminator_property, resolved, display_name, mapping_tag)
     const suffix_base = _snake_case_ident(display_name)
     const suffix = _unique_fn_name(suffix_base, taken_suffixes)
     taken_suffixes = taken_suffixes + [suffix]
@@ -3312,8 +3289,8 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
       + [
         {
           name: display_name,
-          tag: tag,
           fn_name: variant_fn_name,
+          payload_type: _schema_value_type(resolved),
           fields: _variant_constructor_fields(doc, resolved),
         },
       ]
@@ -3358,39 +3335,6 @@ fn _variant_display_name(raw_variant: any, resolved: any, mapping_tag: any, inde
     return _pascal_case(mapping_tag)
   }
   return "Variant" + to_string(index + 1)
-}
-
-fn _variant_tag(discriminator_property: any, resolved: any, display_name: any, mapping_tag: any) {
-  if type_of(mapping_tag) == "string" && mapping_tag != "" {
-    return mapping_tag
-  }
-  if type_of(discriminator_property) == "string" && discriminator_property != "" {
-    const const_tag = _schema_property_literal(resolved, discriminator_property)
-    if const_tag != nil {
-      return to_string(const_tag)
-    }
-  }
-  return display_name
-}
-
-fn _schema_property_literal(resolved: any, property_name: any) {
-  if type_of(resolved) != "dict" {
-    return nil
-  }
-  const props = resolved.get("properties") ?? {}
-  const prop = props.get(property_name)
-  if type_of(prop) != "dict" {
-    return nil
-  }
-  const const_value = prop.get("const")
-  if const_value != nil {
-    return const_value
-  }
-  const values = prop.get("enum")
-  if type_of(values) == "list" && len(values) > 0 {
-    return values[0]
-  }
-  return nil
 }
 
 fn _variant_constructor_fields(doc: any, resolved: any) {
@@ -3440,55 +3384,6 @@ fn _body_variant_fn_names(variants: any) {
   return names
 }
 
-fn _body_variant_tags(variants: any) {
-  let tags = []
-  for variant in variants {
-    tags = tags + [variant.tag]
-  }
-  return tags
-}
-
-fn _render_body_prepare(fn_name: any, variants: any) {
-  if len(variants) == 0 {
-    return "const body_str = json_stringify(body)"
-  }
-  const tags = _render_string_list(_body_variant_tags(variants))
-  const ctor_names = join(_body_variant_fn_names(variants), ", ")
-  const tag_check = if len("  if !" + tags + ".contains(body_variant) {") <= 100 {
-    "  if !" + tags + ".contains(body_variant) {\n"
-  } else {
-    "  if !" + tags + ".contains(\n"
-      + "    body_variant,\n"
-      + "  ) {\n"
-  }
-  return "const body_variant = if type_of(body) == \"dict\" {\n"
-    + "    body.get(\"_variant\")\n"
-    + "  } else {\n"
-    + "    nil\n"
-    + "  }\n"
-    + "  if body_variant == nil {\n"
-    + "    throw \""
-    + fn_name
-    + ": polymorphic request body must be built with one of: "
-    + _escape_string(ctor_names)
-    + "\"\n"
-    + "  }\n"
-    + tag_check
-    + "    throw \""
-    + fn_name
-    + ": unknown request body variant \" + to_string(body_variant)\n"
-    + "  }\n"
-    + "  const body_str = json_stringify(_strip_codegen_variant(body))"
-}
-
-fn _render_string_list(items: any) {
-  let parts = []
-  for item in items {
-    parts = parts + ["\"" + _escape_string(to_string(item)) + "\""]
-  }
-  return "[" + join(parts, ", ") + "]"
-}
-
 fn _render_body_variant_constructors(variants: any) {
   if len(variants) == 0 {
     return ""
@@ -3526,21 +3421,17 @@ fn _render_body_variant_constructor(variant: any) {
         ]
     }
   }
-  const doc_comment = "/** Build a `" + _escape_string(variant.tag)
+  const doc_comment = "/** Build a `" + _escape_string(variant.name)
     + "` variant of the polymorphic request body. */\n"
   const sig_parts = required_sig + optional_sig
   if len(sig_parts) == 0 && len(literal_entries) == 0 {
     return doc_comment
       + "pub fn "
       + variant.fn_name
-      + "(payload: dict) -> dict {\n"
-      + "  return {...payload, _variant: \""
-      + _escape_string(variant.tag)
-      + "\"}\n"
+      + "(payload: ${variant.payload_type}) -> ${variant.payload_type} {\n"
+      + "  return payload\n"
       + "}"
   }
-  literal_entries = literal_entries
-    + [_harn_dict_entry("_variant", "\"" + _escape_string(variant.tag) + "\"")]
   let body = doc_comment
     + "pub fn "
     + variant.fn_name
@@ -3712,6 +3603,10 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
 }
 
 fn _pick_success_response(doc: any, op: any) {
+  // HEAD carries representation metadata in headers, never a response body.
+  if op.method == "head" {
+    return {kind: "opaque"}
+  }
   // Walk responses in spec order. First entry whose status code starts
   // with "2" wins. Returns one of:
   //   {kind: "json", schema}   — JSON body we can try to type.

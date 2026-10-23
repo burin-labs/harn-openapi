@@ -336,9 +336,9 @@ endpoint class.
 ### Polymorphic request bodies
 
 For `application/json` request bodies whose top-level schema is `oneOf` or
-`anyOf`, `codegen_module` emits the normal umbrella operation plus one
+`anyOf`, `codegen_module` emits the normal operation plus one
 constructor per variant. Callers can build the body dynamically and pass it to
-the umbrella, while static callers can use the variant constructor directly:
+the operation, while static callers can use the variant constructor directly:
 
 ```harn
 let body = update_page_markdown_insert_content({
@@ -352,10 +352,11 @@ let page = update_page_markdown(
 )
 ```
 
-The constructor adds an internal `_variant` tag so the umbrella can validate
-which variant was selected, then strips `_variant` before serializing the HTTP
-body. When an OpenAPI discriminator mapping is present, the mapping key is used
-as the `_variant` tag.
+Constructors return ordinary JSON values and fill in declared constant fields.
+Operations serialize the supplied body unchanged, so callers can also pass a
+value that matches the schema directly. Tool dispatch validates the body against
+the declared `oneOf` or `anyOf` schema; direct SDK calls leave validation to the
+server.
 
 Downstream SDK wrappers can expose the same two styles as methods, e.g.
 `client.update_page_markdown(body)` for dynamic dispatch and
