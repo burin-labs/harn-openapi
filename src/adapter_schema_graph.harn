@@ -214,25 +214,14 @@ fn resolve_pointer(
   encoded_segments: list<string>,
   field: string,
 ) -> AdapterJsonSchema {
-  let target = root
-  for encoded_segment in encoded_segments {
-    const segment = decode_pointer_segment(encoded_segment, field)
-    if type_of(target) == "dict" {
-      target = target.get(segment)
-    } else if type_of(target) == "list"
-      && regex_match("^(0|[1-9][0-9]*)$", segment) != nil {
-      const index = to_int(segment)
-      target = if index == nil {
-        nil
-      } else {
-        target[index]
-      }
-    } else {
-      return reject_schema(field, "contains a broken JSON Pointer")
-    }
-    if target == nil {
-      return reject_schema(field, "contains a broken JSON Pointer")
-    }
+  const pointer = url_decode(replace("/${join(encoded_segments, "/")}", "+", "%2B"))
+  const target = try {
+    json_pointer(root, pointer)
+  } catch (_error) {
+    return reject_schema(field, "contains an invalid JSON Pointer escape")
+  }
+  if target == nil {
+    return reject_schema(field, "contains a broken JSON Pointer")
   }
   if type_of(target) != "bool" && type_of(target) != "dict" {
     return reject_schema(field, "must resolve to a boolean or object JSON Schema")

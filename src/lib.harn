@@ -652,25 +652,14 @@ fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
   return _merge_schema(resolved_target, siblings)
 }
 
-fn _lookup_ref(doc: any, ref: any) {
+fn _lookup_ref(doc: OpenApiDoc, ref: string) -> unknown {
   if !starts_with(ref, "#/") {
     throw "harn-openapi.schema: only local JSON Pointer refs are supported, got " + ref
   }
-  const parts = split(substring(ref, 2, len(ref)), "/")
-  let node = doc
-  for raw_seg in parts {
-    const seg = _unescape_pointer(raw_seg)
-    if seg == "components" {
-      node = doc.components ?? {}
-    } else {
-      if node == nil {
-        throw "harn-openapi.schema: broken ref " + ref
-      }
-      node = node.get(seg)
-    }
-    if node == nil {
-      throw "harn-openapi.schema: broken ref " + ref
-    }
+  const pointer = url_decode(replace(substring(ref, 1, len(ref)), "+", "%2B"))
+  const node = json_pointer(doc, pointer)
+  if node == nil {
+    throw "harn-openapi.schema: broken ref ${ref}"
   }
   return node
 }
