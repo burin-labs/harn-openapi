@@ -38,6 +38,139 @@ fn run_generated(harness: Harness, document: dict, runner: string, transport: st
 }
 
 @heavy(threads: 2)
+pipeline test_union_bodies_use_the_public_schema(harness: Harness) {
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "Union bodies", version: "1"},
+    paths: {
+      "/pets": {
+        post: {
+          operationId: "savePet",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  oneOf: [
+                    {
+                      title: "Cat",
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["kind", "meow"],
+                      properties: {
+                        kind: {const: "cat"},
+                        meow: {type: "string"},
+                        _variant: {type: "string"},
+                      },
+                    },
+                    {title: "Note", type: "string"},
+                  ],
+                },
+              },
+            },
+          },
+          responses: {"204": {description: "Saved"}},
+        },
+      },
+    },
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { agent_dispatch_tool_call } from "std/agent/primitives"
+      import { adapter_tools, new_client, save_pet, save_pet_cat, save_pet_note } from "./generated"
+
+      pipeline test_schema_valid_body(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        const registry = adapter_tools(AUTHORITY, client)
+        assert_eq(save_pet_note("a note"), "a note")
+        assert_eq(save_pet_cat("mew"), {kind: "cat", meow: "mew"})
+        for body in [save_pet_cat("mew"), save_pet_note("a note")] {
+          harness.testing.http_mock_clear()
+          harness.testing.http_mock("POST", "https://api.example.test/pets", {status: 204, body: ""})
+          const called = agent_dispatch_tool_call(
+            harness.tools, {name: "save_pet", arguments: {body: body}}, registry,
+          )
+          assert(called.ok, json_stringify(called))
+          const calls = harness.testing.http_mock_calls()
+          assert_eq(len(calls), 1)
+          assert_eq(json_parse(calls[0].body), body)
+        }
+        harness.testing.http_mock_clear()
+        const rejected = agent_dispatch_tool_call(
+          harness.tools, {name: "save_pet", arguments: {body: {kind: "cat"}}}, registry,
+        )
+        assert(!rejected.ok)
+        assert_eq(len(harness.testing.http_mock_calls()), 0)
+      }
+
+      pipeline test_schema_property_is_not_an_internal_marker(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        const body = {kind: "cat", meow: "mew", _variant: "Cat"}
+        assert_eq(save_pet_cat("mew", "Cat"), body)
+        harness.testing.http_mock("POST", "https://api.example.test/pets", {status: 204, body: ""})
+        save_pet(AUTHORITY, client, body)
+        const calls = harness.testing.http_mock_calls()
+        assert_eq(len(calls), 1)
+        assert_eq(json_parse(calls[0].body), body)
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
+}
+
+@heavy(threads: 2)
+pipeline test_head_returns_headers_without_decoding_a_body(harness: Harness) {
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "HEAD metadata", version: "1"},
+    paths: {
+      "/items": {
+        head: {
+          operationId: "inspectItems",
+          responses: {
+            "200": {
+              description: "Metadata for the JSON representation",
+              content: {"application/json": {schema: {type: "object"}}},
+            },
+          },
+        },
+      },
+    },
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_tools, inspect_items, new_client } from "./generated"
+
+      pipeline test_headers(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        harness.testing.http_mock("HEAD", "https://api.example.test/items", {
+          status: 200, body: "", headers: {etag: "version-1", "content-type": "application/json"},
+        })
+        const result = inspect_items(AUTHORITY, client)
+        assert_eq(result.status, 200)
+        assert_eq(result.headers.etag, "version-1")
+        assert_eq(result.body, "")
+        const tool = adapter_tools(AUTHORITY, client).tools[0]
+        assert_eq(tool.get("outputSchema"), nil)
+        assert_eq(tool.handler({}).data.headers.etag, "version-1")
+        assert_eq(len(harness.testing.http_mock_calls()), 2)
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
+}
+
+@heavy(threads: 2)
 pipeline test_nullable_schema_types(harness: Harness) {
   const document = {
     openapi: "3.1.1",
