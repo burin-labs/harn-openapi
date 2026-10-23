@@ -98,7 +98,7 @@ pipeline default(harness: Harness) {
     "transitive component references must be bundled"
   require closed.get("$defs").get("Tree") == nil,
     "unreachable components must not be duplicated into a tool schema"
-  require closed.properties.widget.get("$ref") == "#/$defs/Widget",
+  require closed.get("properties").get("widget").get("$ref") == "#/$defs/Widget",
     "OpenAPI component pointers must project into Draft 2020-12 $defs"
   const local_defs_schema = close_adapter_schema(
     "3.1.1",
@@ -115,9 +115,10 @@ pipeline default(harness: Harness) {
   const local_defs = schema_expect(local_defs_schema, ObjectSchema)
   require local_defs.get("$defs").get("Widget").get("type") == "integer",
     "root-local definitions must not be overwritten"
-  require local_defs.properties.local.get("$ref") == "#/$defs/Widget",
+  require local_defs.get("properties").get("local").get("$ref") == "#/$defs/Widget",
     "root-local references must retain their resource scope"
-  require local_defs.properties.remote.get("$ref") == "#/$defs/__harn_component_Widget",
+  require local_defs.get("properties").get("remote").get("$ref")
+    == "#/$defs/__harn_component_Widget",
     "component collisions must allocate a deterministic definition key"
   const recursive = schema_expect(
     close_adapter_schema("3.1.1", {"$ref": "#/components/schemas/Tree"}, graph),

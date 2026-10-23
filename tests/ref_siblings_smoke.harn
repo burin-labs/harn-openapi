@@ -48,7 +48,7 @@ pipeline test_main(harness: Harness) {
   assert(bare.get("$ref") == nil, "bare $ref should resolve to the target schema")
   assert(bare.title == "Base title", "bare $ref should preserve target title")
   assert(bare.description == "Base description", "bare $ref should preserve target description")
-  assert(bare.properties?.get("id") != nil, "bare $ref should preserve target properties")
+  assert(bare.get("properties")?.get("id") != nil, "bare $ref should preserve target properties")
   const described = schema(
     doc,
     {"$ref": "#/components/schemas/BaseObject", description: "Caller description"},

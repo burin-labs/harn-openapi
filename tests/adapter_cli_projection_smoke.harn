@@ -5,6 +5,8 @@ import {
   prepare_adapter_schema_graph,
 } from "../src/lib"
 
+type JsonObject = dict
+
 fn document() -> dict {
   const operation = {
     operationId: "getWidget",
@@ -144,7 +146,7 @@ pipeline product_projection(harness: Harness) {
   const binary = harness.env.get("HARN_BIN") ?? "harn"
   const schema = harness.process.run({program: binary, args: ["tool", "schema", server]})
   require schema.success, "generated catalog must load: " + schema.stderr
-  const catalog = json_parse(schema.stdout)
+  const catalog = schema_expect(json_parse(schema.stdout), JsonObject)
   assert_eq(catalog.schema_version, "harn-tools/2.0")
   assert_eq(len(catalog.cli.commands), 1)
   const group = catalog.cli.commands[0]
@@ -237,7 +239,7 @@ pipeline product_projection(harness: Harness) {
   let responses = {}
   for line in mcp.stdout.split("\n") {
     if line.trim() != "" {
-      const response = json_parse(line)
+      const response = schema_expect(json_parse(line), JsonObject)
       if response.get("id") != nil {
         responses = {...responses, [to_string(response.id)]: response}
       }

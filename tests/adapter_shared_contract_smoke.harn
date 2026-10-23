@@ -114,16 +114,26 @@ fn prepare(
   return {binary: harness.env.get("HARN_BIN") ?? "harn", server: server_path, module: module_path}
 }
 
-fn command(harness: Harness, fixture: PreparedFixture, args: list<string>) {
-  return harness.process.run({program: fixture.binary, args: args})
+type JsonObject = dict
+
+type WidgetResponse = {id: string}
+
+type CliErrorResponse = {error: dict}
+
+type EnvironmentResponse = {base_url: string}
+
+type TransportTrace = {error: unknown, calls: list<dict>}
+
+fn command(process: HarnessProcess, fixture: PreparedFixture, args: list<string>) -> dict {
+  return process.run({program: fixture.binary, args: args})
 }
 
 @test
 pipeline catalog_and_cli(harness: Harness) {
   const fixture = prepare(harness)
-  const result = command(harness, fixture, ["tool", "schema", fixture.server])
+  const result = command(harness.process, fixture, ["tool", "schema", fixture.server])
   require result.success, "generated shared registry must load: " + result.stderr
-  const catalog = json_parse(result.stdout)
+  const catalog = schema_expect(json_parse(result.stdout), JsonObject)
   assert_eq(catalog.schema_version, "harn-tools/2.0")
   assert_eq(len(catalog.components.schemas), 3)
   assert_eq(len(catalog.tools), 2)
@@ -138,14 +148,14 @@ pipeline catalog_and_cli(harness: Harness) {
     assert_eq(error.required, ["operation", "status", "headers", "body"])
   }
   const valid = command(
-    harness,
+    harness.process,
     fixture,
     ["tool", "run", fixture.server, "get_widget", "--id", "ok", "--harn-output", "json"],
   )
   require valid.success, "valid CLI input must reach the generated HTTP handler: " + valid.stderr
-  assert_eq(json_parse(valid.stdout).id, "ok")
+  assert_eq(schema_expect(json_parse(valid.stdout), WidgetResponse).id, "ok")
   const invalid = command(
-    harness,
+    harness.process,
     fixture,
     ["tool", "run", fixture.server, "get_widget", "--id", "1", "--harn-output", "json"],
   )
@@ -153,12 +163,12 @@ pipeline catalog_and_cli(harness: Harness) {
   require (invalid.stdout + invalid.stderr).contains("pattern"),
     "the input schema, rather than an unrelated transport failure, must reject the call"
   const missing = command(
-    harness,
+    harness.process,
     fixture,
     ["tool", "run", fixture.server, "get_widget", "--id", "missing", "--harn-output", "json"],
   )
   require !missing.success, "declared HTTP failure must remain a failed CLI command"
-  const application = json_parse(missing.stdout).error
+  const application = schema_expect(json_parse(missing.stdout), CliErrorResponse).error
   assert_eq(application.kind, "application")
   assert_eq(application.data.operation, "getWidget")
   assert_eq(application.data.status, 404)
@@ -206,7 +216,10 @@ pipeline default_environment(harness: Harness) {
   require result.success,
     "the default generated environment must pass Harn startup: "
     + result.stderr
-  assert_eq(json_parse(result.stdout).base_url, "https://configured.example.test")
+  assert_eq(
+    schema_expect(json_parse(result.stdout), EnvironmentResponse).base_url,
+    "https://configured.example.test",
+  )
 }
 
 @test
@@ -229,9 +242,15 @@ pipeline transport_error(harness: Harness) {
     },
   )
   require result.success, "MCP must answer a failed transport call: " + result.stderr
-  const responses = result.stdout.lines().map({ line -> json_parse(line) }).to_list()
+  const responses = result.stdout.lines().map(
+    { line -> schema_expect(json_parse(line), JsonObject) },
+  )
+    .to_list()
   const response = responses.filter({ message -> message.get("id") == 2 })[0]
-  const trace = json_parse(harness.fs.read_text(fixture.module + ".transport.json"))
+  const trace = schema_expect(
+    json_parse(harness.fs.read_text(fixture.module + ".transport.json")),
+    TransportTrace,
+  )
   require to_string(trace.error).contains("fixture-transport-unavailable"),
     "the actual MCP handler must receive the transport fault: "
     + json_stringify(trace)
@@ -253,7 +272,7 @@ pipeline transport_error(harness: Harness) {
 
 @test
 pipeline local_schema_scope(harness: Harness) {
-  let doc = json_parse(fixture_document())
+  let doc = schema_expect(json_parse(fixture_document()), JsonObject)
   doc.paths["/widget"].get.parameters[0].schema = {
     "$defs": {Value: {"$ref": "#/components/schemas/Identifier"}},
     "$ref": "#/$defs/Value",
@@ -265,14 +284,14 @@ pipeline local_schema_scope(harness: Harness) {
   const fixture = prepare(harness, json_stringify(doc))
   for item in [{id: "ok", succeeds: true}, {id: "missing", succeeds: false}] {
     const result = command(
-      harness,
+      harness.process,
       fixture,
       ["tool", "run", fixture.server, "get_widget", "--id", item.id, "--harn-output", "json"],
     )
     require result.success == item.succeeds,
       "local schema scope " + item.id + ": " + result.stdout
       + result.stderr
-    const data = json_parse(result.stdout)
+    const data = schema_expect(json_parse(result.stdout), JsonObject)
     if item.succeeds {
       assert_eq(data.id, "ok")
     } else {
@@ -285,7 +304,7 @@ pipeline local_schema_scope(harness: Harness) {
 @test
 pipeline invalid_schema_generation(harness: Harness) {
   for invalid in ["dialect", "external", "dangling", "output"] {
-    let doc = json_parse(fixture_document())
+    let doc = schema_expect(json_parse(fixture_document()), JsonObject)
     if invalid == "dialect" {
       doc.jsonSchemaDialect = "https://example.invalid/custom-dialect"
     } else if invalid == "output" {
@@ -392,7 +411,7 @@ pipeline mcp_errors(harness: Harness) {
   require result.success, "MCP exchange must terminate normally: " + result.stderr
   let responses = {}
   for line in result.stdout.lines() {
-    const message = json_parse(line)
+    const message = schema_expect(json_parse(line), JsonObject)
     if message.get("id") != nil {
       responses = {...responses, [to_string(message.id)]: message}
     }
