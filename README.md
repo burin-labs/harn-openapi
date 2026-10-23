@@ -235,6 +235,14 @@ interpolation, query values are encoded in the query string, header parameters
 are merged into the request headers, and cookie parameters are appended to the
 `Cookie` header.
 
+Generated arguments and tool inputs use snake_case names. When a name collides
+with another input or a generated local variable, the generator adds a numeric
+suffix. The HTTP parameter keeps its original name.
+
+JSON responses with an omitted or empty schema return `any`, so arrays, scalar
+values, objects, and `null` pass through unchanged. An explicit object schema
+still produces an object return type.
+
 The generated environment projection creates stable names such as
 `WIDGETS_BASE_URL`, `WIDGETS_BEARERAUTH_TOKEN`, and
 `WIDGETS_HEADERKEY_API_KEY`. See
