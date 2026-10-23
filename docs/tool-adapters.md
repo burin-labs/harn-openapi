@@ -30,7 +30,7 @@ the `{clock, net}` record.
 
 `adapter_tools` returns the executable registry. `adapter_catalog` returns the
 same registry through Harn's versioned static projection. The projection
-omits handler closures and retains registry identity, input and output JSON
+omits handler closures and retains registry identity, input, output and error JSON
 Schemas, CLI paths, MCP annotations, Harn policy, source bindings, and `_meta`.
 
 Operations with `x-harn.expose: false` remain in the typed SDK and are omitted
@@ -132,11 +132,11 @@ contains normalized schemas, direct dependencies, transitive closures, and work
 counters. Shared and recursive references stay as references, including escaped
 component names and nested JSON Pointer targets.
 
-The OpenAPI graph retains boolean schemas exactly. Harn and MCP tool contracts
-require schema objects, so their projection uses the Draft 2020-12 equivalents:
-`true` becomes `{}`, and `false` becomes `{"not": {}}`. Generated SDK return
-types independently lower `true` to `any` and `false` to `never`, preserving the
-same validation semantics on every surface.
+Generated registries publish reusable schemas once in `components.schemas`.
+Tools retain local `#/components/schemas/...` references in their complete
+`inputSchema`, `outputSchema` and `errorSchema`. Input schemas preserve required
+properties and reject additional properties. Boolean schemas remain booleans;
+generated SDK types lower `true` to `any` and `false` to `never`.
 
 The normalizer traverses only JSON Schema keyword positions. A `$ref`-shaped
 object inside `const` or `enum` is instance data and remains unchanged. It
@@ -152,9 +152,42 @@ rejects the following before source generation:
 
 This boundary validates schema structure and reference portability. Harn's
 prepared tool catalog remains the owner of validating runtime input, output,
-and application-error values. Generated registries currently emit resolved
-per-operation schemas. The direct graph projection lands with the next
-versioned Harn tool-contract cutover.
+and application-error values. MCP discovery projects the same registry, bundling
+references where its protocol requires self-contained schemas.
+
+### HTTP application errors
+
+An exact non-success status with a declared `application/json` schema contributes
+one `errorSchema.oneOf` branch. The branch requires the original OpenAPI
+operation ID, exact status, response headers and decoded body:
+
+```json
+{
+  "operation": "getWidget",
+  "status": 404,
+  "headers": {"x-request-id": "request_123"},
+  "body": {"message": "Widget not found"}
+}
+```
+
+The generated handler decodes exact declared JSON failures into Harn's explicit
+error outcome. Harn's prepared catalog validates the value once before any
+adapter exposes application data. MCP places typed error data in
+`_meta["com.harnlang/toolContract"].applicationError.data`; CLI JSON output uses
+`error.data`. Neither projection treats the error as successful output.
+
+Transport faults, undeclared statuses, malformed JSON and schema-invalid bodies
+remain runtime errors. Range responses, `default`, non-JSON media and responses
+without schemas don't create application-error branches. The connector-policy
+transport retains its shared header redaction and bounded error-body handling;
+raw transport retains its direct response behavior.
+
+Schema dialects and references follow the
+[OpenAPI 3.1 Schema Object](https://spec.openapis.org/oas/v3.1.0.html#schema-object)
+and [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/json-schema-core).
+The [MCP tools contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+defines discovery and invocation; Harn's tool-contract metadata carries the
+application-error schema and data.
 
 ## `x-harn`
 
@@ -166,6 +199,11 @@ policy, and source binding.
 x-harn:
   annotationDefaults:
     openWorldHint: false
+  cli:
+    commands:
+      - command: [widgets]
+        title: Widget commands
+        aliases: [w]
 paths:
   /widgets/{widget-id}:
     get:
@@ -181,7 +219,12 @@ paths:
           audiences: [agent, catalog, mcp, cli]
         cli:
           command: [widgets, get]
+          aliases: [show]
           hidden: false
+          arguments:
+            widget-id:
+              position: 0
+              value_name: ID
         annotations:
           readOnlyHint: true
           destructiveHint: false
@@ -206,7 +249,9 @@ paths:
 | `defer_loading` | boolean | Mark the tool for deferred discovery. Defaults to `false`. |
 | `governance.audiences` | non-empty list of `cli`, `mcp`, `catalog`, `dashboard`, or `agent` | Adapters allowed to discover and invoke the tool. Defaults to all five. |
 | `cli.command` | string or non-empty list of strings | Portable command path. Segments use ASCII letters, digits, `_`, and `-`, and cannot start with `-`. |
+| `cli.aliases` | list of portable strings | Alternative names for the leaf command. |
 | `cli.hidden` | boolean | Hide the command from help while retaining explicit invocation. |
+| `cli.arguments` | map of OpenAPI wire names to argument records | Override CLI presentation and token mapping for an input property. Use `body` for the request body. |
 | `annotations` | object | Advisory MCP hints. Values that contradict standard HTTP method facts are rejected. |
 | `icons` | list of icon objects | Portable tool icons. Each icon requires `src` and accepts `mimeType`, `sizes`, and `theme` (`light` or `dark`). |
 | `execution.taskSupport` | `forbidden`, `optional`, or `required` | Whether MCP clients may or must invoke the tool as a task. |
@@ -215,6 +260,47 @@ paths:
 Unknown fields and invalid values fail during code generation. Duplicate
 exposed tool names and exact or parent/leaf CLI command collisions also fail
 before source is rendered.
+
+### CLI metadata
+
+Without overrides, the first operation tag supplies the parent command and the
+generated tool name supplies its leaf. An exact sanitized tag token at the
+start or end of the leaf is removed: `widgets_list` becomes `widgets list`,
+while `list_widget` stays `widgets list_widget`. There is no singularization.
+An explicit `namespace` supplies the prefix instead; `cli.command` replaces the
+whole path. Declared OpenAPI tags contribute titles, descriptions, and source
+order only when they own a generated CLI parent.
+
+Root `x-harn.cli.commands` contains non-runnable parent records. Each requires a
+`command` path and accepts `title`, `description`, `aliases`, `hidden`, and
+non-negative `display_order`. An explicit record overlays the matching derived
+parent; omitted fields retain their OpenAPI defaults.
+
+Argument keys use the original parameter spelling, such as `widget-id`, rather
+than the generated `widget_id` property. Parameters that collide after
+normalization are rejected. A parameter named `body` receives a separate safe
+property name when the operation also accepts a request body. An explicit
+`cli.arguments.body` override is rejected in that case because its target is
+ambiguous. Headers supplied through `header_overrides` are not exposed as
+arguments. Presentation overrides leave input validation and governance unchanged.
+
+| Argument field | Type | Meaning |
+|---|---|---|
+| `long`, `short`, `aliases` | string, one ASCII letter or digit, list of strings | Option tokens without leading dashes. |
+| `position` | non-negative integer | Positional argument index. |
+| `value_name`, `help`, `help_group` | non-empty string | Value label, help text, and help section. |
+| `value_hint` | `file`, `directory`, `path`, `url`, `email`, `username`, `hostname`, `command`, `other` | Portable completion hint. |
+| `boolean_style` | `value`, `set_true`, `set_false` | Whether a boolean takes a value or changes when present. |
+| `repeatable`, `hidden` | boolean | Repeated-value mapping and help visibility. |
+| `completions` | list of non-empty strings | Explicit completion candidates. |
+| `display_order` | non-negative integer | Ordering within help. |
+
+Parameter descriptions supply argument help. Closed string enums supply
+completion candidates; URI, email, and hostname formats supply value hints.
+Explicit fields replace these defaults, including an empty completion list.
+Short names, positions, and boolean presence semantics require explicit
+overrides. Harn owns command-tree and argument compatibility validation; the
+generator does not maintain a second parser or usage schema.
 
 The optional top-level `x-harn.annotationDefaults.openWorldHint` is a boolean
 default for every generated tool. An operation-level `openWorldHint` overrides

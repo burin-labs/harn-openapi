@@ -53,6 +53,16 @@ pipeline default(harness: Harness) {
   require defaults.arguments.widget_id.value_hint == "url", "format-derived value hint"
   require defaults.arguments.color.completions == ["red", "blue"], "enum completions"
   require defaults.arguments.body.help == "Replacement widget.", "request-body help"
+  for name in ["widgets_list", "list_widgets"] {
+    assert_eq(
+      normalize_adapter_cli(nil, {...context(), tool_name: name}).command,
+      ["widgets", "list"],
+    )
+  }
+  assert_eq(
+    normalize_adapter_cli(nil, {...context(), tool_name: "list_widget"}).command,
+    ["widgets", "list_widget"],
+  )
   const overridden = normalize_adapter_cli(
     {
       command: ["widgets", "get"],

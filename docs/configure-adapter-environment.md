@@ -3,6 +3,10 @@
 Set the generated base URL and credential variables in the process that starts
 the adapter. Generated source contains variable names, never secret values.
 
+When `codegen_module` has no explicit prefix, it uses `HARN_EXT_<MODULE>`.
+For a module named `widgets`, set `HARN_EXT_WIDGETS_BASE_URL`. Harn reserves
+other `HARN_` names for runtime settings and rejects unknown names at startup.
+
 The prefix comes from `environment_prefix`. For `WIDGETS`, the base URL is:
 
 ```sh

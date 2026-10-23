@@ -1,3 +1,5 @@
+import { ToolCliArgumentSpec, ToolCliBooleanStyle, ToolCliSpec, ToolCliValueHint } from "std/tools"
+
 /**
  * Portable CLI projection owned by the generated Harn tool catalog.
  *
@@ -5,40 +7,13 @@
  * can override presentation and token-to-JSON mapping, but it never changes
  * the input schema or the accepted values.
  */
-pub type AdapterCliValueHint = "file" \
-  | "directory" \
-  | "path" \
-  | "url" \
-  | "email" \
-  | "username" \
-  | "hostname" \
-  | "command" \
-  | "other"
+pub type AdapterCliValueHint = ToolCliValueHint
 
-pub type AdapterCliBooleanStyle = "value" | "set_true" | "set_false"
+pub type AdapterCliBooleanStyle = ToolCliBooleanStyle
 
-pub type AdapterCliArgumentSpec = {
-  long?: string,
-  short?: string,
-  aliases?: list<string>,
-  position?: int,
-  value_name?: string,
-  help?: string,
-  value_hint?: AdapterCliValueHint,
-  boolean_style?: AdapterCliBooleanStyle,
-  repeatable?: bool,
-  hidden?: bool,
-  completions?: list<string>,
-  display_order?: int,
-  help_group?: string,
-}
+pub type AdapterCliArgumentSpec = ToolCliArgumentSpec
 
-pub type AdapterCliSpec = {
-  command: list<string>,
-  aliases?: list<string>,
-  hidden?: bool,
-  arguments?: dict<string, AdapterCliArgumentSpec>,
-}
+pub type AdapterCliSpec = ToolCliSpec
 
 /** One input-schema property and its source OpenAPI parameter spelling. */
 pub type AdapterCliParameter = {
@@ -58,37 +33,9 @@ pub type AdapterCliContext = {
   body_schema?: dict,
 }
 
-const CLI_FIELDS = ["command", "aliases", "hidden", "arguments"]
+const CLI_FIELDS = schema_of(ToolCliSpec).properties.keys()
 
-const ARGUMENT_FIELDS = [
-  "long",
-  "short",
-  "aliases",
-  "position",
-  "value_name",
-  "help",
-  "value_hint",
-  "boolean_style",
-  "repeatable",
-  "hidden",
-  "completions",
-  "display_order",
-  "help_group",
-]
-
-const VALUE_HINTS: list<AdapterCliValueHint> = [
-  "file",
-  "directory",
-  "path",
-  "url",
-  "email",
-  "username",
-  "hostname",
-  "command",
-  "other",
-]
-
-const BOOLEAN_STYLES: list<AdapterCliBooleanStyle> = ["value", "set_true", "set_false"]
+const ARGUMENT_FIELDS = schema_of(ToolCliArgumentSpec).properties.keys()
 
 fn cli_error(operation_id: string, field: string, detail: string) -> string {
   return "harn-openapi.codegen_module: x-harn.cli"
@@ -162,7 +109,14 @@ fn normalize_command(value: unknown, context: AdapterCliContext) -> list<string>
   } else if context.namespace != nil {
     command = context.namespace.split(".") + context.tool_name.split(".")
   } else if len(context.tags) > 0 {
-    command = [context.tags[0]] + context.tool_name.split(".")
+    const tag = context.tags[0] ?? ""
+    let leaf = context.tool_name
+    if leaf.starts_with(tag + "_") {
+      leaf = substring(leaf, len(tag) + 1, len(leaf))
+    } else if leaf.ends_with("_" + tag) {
+      leaf = substring(leaf, 0, len(leaf) - len(tag) - 1)
+    }
+    command = [tag] + leaf.split(".")
   } else {
     command = context.tool_name.split(".")
   }
@@ -287,8 +241,7 @@ fn validate_parameter_identities(context: AdapterCliContext) -> nil {
           + "'",
       )
     }
-    if context.body_schema != nil
-      && (parameter.wire_name == "body" || parameter.property == "body") {
+    if context.body_schema != nil && parameter.property == "body" {
       return reject_validation(
         context.operation_id,
         ".arguments",
@@ -324,11 +277,11 @@ fn validate_argument_scalar(operation_id: string, field: string, key: string, va
   if ["repeatable", "hidden"].contains(key) && type_of(value) != "bool" {
     return reject_validation(operation_id, field + "." + key, "must be a bool")
   }
-  if key == "value_hint" && (type_of(value) != "string" || !VALUE_HINTS.contains(value)) {
+  if key == "value_hint" && !schema_is(value, ToolCliValueHint) {
     return reject_validation(operation_id, field + ".value_hint", "contains an unknown value hint")
   }
   if key == "boolean_style"
-    && (type_of(value) != "string" || !BOOLEAN_STYLES.contains(value)) {
+    && !schema_is(value, ToolCliBooleanStyle) {
     return reject_validation(
       operation_id,
       field + ".boolean_style",
@@ -413,6 +366,14 @@ pub fn normalize_adapter_cli(value: unknown, context: AdapterCliContext) -> Adap
   if overrides != nil {
     if type_of(overrides) != "dict" {
       return reject_cli(context.operation_id, ".arguments", "must be an object")
+    }
+    if overrides.get("body") != nil && context.body_schema != nil
+      && parameter_for_wire_name(context.parameters, "body") != nil {
+      return reject_cli(
+        context.operation_id,
+        ".arguments.body",
+        "is ambiguous between the OpenAPI parameter and request body",
+      )
     }
     for entry in overrides {
       const parameter = parameter_for_wire_name(context.parameters, entry.key)

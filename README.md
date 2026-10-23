@@ -40,7 +40,7 @@ CLI pinned by `.harn-version`.
 | `harn.toml` | Package metadata and exported entry points. `src/lib.harn` is the default export and carries the typed public surface. |
 | `src/lib.harn` | Public parser, walker, schema-resolution, and SDK codegen implementation. |
 | `src/adapter_governance.harn` | Canonical `x-harn.governance` validation against Harn's closed adapter-audience types. |
-| `src/adapter_schema_graph.harn` | Portable Draft 2020-12 component graph and reference validation shared by future catalog projections. |
+| `src/adapter_schema_graph.harn` | Portable Draft 2020-12 component graph and reference validation shared by catalog projections. |
 | `src/adapter_security.harn` | Typed OpenAPI security plan shared by generated clients, environment configuration, CLI, MCP, and static catalogs. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
@@ -87,7 +87,7 @@ checkout (`<repo>@HEAD`) so pull requests are checked before a release tag
 exists. To test a published ref locally after tagging:
 
 ```sh
-HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.2.0-rc.1 \
+HARN_EXT_OPENAPI_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.2.0-rc.1 \
   harn run scripts/package_install_smoke.harn
 ```
 

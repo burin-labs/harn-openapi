@@ -22,11 +22,12 @@ fn generated_runner(module_path: string) -> string {
     + "  require impossible_tool != nil, \"false-schema tool must project\"\n"
     + "  const any_params = ((any_tool ?? {}).get(\"inputSchema\") ?? {}).get(\"properties\") ?? {}\n"
     + "  const impossible_params = ((impossible_tool ?? {}).get(\"inputSchema\") ?? {}).get(\"properties\") ?? {}\n"
-    + "  assert_eq(any_params.get(\"anything\"), {})\n"
-    + "  assert_eq(any_params.get(\"body\"), {})\n"
-    + "  assert_eq((any_tool ?? {}).get(\"outputSchema\"), {})\n"
-    + "  assert_eq(impossible_params.get(\"blocked\"), {not: {}})\n"
-    + "  assert_eq((impossible_tool ?? {}).get(\"outputSchema\"), {not: {}})\n"
+    + "  assert_eq(any_params.get(\"anything\"), true)\n"
+    + "  assert_eq(any_params.get(\"body\"), true)\n"
+    + "  assert_eq((any_tool ?? {}).get(\"outputSchema\"), true)\n"
+    + "  assert_eq(impossible_params.get(\"blocked\"), false)\n"
+    + "  assert_eq((impossible_tool ?? {}).get(\"outputSchema\"), {\"$ref\": \"#/components/schemas/Impossible\"})\n"
+    + "  assert_eq(catalog.components.schemas.Impossible, false)\n"
     + "}\n"
 }
 

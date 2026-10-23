@@ -64,10 +64,10 @@ Run the consumer repo's normal Harn gate with the pinned Harn CLI. In this
 repo, the equivalent package-manager smoke is:
 
 ```sh
-HARN_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.2.0-rc.1 \
+HARN_EXT_OPENAPI_PACKAGE_REF=github.com/burin-labs/harn-openapi@v0.2.0-rc.1 \
   harn run scripts/package_install_smoke.harn
 ```
 
-During unreleased PR work, omit `HARN_PACKAGE_REF`; the smoke installs the
+During unreleased PR work, omit `HARN_EXT_OPENAPI_PACKAGE_REF`; the smoke installs the
 current checkout with `@HEAD` so package install behavior is still covered
 before the release tag exists.
