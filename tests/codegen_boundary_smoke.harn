@@ -1,0 +1,150 @@
+import { codegen_module, parse } from "../src/lib"
+
+const _COLLIDING_NAMES: list<string> = [
+  "client",
+  "harness",
+  "net",
+  "body",
+  "operation_auth",
+  "path_bindings",
+  "path",
+  "query_bindings",
+  "url",
+  "request_headers",
+  "body_str",
+  "body_variant",
+  "resp",
+  "raw",
+  "url_2",
+]
+
+fn run_generated(harness: Harness, document: dict, runner: string, transport: string) -> nil {
+  const root = harness.fs.mkdtemp("harn-openapi-boundary-")
+  const source = codegen_module(
+    harness.fs,
+    parse(json_stringify(document)),
+    {module_name: "boundary", transport: transport},
+  )
+  harness.fs.write_text("${root}/generated.harn", source)
+  harness.fs.write_text("${root}/runner.harn", runner)
+  const checked = harness.process.run(
+    {program: harness.env.get("HARN_BIN") ?? "harn", args: ["check", "${root}/generated.harn"]},
+  )
+  require checked.success, "${transport}: ${checked.stdout}\n${checked.stderr}"
+  const result = harness.process.run(
+    {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${root}/runner.harn"]},
+  )
+  require result.success, "${transport}: ${result.stdout}\n${result.stderr}"
+}
+
+@heavy(threads: 2)
+pipeline test_parameter_names_preserve_every_input(harness: Harness) {
+  let parameters = []
+  for name in _COLLIDING_NAMES {
+    parameters = parameters
+      + [{name: name, in: "query", description: name, schema: {type: "string"}}]
+  }
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "Parameter names", version: "1"},
+    paths: {
+      "/items": {
+        post: {
+          operationId: "createItem",
+          parameters: parameters,
+          requestBody: {required: true, content: {"application/json": {schema: {type: "object"}}}},
+          responses: {
+            "200": {description: "Created", content: {"application/json": {schema: true}}},
+          },
+        },
+      },
+    },
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_tools, new_client } from "./generated"
+
+      pipeline test_inputs(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        const registry = adapter_tools(AUTHORITY, client)
+        const tool = registry.tools[0]
+        let args = {body: {name: "widget"}}
+        let pairs = []
+        for entry in tool.parameters {
+          if entry.key != "body" {
+            const name = entry.value.schema.description
+            args = {...args, [entry.key]: name}
+            pairs = pairs + [name + "=" + name]
+          }
+        }
+        assert_eq(len(tool.parameters), 16)
+        const url = "https://api.example.test/items?" + join(pairs, "&")
+        harness.testing.http_mock("POST", url, {status: 200, body: "{\"id\":1}"})
+        assert_eq(tool.handler(args).data, {id: 1})
+        const calls = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(calls), 1)
+        assert_eq(len(split(split(calls[0].url, "?")[1], "&")), 15)
+        for pair in pairs { assert(contains(calls[0].url, pair)) }
+        assert_eq(json_parse(calls[0].body), {name: "widget"})
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
+}
+
+@heavy(threads: 2)
+pipeline test_json_without_schema_accepts_all_json_values(harness: Harness) {
+  const document = {
+    openapi: "3.1.1",
+    info: {title: "JSON without schema", version: "1"},
+    paths: {
+      "/value": {
+        get: {
+          operationId: "getValue",
+          responses: {"200": {description: "JSON", content: {"application/json": {}}}},
+        },
+      },
+      "/empty": {
+        get: {
+          operationId: "getEmpty",
+          responses: {"200": {description: "JSON", content: {"application/json": {schema: {}}}}},
+        },
+      },
+    },
+  }
+  for transport in ["connector_policy", "raw"] {
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_tools, get_empty, get_value, new_client } from "./generated"
+
+      pipeline test_values(harness: Harness) {
+        const client = new_client("https://api.example.test")
+        const tools = adapter_tools(AUTHORITY, client).tools
+        assert_eq(len(tools), 2)
+        for value in [[1, 2], "ready", 42, true, nil, {id: 1}] {
+          harness.testing.http_mock_clear()
+          harness.testing.http_mock("GET", "https://api.example.test/value", {
+            status: 200, body: json_stringify(value),
+          })
+          harness.testing.http_mock("GET", "https://api.example.test/empty", {
+            status: 200, body: json_stringify(value),
+          })
+          assert_eq(get_value(AUTHORITY, client), value)
+          assert_eq(get_empty(AUTHORITY, client), value)
+          for tool in tools { assert_eq(tool.handler({}).data, value) }
+          assert_eq(len(harness.testing.http_mock_calls()), 4)
+        }
+      }
+      """
+    run_generated(harness, document, replace(runner, "AUTHORITY", authority), transport)
+  }
+}

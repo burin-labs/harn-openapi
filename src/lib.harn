@@ -2167,12 +2167,26 @@ fn _default_environment_prefix(module_name: string) -> string {
   return "HARN_" + stem
 }
 
-fn _operation_param_models(params: any) {
+fn _operation_param_models(params: list) -> dict {
   let path_params = []
   let query_params = []
   let header_params = []
   let cookie_params = []
-  let taken_param_idents = []
+  // API inputs must not shadow the generated operation's arguments or locals.
+  let taken_param_idents = [
+    "harness",
+    "net",
+    "operation_auth",
+    "path_bindings",
+    "path",
+    "query_bindings",
+    "url",
+    "request_headers",
+    "body_str",
+    "body_variant",
+    "resp",
+    "raw",
+  ]
   for p in params {
     if p.get("name") != nil {
       const ident = _unique_fn_name(_sanitize_ident(p.get("name")), taken_param_idents)
@@ -3654,11 +3668,7 @@ fn _resolve_response_type(doc: any, op: any, cache: any) {
   if picked.kind == "opaque" {
     return _response_type("dict", "opaque", cache)
   }
-  const schema_raw = picked.schema
-  if schema_raw == nil {
-    // JSON content entry with no declared schema — fall back to dict.
-    return _response_type("dict", "json_dict", cache)
-  }
+  const schema_raw = picked.schema ?? true
   const ref = if type_of(schema_raw) == "dict" {
     schema_raw.get("$ref")
   } else {
@@ -3825,7 +3835,7 @@ fn _schema_shape_kind(sch: any) {
   return "dict"
 }
 
-fn _untyped_json_return_type(sch: any) {
+fn _untyped_json_return_type(sch: any) -> string {
   if type_of(sch) != "dict" {
     return "any"
   }
@@ -3833,6 +3843,9 @@ fn _untyped_json_return_type(sch: any) {
     return "any"
   }
   const ty = sch.get("type")
+  if ty == nil && sch.get("properties") == nil {
+    return "any"
+  }
   if ty == "array" {
     return "list"
   }
