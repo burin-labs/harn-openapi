@@ -1,23 +1,17 @@
+import { ToolCliCommandSpec, ToolCliTreeSpec } from "std/tools"
 import { is_portable_cli_component } from "./adapter_cli"
 
 /** Registry-level metadata for one parent path in the portable CLI tree. */
-pub type AdapterCliCommandSpec = {
-  command: list<string>,
-  title?: string,
-  description?: string,
-  aliases?: list<string>,
-  hidden?: bool,
-  display_order?: int,
-}
+pub type AdapterCliCommandSpec = ToolCliCommandSpec
 
-pub type AdapterCliTreeSpec = {commands: list<AdapterCliCommandSpec>}
+pub type AdapterCliTreeSpec = ToolCliTreeSpec
 
 /** CLI-visible OpenAPI tag metadata after one importer-owned name normalization. */
 pub type AdapterCliTag = {command: string, title: string, description?: string, display_order: int}
 
-const ROOT_CLI_FIELDS = ["commands"]
+const ROOT_CLI_FIELDS = schema_of(ToolCliTreeSpec).properties.keys()
 
-const COMMAND_FIELDS = ["command", "title", "description", "aliases", "hidden", "display_order"]
+const COMMAND_FIELDS = schema_of(ToolCliCommandSpec).properties.keys()
 
 fn tree_error(field: string, detail: string) -> string {
   return "harn-openapi.codegen_module: root x-harn.cli" + field + " " + detail

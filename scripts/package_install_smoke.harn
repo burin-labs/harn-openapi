@@ -3,7 +3,7 @@
  * generate a typed SDK, and project its registry through CLI and MCP.
  *
  * By default the smoke installs the current checkout as a path dependency,
- * which keeps PR CI useful before a release tag exists. Set HARN_PACKAGE_REF
+ * which keeps PR CI useful before a release tag exists. Set HARN_EXT_OPENAPI_PACKAGE_REF
  * to test a published ref such as
  * `github.com/burin-labs/harn-openapi@v0.2.0-rc.1`.
  */
@@ -24,7 +24,7 @@ fn _harn_bin(env: HarnessEnv) -> string {
 }
 
 fn _package_ref(env: HarnessEnv, repo_root: string) -> string {
-  const package_ref = env.get("HARN_PACKAGE_REF")
+  const package_ref = env.get("HARN_EXT_OPENAPI_PACKAGE_REF")
   if package_ref != nil && package_ref != "" {
     return package_ref
   }

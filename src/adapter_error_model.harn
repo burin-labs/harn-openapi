@@ -3,7 +3,12 @@ import {
   adapter_http_status_is_success,
   adapter_http_status_is_valid,
 } from "./adapter_http_semantics"
-import { AdapterJsonSchema, embed_adapter_schema } from "./adapter_schema_graph"
+import {
+  AdapterJsonSchema,
+  PreparedAdapterSchemaGraph,
+  embed_adapter_schema,
+  nest_adapter_schema,
+} from "./adapter_schema_graph"
 
 /** One OpenAPI response offered to the application-error model. */
 pub type AdapterErrorResponseInput = {status_key: string, body_schema?: AdapterJsonSchema}
@@ -26,6 +31,44 @@ pub type AdapterOperationErrorModel = {
   error_type_name: string,
   responses: list<AdapterErrorResponse>,
   error_schema: AdapterJsonSchema,
+}
+
+/** Exact declared JSON failures that may cross the tool application-error boundary. */
+pub fn adapter_application_error_schema(
+  operation_id: string,
+  inputs: list<AdapterErrorResponseInput>,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterJsonSchema? {
+  let variants: list<AdapterJsonSchema> = []
+  let definitions: dict<string, AdapterJsonSchema> = {}
+  for input in inputs {
+    const response = normalize_response(operation_id, input)
+    if response.match_kind == "exact" && response.body_schema != nil {
+      const body = nest_adapter_schema(response.body_schema, response.discriminant + "_body", graph)
+      definitions = {...definitions, ...body.definitions}
+      variants = variants
+        + [
+          {
+            type: "object",
+            properties: {
+              operation: {type: "string", const: operation_id},
+              status: status_schema(response),
+              headers: {type: "object", additionalProperties: {type: "string"}},
+              body: body.schema,
+            },
+            required: ["operation", "status", "headers", "body"],
+            additionalProperties: false,
+          },
+        ]
+    }
+  }
+  if len(variants) == 0 {
+    return nil
+  }
+  if len(definitions) == 0 {
+    return {oneOf: variants}
+  }
+  return {oneOf: variants, "$defs": definitions}
 }
 
 fn error_message(operation_id: string, detail: string) -> string {

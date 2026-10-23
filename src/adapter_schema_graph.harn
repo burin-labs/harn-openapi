@@ -1,5 +1,7 @@
+import { JsonSchema202012 } from "std/tools"
+
 /** Draft 2020-12 schema document carried by the portable tool catalog. */
-pub type AdapterJsonSchema = bool | dict<string, unknown>
+pub type AdapterJsonSchema = JsonSchema202012
 
 /** Observable preparation work used by scale regressions and support diagnostics. */
 pub type AdapterSchemaGraphWork = {
@@ -81,8 +83,14 @@ fn schema_dialect(value: unknown, field: string) -> nil {
   if value == nil {
     return nil
   }
-  if type_of(value) != "string"
-    || ![JSON_SCHEMA_2020_12, OPENAPI_31_BASE_DIALECT].contains(value.trim()) {
+  if type_of(value) != "string" {
+    return reject_nil(field, "must be a JSON Schema dialect URI string")
+  }
+  let dialect = value.trim()
+  if dialect.ends_with("#") {
+    dialect = dialect.slice(0, -1)
+  }
+  if ![JSON_SCHEMA_2020_12, OPENAPI_31_BASE_DIALECT].contains(dialect) {
     return reject_nil(
       field,
       "must declare Draft 2020-12 or the OpenAPI 3.1 base dialect when present",
@@ -214,7 +222,11 @@ fn resolve_pointer(
   encoded_segments: list<string>,
   field: string,
 ) -> AdapterJsonSchema {
-  const pointer = url_decode(replace("/${join(encoded_segments, "/")}", "+", "%2B"))
+  const pointer = if len(encoded_segments) == 0 {
+    ""
+  } else {
+    url_decode(replace("/${join(encoded_segments, "/")}", "+", "%2B"))
+  }
   const target = try {
     json_pointer(root, pointer)
   } catch (_error) {
@@ -229,33 +241,38 @@ fn resolve_pointer(
   return schema_expect(target, AdapterJsonSchema)
 }
 
-fn validate_reference(
+type AdapterSchemaLocation = {schema: AdapterJsonSchema, root: AdapterJsonSchema}
+
+/** Schema-derived presentation hints; execution retains the original schema graph. */
+pub type AdapterSchemaCliDefaults = {enum?: list<unknown>, format?: string}
+
+fn resolve_reference(
   reference: unknown,
   root: AdapterJsonSchema,
   schemas: dict,
   field: string,
-) -> nil {
+) -> AdapterSchemaLocation {
   if type_of(reference) != "string" || reference == "" {
-    return reject_nil(field, "must be a non-empty local JSON Reference")
+    throw schema_error(field, "must be a non-empty local JSON Reference")
   }
   if !starts_with(reference, "#") {
-    return reject_nil(field, "must be local; external schema resources are not portable")
+    throw schema_error(field, "must be local; external schema resources are not portable")
   }
   if starts_with(reference, "#/components/")
     && !starts_with(reference, "#/components/schemas/") {
-    return reject_nil(field, "must not target a non-schema OpenAPI component")
+    throw schema_error(field, "must not target a non-schema OpenAPI component")
   }
   if starts_with(reference, "#/components/schemas/") {
     const suffix = substring(reference, len("#/components/schemas/"), len(reference))
     const parts = split(suffix, "/")
     const encoded_name = parts[0]
     if encoded_name == nil || encoded_name == "" {
-      return reject_nil(field, "must name a schema component")
+      throw schema_error(field, "must name a schema component")
     }
     const name = decode_component_name(encoded_name, field)
     const component = schemas.get(name)
     if component == nil {
-      return reject_nil(field, "targets missing schema component '" + name + "'")
+      throw schema_error(field, "targets missing schema component '" + name + "'")
     }
     let nested = []
     for enumerated in parts.enumerate() {
@@ -263,17 +280,65 @@ fn validate_reference(
         nested = nested + [enumerated.value]
       }
     }
-    if len(nested) > 0 {
-      resolve_pointer(component, nested, field)
-    }
+    const component_schema = schema_expect(component, AdapterJsonSchema)
+    return {schema: resolve_pointer(component_schema, nested, field), root: component_schema}
   } else if reference == "#" {
-    return nil
+    return {schema: root, root: root}
   } else if starts_with(reference, "#/") {
-    resolve_pointer(root, split(substring(reference, 2, len(reference)), "/"), field)
+    return {
+      schema: resolve_pointer(root, split(substring(reference, 2, len(reference)), "/"), field),
+      root: root,
+    }
   } else {
-    return reject_nil(field, "must use a JSON Pointer fragment; anchors are not portable")
+    throw schema_error(field, "must use a JSON Pointer fragment; anchors are not portable")
   }
-  return nil
+}
+
+/** Read CLI presentation defaults through references without flattening validation schemas. */
+pub fn adapter_schema_cli_defaults(
+  value: unknown,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterSchemaCliDefaults? {
+  if type_of(value) != "dict" {
+    return nil
+  }
+  const schema = schema_expect(value, AdapterJsonSchema)
+  let location: AdapterSchemaLocation = {schema: schema, root: schema}
+  let seen: list<AdapterSchemaLocation> = []
+  let candidates: list? = nil
+  let formats: list<string> = []
+  while !seen.contains(location) {
+    seen = seen + [location]
+    const node = location.schema
+    if type_of(node) != "dict" {
+      break
+    }
+    const values = node.get("enum")
+    if type_of(values) == "list" {
+      candidates = if candidates == nil {
+        values
+      } else {
+        candidates.filter({ candidate -> values.contains(candidate) })
+      }
+    }
+    const format = node.get("format")
+    if type_of(format) == "string" && !formats.contains(format) {
+      formats = formats + [format]
+    }
+    const reference = node.get("$ref")
+    if reference == nil {
+      break
+    }
+    location = resolve_reference(reference, location.root, graph.schemas, "CLI parameter.$ref")
+  }
+  let defaults: AdapterSchemaCliDefaults = {}
+  if candidates != nil {
+    defaults = schema_expect({...defaults, enum: candidates}, AdapterSchemaCliDefaults)
+  }
+  if len(formats) == 1 {
+    defaults = schema_expect({...defaults, format: formats[0]}, AdapterSchemaCliDefaults)
+  }
+  return defaults
 }
 
 fn validate_schema_refs(
@@ -286,7 +351,7 @@ fn validate_schema_refs(
     return nil
   }
   if value.get("$ref") != nil {
-    validate_reference(value.get("$ref"), root, schemas, field + ".$ref")
+    resolve_reference(value.get("$ref"), root, schemas, field + ".$ref")
   }
   for keyword in SINGLE_SCHEMA_KEYWORDS {
     if value.get(keyword) != nil {
@@ -531,7 +596,8 @@ fn rewrite_embedded_schema_references(
   if type_of(reference) == "string" {
     if reference == "#" {
       out = {...out, "$ref": definition_pointer}
-    } else if starts_with(reference, "#/") {
+    } else if starts_with(reference, "#/")
+      && !starts_with(reference, "#/components/schemas/") {
       out = {...out, "$ref": definition_pointer + substring(reference, 1, len(reference))}
     }
   }
@@ -576,16 +642,35 @@ pub fn embed_adapter_schema(
   value: AdapterJsonSchema,
   definition_key: string,
 ) -> AdapterSchemaEmbedding {
+  return schema_embedding(value, definition_key, {}, false)
+}
+
+/** Nest an inline schema without changing local or shared reference scope. */
+pub fn nest_adapter_schema(
+  value: AdapterJsonSchema,
+  definition_key: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterSchemaEmbedding {
+  return schema_embedding(value, definition_key, graph.schemas, true)
+}
+
+fn schema_embedding(
+  value: AdapterJsonSchema,
+  definition_key: string,
+  schemas: dict<string, AdapterJsonSchema>,
+  preserve_inline: bool,
+) -> AdapterSchemaEmbedding {
   if definition_key.trim() == "" {
     throw schema_error("definition_key", "must be non-empty")
   }
   const normalized = normalize_schema_node(value, "schema")
-  validate_schema_refs(normalized, normalized, {}, "schema")
+  validate_schema_refs(normalized, normalized, schemas, "schema")
   const pointer = "#/$defs/" + encode_pointer_segment(definition_key)
-  return {
-    schema: {"$ref": pointer},
-    definitions: {[definition_key]: rewrite_embedded_schema_references(normalized, pointer)},
+  const rewritten = rewrite_embedded_schema_references(normalized, pointer)
+  if preserve_inline && rewritten == normalized {
+    return {schema: normalized, definitions: {}}
   }
+  return {schema: {"$ref": pointer}, definitions: {[definition_key]: rewritten}}
 }
 
 /** Close one tool schema over only its transitively referenced components. */

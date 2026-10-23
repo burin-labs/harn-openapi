@@ -1,0 +1,430 @@
+import { codegen_module, parse } from "../src/lib"
+
+type PreparedFixture = {binary: string, server: string, module: string}
+
+fn fixture_document() -> string {
+  const response = {"$ref": "#/components/schemas/Widget"}
+  const operation = {
+    operationId: "getWidget",
+    parameters: [
+      {
+        name: "id",
+        in: "query",
+        required: true,
+        schema: {"$ref": "#/components/schemas/Identifier"},
+      },
+    ],
+    responses: {
+      "200": {description: "Widget", content: {"application/json": {schema: response}}},
+      "404": {
+        description: "Missing",
+        content: {"application/json": {schema: {"$ref": "#/components/schemas/Problem"}}},
+      },
+      "4XX": {
+        description: "Other client errors are not exact application contracts",
+        content: {"application/json": {schema: {"$ref": "#/components/schemas/Problem"}}},
+      },
+    },
+  }
+  return json_stringify(
+    {
+      openapi: "3.1.1",
+      info: {title: "Shared contracts", version: "1"},
+      paths: {
+        "/widget": {get: operation},
+        "/other": {get: {...operation, operationId: "otherWidget"}},
+      },
+      components: {
+        schemas: {
+          Identifier: {type: "string", pattern: "^[a-z]+$"},
+          Widget: {
+            type: "object",
+            properties: {id: {"$ref": "#/components/schemas/Identifier"}},
+            required: ["id"],
+            additionalProperties: false,
+          },
+          Problem: {
+            type: "object",
+            properties: {message: {type: "string"}},
+            required: ["message"],
+            additionalProperties: false,
+          },
+        },
+      },
+    },
+  )
+}
+
+fn prepare(
+  harness: Harness,
+  document: string? = nil,
+  transport_error: bool = false,
+) -> PreparedFixture {
+  const root = harness.fs.source_dir() + "/../.harn/tmp/shared-contract-" + harness.random.uuid()
+  harness.fs.mkdir(root)
+  const module_path = root + "/sdk.harn"
+  const server_path = root + "/server.harn"
+  harness.fs.write_text(
+    module_path,
+    codegen_module(harness.fs, parse(document ?? fixture_document()), {module_name: "shared"}),
+  )
+  let mocks = ""
+  for fixture in [
+    {id: "ok", status: 200, body: "{\"id\":\"ok\"}"},
+    {id: "missing", status: 404, body: "{\"message\":\"not found\"}"},
+    {id: "malformed", status: 404, body: "not-json"},
+    {id: "invalid", status: 404, body: "{\"message\":3}"},
+    {id: "unknown", status: 503, body: "{\"message\":\"unavailable\"}"},
+  ] {
+    mocks = mocks + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widget?id="
+      + fixture.id
+      + "\", "
+      + json_stringify(
+        {status: fixture.status, body: fixture.body, headers: {"x-request-id": "fixture-request"}},
+      )
+      + ")\n"
+  }
+  harness.fs.write_text(
+    server_path,
+    "import { adapter_tools, new_client } from \"" + module_path + "\"\n"
+      + "fn main(harness: Harness) {\n"
+      + if transport_error {
+        "  harness.testing.clock_set(1000)\n"
+          + "  harness.testing.respond_error(\"net\", \"get\", \"fixture-transport-unavailable\", nil, true)\n"
+      } else {
+        mocks
+      }
+      + "  const client = new_client(harness.env.get(\"SHARED_BASE_URL\") ?? \"https://api.example.test\")\n"
+      + "  let registry = adapter_tools({clock: harness.clock, net: harness.net}, client)\n"
+      + if transport_error {
+        "  registry.tools = registry.tools.map({ tool -> {...tool, handler: { args ->\n"
+          + "    try { tool.handler(args) } catch (error) {\n"
+          + "      harness.fs.write_text(\""
+          + module_path
+          + ".transport.json\", json_stringify({error: error, calls: harness.testing.calls()}))\n"
+          + "      throw error\n"
+          + "    }\n"
+          + "  }} }).to_list()\n"
+      } else {
+        ""
+      }
+      + "  harness.tools.mcp_tools(registry)\n"
+      + "}\n",
+  )
+  return {binary: harness.env.get("HARN_BIN") ?? "harn", server: server_path, module: module_path}
+}
+
+fn command(harness: Harness, fixture: PreparedFixture, args: list<string>) {
+  return harness.process.run({program: fixture.binary, args: args})
+}
+
+@test
+pipeline catalog_and_cli(harness: Harness) {
+  const fixture = prepare(harness)
+  const result = command(harness, fixture, ["tool", "schema", fixture.server])
+  require result.success, "generated shared registry must load: " + result.stderr
+  const catalog = json_parse(result.stdout)
+  assert_eq(catalog.schema_version, "harn-tools/2.0")
+  assert_eq(len(catalog.components.schemas), 3)
+  assert_eq(len(catalog.tools), 2)
+  for entry in catalog.tools {
+    assert_eq(entry.inputSchema.additionalProperties, false)
+    assert_eq(entry.inputSchema.properties.id.get("$ref"), "#/components/schemas/Identifier")
+    assert_eq(entry.outputSchema.get("$ref"), "#/components/schemas/Widget")
+    assert_eq(len(entry.errorSchema.oneOf), 1)
+    const error = entry.errorSchema.oneOf[0]
+    assert_eq(error.properties.status.const, 404)
+    assert_eq(error.properties.body.get("$ref"), "#/components/schemas/Problem")
+    assert_eq(error.required, ["operation", "status", "headers", "body"])
+  }
+  const valid = command(
+    harness,
+    fixture,
+    ["tool", "run", fixture.server, "get_widget", "--id", "ok", "--harn-output", "json"],
+  )
+  require valid.success, "valid CLI input must reach the generated HTTP handler: " + valid.stderr
+  assert_eq(json_parse(valid.stdout).id, "ok")
+  const invalid = command(
+    harness,
+    fixture,
+    ["tool", "run", fixture.server, "get_widget", "--id", "1", "--harn-output", "json"],
+  )
+  require !invalid.success, "referenced input constraint must reject invalid CLI input"
+  require (invalid.stdout + invalid.stderr).contains("pattern"),
+    "the input schema, rather than an unrelated transport failure, must reject the call"
+  const missing = command(
+    harness,
+    fixture,
+    ["tool", "run", fixture.server, "get_widget", "--id", "missing", "--harn-output", "json"],
+  )
+  require !missing.success, "declared HTTP failure must remain a failed CLI command"
+  const application = json_parse(missing.stdout).error
+  assert_eq(application.kind, "application")
+  assert_eq(application.data.operation, "getWidget")
+  assert_eq(application.data.status, 404)
+  assert_eq(application.data.body.message, "not found")
+}
+
+fn rpc_input(calls: list) -> string {
+  const initialize = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: {name: "shared-contract-test", version: "1"},
+    },
+  }
+  return join(
+    [
+      json_stringify(initialize),
+      json_stringify({jsonrpc: "2.0", method: "notifications/initialized", params: {}}),
+    ]
+      + calls.map({ call -> json_stringify(call) }),
+    "\n",
+  )
+    + "\n"
+}
+
+@test
+pipeline default_environment(harness: Harness) {
+  const fixture = prepare(harness)
+  const script = fixture.module + ".environment.harn"
+  harness.fs.write_text(
+    script,
+    "import { adapter_environment_config } from \"" + fixture.module + "\"\n"
+      + "fn main(harness: Harness) { harness.stdio.println(json_stringify(adapter_environment_config(harness.env))) }\n",
+  )
+  const result = harness.process.run(
+    {
+      program: fixture.binary,
+      args: ["run", script],
+      env: {HARN_EXT_SHARED_BASE_URL: "https://configured.example.test"},
+    },
+  )
+  require result.success,
+    "the default generated environment must pass Harn startup: "
+    + result.stderr
+  assert_eq(json_parse(result.stdout).base_url, "https://configured.example.test")
+}
+
+@test
+pipeline transport_error(harness: Harness) {
+  const fixture = prepare(harness, nil, true)
+  const result = harness.process.run(
+    {
+      program: fixture.binary,
+      args: ["serve", "mcp", fixture.server],
+      stdin: rpc_input(
+        [
+          {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: {name: "get_widget", arguments: {id: "ok"}},
+          },
+        ],
+      ),
+    },
+  )
+  require result.success, "MCP must answer a failed transport call: " + result.stderr
+  const responses = result.stdout.lines().map({ line -> json_parse(line) }).to_list()
+  const response = responses.filter({ message -> message.get("id") == 2 })[0]
+  const trace = json_parse(harness.fs.read_text(fixture.module + ".transport.json"))
+  require to_string(trace.error).contains("fixture-transport-unavailable"),
+    "the actual MCP handler must receive the transport fault: "
+    + json_stringify(trace)
+  const calls = trace.calls.filter({ call -> call.capability == "net" && call.method == "get" })
+    .to_list()
+  require len(calls) > 0, "the actual MCP call must reach the fixtured transport"
+  for call in calls {
+    assert_eq(call.args[0], "https://api.example.test/widget?id=ok")
+  }
+  require response.get("error") != nil || response.result.isError,
+    "transport failure must remain an error"
+  const contract = ((response.get("result") ?? {}).get("_meta") ?? {}).get(
+    "com.harnlang/toolContract",
+  )
+    ?? {}
+  require contract.get("applicationError") == nil,
+    "transport failures must not be classified as declared application data"
+}
+
+@test
+pipeline local_schema_scope(harness: Harness) {
+  let doc = json_parse(fixture_document())
+  doc.paths["/widget"].get.parameters[0].schema = {
+    "$defs": {Value: {"$ref": "#/components/schemas/Identifier"}},
+    "$ref": "#/$defs/Value",
+  }
+  doc.paths["/widget"].get.responses["404"].content["application/json"].schema = {
+    "$defs": {Value: {"$ref": "#/components/schemas/Problem"}},
+    "$ref": "#/$defs/Value",
+  }
+  const fixture = prepare(harness, json_stringify(doc))
+  for item in [{id: "ok", succeeds: true}, {id: "missing", succeeds: false}] {
+    const result = command(
+      harness,
+      fixture,
+      ["tool", "run", fixture.server, "get_widget", "--id", item.id, "--harn-output", "json"],
+    )
+    require result.success == item.succeeds,
+      "local schema scope " + item.id + ": " + result.stdout
+      + result.stderr
+    const data = json_parse(result.stdout)
+    if item.succeeds {
+      assert_eq(data.id, "ok")
+    } else {
+      assert_eq(data.error.kind, "application")
+      assert_eq(data.error.data.body.message, "not found")
+    }
+  }
+}
+
+@test
+pipeline invalid_schema_generation(harness: Harness) {
+  for invalid in ["dialect", "external", "dangling", "output"] {
+    let doc = json_parse(fixture_document())
+    if invalid == "dialect" {
+      doc.jsonSchemaDialect = "https://example.invalid/custom-dialect"
+    } else if invalid == "output" {
+      doc.paths["/widget"].get.responses["200"].content["application/json"].schema = {
+        type: "invalid-json-type",
+      }
+    } else {
+      doc.paths["/widget"].get.responses["404"].content["application/json"].schema = {
+        "$ref": if invalid == "external" {
+          "https://example.invalid/problem.json"
+        } else {
+          "#/components/schemas/Missing"
+        },
+      }
+    }
+    const error = try {
+      codegen_module(harness.fs, parse(json_stringify(doc)), {module_name: "shared"})
+      nil
+    } catch (error) {
+      error
+    }
+    require error != nil, "unsupported " + invalid + " must fail before source is rendered"
+    require to_string(error).contains(
+      if invalid == "output" {
+        "output"
+      } else {
+        "adapter_schema_graph"
+      },
+    ),
+      "the owning schema boundary must reject " + invalid
+  }
+}
+
+@test
+pipeline advisory_hints_do_not_grant_policy(harness: Harness) {
+  const fixture = prepare(harness)
+  const script = fixture.module + ".policy.harn"
+  harness.fs.write_text(
+    script,
+    replace(
+      """
+      import { adapter_tools, new_client } from "MODULE_PATH"
+      import { agent_loop } from "std/agent/loop"
+      import { with_llm_script } from "std/testing"
+
+      fn main(harness: Harness) {
+        const tools = adapter_tools(pick(harness, ["clock", "net"]), new_client("https://api.example.test"))
+        harness.testing.http_mock("GET", "https://api.example.test/widget?id=ok", {status: 200, body: "{\"id\":\"ok\"}"})
+        const direct = tools.tools.filter({ entry -> entry.name == "get_widget" })[0].handler({id: "ok"})
+        assert_eq(direct.data.id, "ok")
+        assert_eq(len(harness.testing.http_mock_calls()), 1)
+        for claimed_read_only in [false, true] {
+          const projected = {...tools, tools: tools.tools.map({ entry -> {...entry, annotations: {...entry.annotations, readOnlyHint: claimed_read_only}} })}
+          harness.testing.http_mock_clear()
+          harness.testing.http_mock("GET", "https://api.example.test/widget?id=ok", {status: 200, body: "{\"id\":\"ok\"}"})
+          const result = with_llm_script(harness.llm, [{tool_calls: [{id: "one", name: "get_widget", arguments: {id: "ok"}}]}], { ->
+            agent_loop(harness, "Read the widget.", "Use the named tool.", {
+              provider: "mock", tools: projected, tool_format: "native", max_iterations: 1,
+              policy: {tools: ["get_widget", "other_widget"], side_effect_level: "read_only"},
+              approval_policy: {rules: [{allow: "*"}]},
+            })
+          })
+          require result.tools.rejected.contains("get_widget"), "hints must not bypass the network ceiling"
+          require json_stringify(result.transcript).contains("side_effect_ceiling"), "the policy must be the rejecting owner"
+          assert_eq(len(harness.testing.http_mock_calls()), 0)
+        }
+      }
+      """,
+      "MODULE_PATH",
+      fixture.module,
+    ),
+  )
+  const result = harness.process.run({program: fixture.binary, args: ["run", script]})
+  require result.success,
+    "the owning capability policy must reject both hint values: "
+    + result.stderr
+}
+
+@test
+pipeline mcp_errors(harness: Harness) {
+  const fixture = prepare(harness)
+  let calls = [{jsonrpc: "2.0", id: 2, method: "tools/list", params: {}}]
+  for item in [
+    {id: 3, value: "ok"},
+    {id: 4, value: "missing"},
+    {id: 5, value: "malformed"},
+    {id: 6, value: "invalid"},
+    {id: 7, value: "unknown"},
+    {id: 8, value: "1"},
+  ] {
+    calls = calls
+      + [
+        {
+          jsonrpc: "2.0",
+          id: item.id,
+          method: "tools/call",
+          params: {name: "get_widget", arguments: {id: item.value}},
+        },
+      ]
+  }
+  const result = harness.process.run(
+    {program: fixture.binary, args: ["serve", "mcp", fixture.server], stdin: rpc_input(calls)},
+  )
+  require result.success, "MCP exchange must terminate normally: " + result.stderr
+  let responses = {}
+  for line in result.stdout.lines() {
+    const message = json_parse(line)
+    if message.get("id") != nil {
+      responses = {...responses, [to_string(message.id)]: message}
+    }
+  }
+  require len(responses) == 8, "every discovery and invocation response must be observed"
+  assert_eq(
+    responses["2"].result.tools.map({ entry -> entry.name }).sorted(),
+    ["get_widget", "other_widget"],
+  )
+  assert_eq(responses["3"].result.structuredContent.id, "ok")
+  const declared = responses["4"].result
+  require declared.isError, "declared non-success HTTP response must be a tool error"
+  const application = (declared.get("_meta") ?? {}).get("com.harnlang/toolContract")
+  require application?.applicationError != nil,
+    "declared application data must be typed: "
+    + json_stringify(declared)
+  const data = application.applicationError.data
+  assert_eq(data.operation, "getWidget")
+  assert_eq(data.status, 404)
+  assert_eq(data.body.message, "not found")
+  assert_eq(data.headers.get("x-request-id"), "fixture-request")
+  for id in ["5", "6", "7", "8"] {
+    const rejected = responses[id]
+    require rejected.get("error") != nil || rejected.result.isError,
+      "malformed, schema-invalid, undeclared and invalid-input controls must fail"
+    require (rejected.get("result") ?? {}).get("structuredContent") == nil,
+      "runtime and validation faults must never masquerade as declared application data"
+    const contract = ((rejected.get("result") ?? {}).get("_meta") ?? {}).get(
+      "com.harnlang/toolContract",
+    )
+      ?? {}
+    require contract.get("applicationError") == nil,
+      "the declared application-error channel must remain absent for runtime faults"
+  }
+}

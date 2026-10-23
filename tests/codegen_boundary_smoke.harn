@@ -344,14 +344,14 @@ pipeline test_parameter_names_preserve_every_input(harness: Harness) {
         const tool = registry.tools[0]
         let args: dict = {body: {name: "widget"}}
         let pairs = []
-        for entry in tool.parameters {
+        for entry in tool.inputSchema.properties {
           if entry.key != "body" {
-            const name = entry.value.schema.description
+            const name = entry.value.description
             args = {...args, [entry.key]: name}
             pairs = pairs + [name + "=" + name]
           }
         }
-        assert_eq(len(tool.parameters), 16)
+        assert_eq(len(tool.inputSchema.properties), 16)
         const url = "https://api.example.test/items?" + join(pairs, "&")
         harness.testing.http_mock("POST", url, {status: 200, body: "{\"id\":1}"})
         assert_eq(tool.handler(args).data, {id: 1})

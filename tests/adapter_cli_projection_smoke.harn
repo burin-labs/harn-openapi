@@ -1,0 +1,260 @@
+import {
+  close_adapter_schema,
+  codegen_module,
+  parse,
+  prepare_adapter_schema_graph,
+} from "../src/lib"
+
+fn document() -> dict {
+  const operation = {
+    operationId: "getWidget",
+    tags: ["Widgets"],
+    requestBody: {
+      required: false,
+      description: "Optional ordering override.",
+      content: {"application/json": {schema: {"$ref": "#/components/schemas/SortOrder"}}},
+    },
+    parameters: [
+      {name: "id", in: "query", required: true, schema: {type: "string"}},
+      {
+        name: "sort-mode",
+        in: "query",
+        description: "Order the matching widgets.",
+        schema: {
+          "$defs": {Order: {"$ref": "#/components/schemas/SortOrder"}},
+          "$ref": "#/$defs/Order",
+          enum: ["asc", "desc", "excluded"],
+        },
+      },
+    ],
+    responses: {
+      "200": {
+        description: "Widget",
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {id: {type: "string"}},
+              required: ["id"],
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    },
+    "x-harn": {
+      cli: {
+        command: ["widgets", "get"],
+        aliases: ["show"],
+        arguments: {
+          id: {position: 0, value_name: "ID"},
+          "sort-mode": {long: "sort", short: "s", aliases: ["order"], help_group: "Selection"},
+        },
+      },
+    },
+  }
+  return {
+    openapi: "3.1.1",
+    info: {title: "CLI metadata", version: "1"},
+    components: {schemas: {SortOrder: {type: "string", enum: ["asc", "desc"]}}},
+    tags: [
+      {name: "Unused", description: "No generated commands use this tag."},
+      {name: "Widgets", description: "Manage widgets."},
+    ],
+    "x-harn": {cli: {commands: [{command: ["widgets"], title: "Widget commands", aliases: ["w"]}]}},
+    paths: {
+      "/widget": {get: operation},
+      "/secret": {
+        get: {
+          ...operation,
+          operationId: "secretWidget",
+          "x-harn": {cli: {command: ["widgets", "secret"], hidden: true}},
+        },
+      },
+    },
+  }
+}
+
+fn rejection(fs: HarnessFs, doc: dict) -> string {
+  return to_string(
+    try {
+      codegen_module(fs, parse(json_stringify(doc)), {module_name: "widgets"})
+      nil
+    } catch (error) {
+      error
+    },
+  )
+}
+
+@test
+pipeline invalid_metadata(harness: Harness) {
+  for case in [
+    {cli: {arguments: {unknown: {long: "unknown"}}}, expected: "unknown"},
+    {cli: {arguments: {id: {long: "same"}, "sort-mode": {long: "same"}}}, expected: "--same"},
+    {cli: {arguments: {id: {boolean_style: "set_true"}}}, expected: "schema type is boolean"},
+    {cli: {aliases: ["show", "show"]}, expected: "aliases"},
+  ] {
+    let doc = document()
+    doc.paths["/widget"].get["x-harn"].cli = {...case.cli, command: ["widgets", "get"]}
+    const error = rejection(harness.fs, doc)
+    require error != "nil" && error.contains("getWidget") && error.contains(case.expected),
+      "invalid CLI metadata must fail before rendering with the source operation: "
+      + json_stringify(case.cli)
+      + ": "
+      + error
+  }
+  let collision = document()
+  collision.paths["/widget"].get.parameters = [
+    {name: "widget-id", in: "query", schema: {type: "string"}},
+    {name: "widget_id", in: "query", schema: {type: "string"}},
+  ]
+  const collision_error = rejection(harness.fs, collision)
+  require collision_error.contains("widget-id") && collision_error.contains("widget_id")
+    && collision_error.contains("both normalize"),
+    "source identities must not silently rename"
+  let parent = document()
+  parent["x-harn"].cli.commands = [{command: ["widgets", "get"], title: "Cannot be a parent"}]
+  require rejection(harness.fs, parent) != "nil", "parent metadata cannot shadow a runnable leaf"
+  let ambiguous_body = document()
+  ambiguous_body.paths["/widget"].get.parameters = [
+    {name: "body", in: "query", schema: {type: "string"}},
+  ]
+  ambiguous_body.paths["/widget"].get["x-harn"].cli.arguments = {body: {long: "payload"}}
+  require rejection(harness.fs, ambiguous_body).contains("ambiguous"),
+    "an explicit body override must not choose between a wire parameter and request body"
+}
+
+@test
+pipeline product_projection(harness: Harness) {
+  const root = harness.fs.mkdtemp_in_workspace("cli-projection")
+  const module_path = root + "/sdk.harn"
+  const server = root + "/server.harn"
+  harness.fs.write_text(
+    module_path,
+    codegen_module(harness.fs, parse(json_stringify(document())), {module_name: "widgets"}),
+  )
+  harness.fs.write_text(
+    server,
+    "import { adapter_tools, new_client } from \"" + module_path + "\"\n"
+      + "fn main(harness: Harness) {\n"
+      + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widget?id=ok&sort-mode=desc\", {status: 200, body: \"{\\\"id\\\":\\\"ok\\\"}\"})\n"
+      + "  harness.tools.mcp_tools(adapter_tools({clock: harness.clock, net: harness.net}, new_client(\"https://api.example.test\")))\n"
+      + "}\n",
+  )
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  const schema = harness.process.run({program: binary, args: ["tool", "schema", server]})
+  require schema.success, "generated catalog must load: " + schema.stderr
+  const catalog = json_parse(schema.stdout)
+  assert_eq(catalog.schema_version, "harn-tools/2.0")
+  assert_eq(len(catalog.cli.commands), 1)
+  const group = catalog.cli.commands[0]
+  assert_eq(group.command, ["widgets"])
+  assert_eq(group.title, "Widget commands")
+  assert_eq(group.description, "Manage widgets.")
+  assert_eq(group.display_order, 1)
+  assert_eq(group.aliases, ["w"])
+  const entry = catalog.tools.filter({ candidate -> candidate.name == "get_widget" })[0]
+  assert_eq(entry.cli.aliases, ["show"])
+  assert_eq(entry.cli.arguments.id.position, 0)
+  assert_eq(entry.cli.arguments.sort_mode.completions, ["asc", "desc"])
+  assert_eq(entry.cli.arguments.body.completions, ["asc", "desc"])
+  assert_eq(entry.cli.arguments.body.help, "Optional ordering override.")
+  assert_eq(entry.cli.arguments.sort_mode.help, "Order the matching widgets.")
+  assert_eq(entry.cli.arguments.sort_mode.long, "sort")
+  assert_eq(entry.cli.arguments.sort_mode.short, "s")
+  const completion = harness.process.run(
+    {program: binary, args: ["tool", "completions", server, "--shell", "zsh"]},
+  )
+  require completion.success && completion.stdout.contains("asc")
+    && completion.stdout.contains("desc")
+    && completion.stdout.contains("--sort"),
+    "shell completion must use the same enum and option metadata"
+  const help = harness.process.run({program: binary, args: ["tool", "run", server, "w", "--help"]})
+  require help.success, "parent alias must resolve: " + help.stderr
+  require help.stdout.contains("Manage widgets.") && help.stdout.contains("get")
+    && !help.stdout.contains("secret"),
+    "group help must show description and hide hidden leaves"
+  const leaf_help = harness.process.run(
+    {program: binary, args: ["tool", "run", server, "w", "show", "--help"]},
+  )
+  require leaf_help.success && leaf_help.stdout.contains("ID")
+    && leaf_help.stdout.contains("--sort")
+    && leaf_help.stdout.contains("Selection")
+    && leaf_help.stdout.contains("Order the matching widgets."),
+    "argument help must derive from the catalog"
+  for option in [["--sort", "desc"], ["-s", "desc"], ["--order", "desc"]] {
+    const called = harness.process.run(
+      {
+        program: binary,
+        args: ["tool", "run", server, "w", "show", "ok"] + option + ["--harn-output", "json"],
+      },
+    )
+    require called.success, "aliases/positional/option mapping must reach HTTP: " + called.stderr
+    assert_eq(json_parse(called.stdout), {id: "ok"})
+  }
+  for value in ["invalid", "excluded"] {
+    const invalid = harness.process.run(
+      {program: binary, args: ["tool", "run", server, "widgets", "get", "ok", "--sort", value]},
+    )
+    require !invalid.success && (invalid.stdout + invalid.stderr).contains("enum"),
+      "presentation metadata must not widen the input schema: "
+      + value
+  }
+  const messages = [
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: {name: "cli-projection", version: "1"},
+      },
+    },
+    {jsonrpc: "2.0", method: "notifications/initialized", params: {}},
+    {jsonrpc: "2.0", id: 2, method: "tools/list", params: {}},
+    {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {name: "get_widget", arguments: {id: "ok", sort_mode: "desc"}},
+    },
+    {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {name: "get_widget", arguments: {id: "ok", sort_mode: "excluded"}},
+    },
+  ]
+  const mcp = harness.process.run(
+    {
+      program: binary,
+      args: ["serve", "mcp", server],
+      stdin: join(messages.map({ message -> json_stringify(message) }), "\n") + "\n",
+    },
+  )
+  require mcp.success, "same generated registry must serve MCP: " + mcp.stderr
+  let responses = {}
+  for line in mcp.stdout.split("\n") {
+    if line.trim() != "" {
+      const response = json_parse(line)
+      if response.get("id") != nil {
+        responses = {...responses, [to_string(response.id)]: response}
+      }
+    }
+  }
+  require len(responses) == 4, "initialize, discovery and both calls must all answer"
+  const discovered = responses["2"].result.tools.filter(
+    { candidate -> candidate.name == "get_widget" },
+  )[0]
+  const transport_schema = close_adapter_schema(
+    "3.1.1",
+    entry.inputSchema,
+    prepare_adapter_schema_graph("3.1.1", catalog.components.schemas),
+  )
+  assert_eq(discovered.inputSchema, transport_schema)
+  assert_eq(responses["3"].result.structuredContent, {id: "ok"})
+  const rejected = responses["4"].get("error")
+  require rejected != nil && json_stringify(rejected).contains("enum"),
+    "MCP must reject the same referenced enum value as CLI"
+}

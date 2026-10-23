@@ -57,7 +57,7 @@ fn generated_runner(module_path: string, server_path: string) -> string {
     + "  assert_eq(registered_reindex.annotations.readOnlyHint, false)\n"
     + "  assert_eq(registered_reindex.annotations.idempotentHint, false)\n"
     + "  assert_eq(registered_reindex.annotations.destructiveHint, false)\n"
-    + "  assert_eq(registered.parameters.widget_id.required, true)\n"
+    + "  assert_eq(registered.inputSchema.required, [\"widget_id\"])\n"
     + "  assert_eq(registered.outputSchema.required, [\"id\", \"label\"])\n"
     + "  harness.testing.http_mock_clear()\n"
     + "  harness.testing.http_mock(\"GET\", \"https://api.example.test/widgets/w%201?verbose=true\", {status: 200, body: \"{\\\"id\\\":\\\"w 1\\\",\\\"label\\\":\\\"Widget One\\\"}\"})\n"
@@ -324,8 +324,8 @@ pipeline default(harness: Harness) {
       cli: {command: ["widgets", "get"]},
     },
   )
-  require exact_cli_conflict.contains("conflicting generated CLI commands")
-    && exact_cli_conflict.contains("'widgets get'"),
+  require exact_cli_conflict.contains("duplicate CLI command path")
+    && exact_cli_conflict.contains("widgets get"),
     "equal CLI commands must collide inside the CLI audience: "
     + exact_cli_conflict
   const cli_conflict_rejected = second_adapter_error(
@@ -338,9 +338,9 @@ pipeline default(harness: Harness) {
       cli: {command: ["widgets"]},
     },
   )
-  require cli_conflict_rejected.contains("conflicting generated CLI commands")
-    && cli_conflict_rejected.contains("'widgets'")
-    && cli_conflict_rejected.contains("'widgets get'"),
+  require cli_conflict_rejected.contains("CLI")
+    && cli_conflict_rejected.contains("widgets")
+    && cli_conflict_rejected.contains("lookup_widget"),
     "CLI parent and leaf commands must not shadow each other: "
     + cli_conflict_rejected
   let disjoint_cli = json_parse(raw)

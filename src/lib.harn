@@ -94,6 +94,10 @@
 // full parse -> codegen -> write loop against the bundled Notion
 // fixture.
 import { filter_nil } from "std/collections"
+import { ToolCliSpec, ToolCliTreeSpec, ToolRegistry } from "std/tools"
+import { normalize_adapter_cli } from "./adapter_cli"
+import { AdapterCliTag, normalize_adapter_cli_tree } from "./adapter_cli_tree"
+import { adapter_application_error_schema } from "./adapter_error_model"
 import { normalize_adapter_governance } from "./adapter_governance"
 pub import {
   AdapterAnnotationDefaults,
@@ -110,9 +114,11 @@ pub import {
   AdapterSchemaGraphWork,
   PreparedAdapterSchemaGraph,
   close_adapter_schema,
+  nest_adapter_schema,
   normalize_adapter_schema,
   prepare_adapter_schema_graph,
 } from "./adapter_schema_graph"
+import { adapter_schema_cli_defaults } from "./adapter_schema_graph"
 pub import {
   AdapterOperationSecurityPlan,
   AdapterSecurityAlternative,
@@ -1126,7 +1132,6 @@ fn _adapter_operations(
   let adapter_operations = []
   let taken_names = []
   let exposed_names = []
-  let exposed_cli_commands = []
   for op in _operations(doc) {
     const function_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
     taken_names = taken_names + [function_name]
@@ -1142,39 +1147,11 @@ fn _adapter_operations(
       if exposed_names.contains(adapter.name) {
         throw "harn-openapi.codegen_module: duplicate generated tool name '" + adapter.name + "'"
       }
-      if adapter.governance.audiences.contains("cli") {
-        for command in exposed_cli_commands {
-          if _cli_commands_conflict(command, adapter.cli.command) {
-            throw "harn-openapi.codegen_module: conflicting generated CLI commands '"
-              + join(command, " ")
-              + "' and '"
-              + join(adapter.cli.command, " ")
-              + "'"
-          }
-        }
-        exposed_cli_commands = exposed_cli_commands + [adapter.cli.command]
-      }
       exposed_names = exposed_names + [adapter.name]
     }
     adapter_operations = adapter_operations + [adapter]
   }
   return adapter_operations
-}
-
-fn _cli_commands_conflict(left: list<string>, right: list<string>) -> bool {
-  const shared_length = if len(left) < len(right) {
-    len(left)
-  } else {
-    len(right)
-  }
-  let index = 0
-  while index < shared_length {
-    if left[index] != right[index] {
-      return false
-    }
-    index = index + 1
-  }
-  return true
 }
 
 const _MODULE_TEMPLATE = """
@@ -1228,14 +1205,19 @@ const _MODULE_TEMPLATE = """
    */
   pub fn {{ adapter_tools_decl }} {
     validate_client(client)
-    let tools = tool_registry({{ registry_info }})
+    let tools = tool_registry(
+      {{ registry_info }},
+      {{ registry_components }},
+      {{ registry_cli }},
+    )
     {{ for op in adapter_operations }}{{ if op.adapter_expose }}tools = tool_define(
       tools,
       "{{ op.adapter_name }}",
       "{{ op.adapter_description }}",
       {
-        parameters: {{ op.adapter_parameters }},{{ if op.adapter_output_schema }}
-        returns: {{ op.adapter_output_schema }},{{ end }}
+        input_schema: {{ op.adapter_input_schema }},{{ if op.adapter_output_schema }}
+        output_schema: {{ op.adapter_output_schema }},{{ end }}{{ if op.adapter_error_schema }}
+        error_schema: {{ op.adapter_error_schema }},{{ end }}
         {{ op.adapter_handler }},
         title: "{{ op.adapter_title }}",
         annotations: {{ op.adapter_annotations }},
@@ -1261,6 +1243,24 @@ const _MODULE_TEMPLATE = """
   /** Create a new {{ client_name }} handle. */
   pub fn {{ new_client_decl }} {
     {{ new_client_return }}
+  }
+
+  fn _adapter_application_error(error: unknown, operation: string, statuses: list<int>) -> dict? {
+    if type_of(error) == "dict" && statuses.contains(error.get("status"))
+      && type_of(error.get("body")) == "string" {
+      const decoded = try {
+        json_parse(error.body)
+      }
+      if is_ok(decoded) {
+        return {
+          operation: operation,
+          status: error.get("status"),
+          headers: error.get("headers") ?? {},
+          body: unwrap(decoded),
+        }
+      }
+    }
+    return nil
   }
 
   /** Read the generated portable environment projection. */
@@ -1612,6 +1612,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const schema_graph = prepare_adapter_schema_graph(
     doc.openapi,
     (doc.components ?? {}).get("schemas") ?? {},
+    doc.jsonSchemaDialect,
   )
   const adapters = _adapter_operations(doc, schema_graph, options)
   const environment_prefix = options.get("environment_prefix")
@@ -1737,10 +1738,15 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
       "ToolCatalog",
     ),
     adapter_tools_call: "adapter_tools(" + adapter_authority_name + ", client)",
-    // The generated line has 43 fixed columns around the encoded JSON.
-    // Match the formatter's 100-column boundary so short identities stay
-    // inline and longer descriptions use the stable multiline form.
-    registry_info: _render_json_parse_expr_at(registry_info, "    ", 57),
+    // Registry arguments have five columns before their encoded JSON.
+    // Keep each generated argument within the formatter's 100-column boundary.
+    registry_info: _render_json_parse_expr_at(registry_info, "    ", 95),
+    registry_components: _render_json_parse_expr_at({schemas: schema_graph.schemas}, "    ", 95),
+    registry_cli: _render_json_parse_expr_at(
+      _adapter_cli_tree(doc, adapters, schema_graph),
+      "    ",
+      95,
+    ),
     response_aliases: alias_entries,
     pagination_plan_literal: _render_json_parse_expr(_pagination_plans(doc)),
     rate_limit_metadata_literal: _render_json_parse_expr(_rate_limit_metadata(doc)),
@@ -2145,14 +2151,15 @@ fn _default_environment_prefix(module_name: string) -> string {
   if stem == "" {
     throw "harn-openapi.codegen_module: module_name must produce a portable environment prefix"
   }
-  return "HARN_" + stem
+  return "HARN_EXT_" + stem
 }
 
-fn _operation_param_models(params: list) -> dict {
+fn _operation_param_models(params: list, operation_id: string) -> dict {
   let path_params = []
   let query_params = []
   let header_params = []
   let cookie_params = []
+  let source_names: dict<string, string> = {}
   // API inputs must not shadow the generated operation's arguments or locals.
   let taken_param_idents = [
     "harness",
@@ -2169,7 +2176,13 @@ fn _operation_param_models(params: list) -> dict {
   ]
   for p in params {
     if p.get("name") != nil {
-      const ident = _unique_fn_name(_sanitize_ident(p.get("name")), taken_param_idents)
+      const source_ident = _sanitize_ident(p.name)
+      const previous = source_names.get(source_ident)
+      if previous != nil {
+        throw "harn-openapi.codegen_module: parameters on '${operation_id}': '${previous}' and '${p.name}' both normalize to input property '${source_ident}'"
+      }
+      source_names = {...source_names, [source_ident]: p.name}
+      const ident = _unique_fn_name(source_ident, taken_param_idents)
       taken_param_idents = taken_param_idents + [ident]
       const modeled = _merge_shallow(p, {ident: ident})
       const loc = p.get("in") ?? "query"
@@ -2239,18 +2252,6 @@ fn _x_harn_config(op: any) -> dict {
       throw "harn-openapi.codegen_module: x-harn." + dict_key + " on '" + op.operation_id
         + "' must be an object"
     }
-  }
-  const cli = value.get("cli") ?? {}
-  for entry in cli {
-    if !["command", "hidden"].contains(entry.key) {
-      throw "harn-openapi.codegen_module: unknown x-harn.cli field '" + entry.key + "' on '"
-        + op.operation_id
-        + "'"
-    }
-  }
-  if cli.get("hidden") != nil && type_of(cli.get("hidden")) != "bool" {
-    throw "harn-openapi.codegen_module: x-harn.cli.hidden on '" + op.operation_id
-      + "' must be a bool"
   }
   return {
     ...value,
@@ -2346,7 +2347,7 @@ fn _adapter_annotation_defaults(doc: OpenApiDoc) -> AdapterAnnotationDefaults {
     throw "harn-openapi.codegen_module: top-level x-harn must be an object"
   }
   for entry in root {
-    if entry.key != "annotationDefaults" {
+    if !["annotationDefaults", "cli"].contains(entry.key) {
       throw "harn-openapi.codegen_module: unknown top-level x-harn field '" + entry.key + "'"
     }
   }
@@ -2365,140 +2366,216 @@ fn _adapter_policy(op: any) -> dict {
   }
 }
 
-fn _adapter_parameter_schema(doc: any, parameter: any) -> AdapterJsonSchema {
+fn _adapter_parameter_schema(parameter: dict) -> AdapterJsonSchema {
   const raw = parameter.get("schema")
   if raw == nil {
     return {}
   }
-  return _schema(doc, raw)
-}
-
-fn _adapter_closed_schema(openapi_version: string, schema: any, graph: PreparedAdapterSchemaGraph) {
-  const closed = close_adapter_schema(openapi_version, schema, graph)
-  // Harn and MCP tool contracts require schema objects. JSON Schema's boolean
-  // forms have exact object equivalents, so project them at this boundary while
-  // retaining booleans in the reusable OpenAPI graph and typed SDK lowering.
-  if closed == true {
-    return {}
-  }
-  if closed == false {
-    return {not: {}}
-  }
-  return closed
+  return raw
 }
 
 fn _adapter_input_schema(
-  doc: any,
-  op: any,
-  header_overrides: any,
+  doc: OpenApiDoc,
+  op: dict,
+  params: dict,
+  header_overrides: dict,
   graph: PreparedAdapterSchemaGraph,
-) {
-  const params = _operation_param_models(op.parameters)
+) -> AdapterJsonSchema {
   let properties = {}
+  let definitions = {}
   let required = []
   for parameter in params.path + params.query + params.header + params.cookie {
     if parameter.get("in") == "header" && header_overrides.get(parameter.name) != nil {
       continue
     }
-    const parameter_schema = _adapter_parameter_schema(doc, parameter)
-    let property_schema = parameter_schema
+    const property_schema = _adapter_parameter_schema(parameter)
+    let described_schema = property_schema
     const description = parameter.get("description")
-    if description != nil
-      && type_of(parameter_schema) == "dict"
-      && parameter_schema.get("description") == nil {
-      property_schema = {...parameter_schema, description: description}
+    if type_of(property_schema) == "dict" {
+      if description != nil && property_schema.get("description") == nil {
+        described_schema = schema_expect(
+          {...property_schema, description: description},
+          AdapterJsonSchema,
+        )
+      }
     }
-    properties = {...properties, [parameter.ident]: property_schema}
+    const embedded = nest_adapter_schema(described_schema, "input_" + parameter.ident, graph)
+    properties = {...properties, [parameter.ident]: embedded.schema}
+    definitions = {...definitions, ...embedded.definitions}
     if parameter.get("in") == "path" || parameter.get("required") {
       required = required + [parameter.ident]
     }
   }
   if op.request_body != nil {
     const request_schema = _request_json_schema(doc, op.request_body)
-    properties = {
-      ...properties,
-      body: if request_schema == nil {
-        {}
-      } else {
-        _schema(doc, request_schema)
-      },
-    }
+    const embedded = nest_adapter_schema(request_schema ?? {}, "input_body", graph)
+    definitions = {...definitions, ...embedded.definitions}
+    properties = {...properties, body: embedded.schema}
     if _request_body_required(doc, op.request_body) {
       required = required + ["body"]
     }
   }
-  return {type: "object", properties: properties, required: required, additionalProperties: false}
+  let input = {
+    type: "object",
+    properties: properties,
+    required: required,
+    additionalProperties: false,
+  }
+  if len(definitions) > 0 {
+    input = {...input, "$defs": definitions}
+  }
+  return normalize_adapter_schema(doc.openapi, input, graph)
 }
 
-fn _adapter_output_schema(doc: any, op: any, graph: PreparedAdapterSchemaGraph) {
+fn _adapter_output_schema(
+  doc: OpenApiDoc,
+  op: dict,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterJsonSchema? {
   const picked = _pick_success_response(doc, op)
   if picked == nil || picked.kind != "json" || picked.schema == nil {
     return nil
   }
-  return _adapter_closed_schema(doc.openapi, _schema(doc, picked.schema), graph)
+  return normalize_adapter_schema(doc.openapi, picked.schema, graph)
 }
 
-fn _adapter_tool_parameters(
-  input_schema: any,
-  openapi_version: string,
+fn _adapter_error_schema(
+  doc: OpenApiDoc,
+  op: dict,
   graph: PreparedAdapterSchemaGraph,
-) -> dict {
-  const properties = input_schema.get("properties") ?? {}
-  const required = input_schema.get("required") ?? []
-  let parameters = {}
-  for entry in properties {
-    parameters = {
-      ...parameters,
-      [entry.key]: {
-        schema: _adapter_closed_schema(openapi_version, entry.value, graph),
-        required: required.contains(entry.key),
-      },
+) -> AdapterJsonSchema? {
+  let inputs = []
+  for entry in op.responses {
+    const status = adapter_http_response_key(entry.key)
+    if status == nil {
+      throw "harn-openapi.codegen_module: invalid response status '" + entry.key
+        + "' on '"
+        + op.operation_id
+        + "'"
+    }
+    if status.success_only {
+      continue
+    }
+    const response = _resolve_ref(doc, entry.value)
+    const media = (response.get("content") ?? {}).get("application/json")
+    const body = if media == nil {
+      nil
+    } else {
+      media.get("schema")
+    }
+    if body != nil {
+      inputs = inputs
+        + [{status_key: entry.key, body_schema: normalize_adapter_schema(doc.openapi, body, graph)}]
     }
   }
-  return parameters
+  return adapter_application_error_schema(op.operation_id, inputs, graph)
 }
 
-fn _adapter_cli(op: any, extension: any, name: any) -> dict {
-  const explicit = extension.get("cli") ?? {}
-  const command = explicit.get("command")
-  let command_path = []
-  if type_of(command) == "string" {
-    command_path = [command]
-  } else if type_of(command) == "list" {
-    if len(command) == 0 {
-      throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
-        + "' must contain at least one portable command name"
+fn _adapter_cli(
+  graph: PreparedAdapterSchemaGraph,
+  op: dict,
+  extension: dict,
+  name: string,
+) -> ToolCliSpec {
+  let parameters = []
+  for parameter in op.cli_parameters {
+    parameters = parameters
+      + [
+        filter_nil(
+          {
+            property: parameter.ident,
+            wire_name: parameter.name,
+            description: parameter.get("description"),
+            schema: adapter_schema_cli_defaults(parameter.get("schema"), graph),
+          },
+        ),
+      ]
+  }
+  let tags = []
+  for tag in op.tags ?? [] {
+    tags = tags + [_sanitize_ident(tag)]
+  }
+  return normalize_adapter_cli(
+    extension.get("cli"),
+    {
+      operation_id: op.operation_id,
+      tool_name: name,
+      namespace: extension.get("namespace"),
+      tags: tags,
+      parameters: parameters,
+      body_description: op.body_description,
+      body_schema: op.body_schema,
+    },
+  )
+}
+
+fn _adapter_cli_tree(
+  doc: OpenApiDoc,
+  adapters: list,
+  graph: PreparedAdapterSchemaGraph,
+) -> ToolCliTreeSpec {
+  let prefixes = []
+  for adapter in adapters {
+    if adapter.expose && adapter.governance.audiences.contains("cli")
+      && len(adapter.cli.command) > 1 {
+      prefixes = prefixes + [adapter.cli.command[0]]
     }
-    for segment in command {
-      if type_of(segment) != "string" || segment == "" {
-        throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
-          + "' must contain portable command names"
+  }
+  let tags: list<AdapterCliTag> = []
+  for entry in (doc.tags ?? []).enumerate() {
+    const tag = entry.value
+    const command = _sanitize_ident(tag.name)
+    if prefixes.contains(command) {
+      tags = tags
+        + [
+          filter_nil(
+            {
+              command: command,
+              title: tag.name,
+              description: tag.get("description"),
+              display_order: entry.index,
+            },
+          ),
+        ]
+    }
+  }
+  const cli = normalize_adapter_cli_tree((doc.x_harn ?? {}).get("cli"), tags)
+  let registry: ToolRegistry = tool_registry(nil, {schemas: graph.schemas}, cli)
+  for adapter in adapters {
+    if adapter.expose {
+      registry = try {
+        tool_define(
+          registry,
+          adapter.name,
+          adapter.description,
+          filter_nil(
+            {
+              input_schema: adapter.input_schema,
+              output_schema: adapter.output_schema,
+              error_schema: adapter.error_schema,
+              handler: { input -> input },
+              cli: adapter.cli,
+              governance: adapter.governance,
+            },
+          ),
+        )
+      } catch (error) {
+        throw "harn-openapi.codegen_module: CLI contract on '" + adapter.source.id + "': "
+          + to_string(error)
       }
     }
-    command_path = command
-  } else if command != nil {
-    throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
-      + "' must be a string or list of strings"
-  } else {
-    let default_parts = []
-    const namespace = extension.get("namespace")
-    if namespace != nil {
-      default_parts = default_parts + namespace.split(".")
-    } else {
-      const tags = op.tags ?? []
-      if len(tags) > 0 {
-        default_parts = default_parts + [_sanitize_ident(tags[0])]
-      }
-    }
-    command_path = default_parts + name.split(".")
   }
-  for segment in command_path {
-    if regex_match("^[A-Za-z0-9_][A-Za-z0-9_-]*$", segment) == nil {
-      throw "harn-openapi.codegen_module: x-harn.cli.command on '" + op.operation_id
-        + "' must contain portable command names"
+  try {
+    tool_registry_validate(registry)
+  } catch (error) {
+    throw {
+      message: "harn-openapi.codegen_module: invalid prepared CLI contract: " + to_string(error),
+      source_operations: adapters.filter({ adapter -> adapter.expose }).map(
+        { adapter -> {tool: adapter.name, operation_id: adapter.source.id} },
+      ),
     }
   }
-  return {...explicit, command: command_path}
+  return cli
 }
 
 fn _adapter_operation(
@@ -2510,6 +2587,32 @@ fn _adapter_operation(
   schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const extension = _x_harn_config(op)
+  const params = _operation_param_models(op.parameters, op.operation_id)
+  let cli_parameters = []
+  for parameter in params.path + params.query + params.header + params.cookie {
+    if parameter.get("in") != "header" || header_overrides.get(parameter.name) == nil {
+      cli_parameters = cli_parameters + [parameter]
+    }
+  }
+  const request_schema = if op.request_body != nil {
+    _request_json_schema(doc, op.request_body)
+  } else {
+    nil
+  }
+  const cli_op = {
+    ...op,
+    cli_parameters: cli_parameters,
+    body_description: if op.request_body != nil {
+      _resolve_ref(doc, op.request_body).get("description")
+    } else {
+      nil
+    },
+    body_schema: if request_schema != nil {
+      adapter_schema_cli_defaults(request_schema, schema_graph) ?? {}
+    } else {
+      nil
+    },
+  }
   const name = extension.get("name") ?? function_name
   const extension_title = extension.get("title")
   const title = if type_of(extension_title) == "string" && extension_title != "" {
@@ -2530,8 +2633,10 @@ fn _adapter_operation(
     name: name,
     title: title,
     description: description,
-    input_schema: _adapter_input_schema(doc, op, header_overrides, schema_graph),
+    input_schema: _adapter_input_schema(doc, op, params, header_overrides, schema_graph),
+    param_model: params,
     output_schema: _adapter_output_schema(doc, op, schema_graph),
+    error_schema: _adapter_error_schema(doc, op, schema_graph),
     annotations: normalize_adapter_annotations(
       op.method,
       op.operation_id,
@@ -2547,7 +2652,7 @@ fn _adapter_operation(
       id: op.operation_id,
       binding: {method: op.method.upper(), path: op.path},
     },
-    cli: _adapter_cli(op, extension, name),
+    cli: _adapter_cli(schema_graph, cli_op, extension, name),
     expose: extension.get("expose") ?? true,
     defer_loading: extension.get("defer_loading") ?? false,
     namespace: extension.get("namespace"),
@@ -2626,7 +2731,7 @@ fn _build_op_model(
   schema_graph: PreparedAdapterSchemaGraph,
 ) {
   const fn_name = _unique_fn_name(_sanitize_ident(op.operation_id), taken_names)
-  const param_model = _operation_param_models(op.parameters)
+  const param_model = adapter.param_model
   const path_params = param_model.path
   const query_params = param_model.query
   const header_params = param_model.header
@@ -2716,20 +2821,23 @@ fn _build_op_model(
     adapter_name: _escape_string(adapter.name),
     adapter_title: _escape_string(adapter.title),
     adapter_description: _escape_string(adapter.description),
-    adapter_parameters: _render_json_parse_expr_at(
-      _adapter_tool_parameters(adapter.input_schema, doc.openapi, schema_graph),
-      "      ",
-      67,
-    ),
+    adapter_input_schema: _render_json_parse_expr_at(adapter.input_schema, "      ", 65),
     adapter_output_schema: if adapter.output_schema == nil {
       ""
     } else {
-      _render_json_parse_expr_at(adapter.output_schema, "      ", 70)
+      _render_json_parse_expr_at(adapter.output_schema, "      ", 64)
+    },
+    adapter_error_schema: if adapter.error_schema == nil {
+      ""
+    } else {
+      _render_json_parse_expr_at(adapter.error_schema, "      ", 65)
     },
     adapter_handler: _render_adapter_handler(
       fn_name,
       sig.required_arg_names + sig.optional_arg_names,
       transport,
+      op.operation_id,
+      adapter.error_schema,
     ),
     adapter_annotations: _render_json_parse_expr_at(adapter.annotations, "      ", 66),
     adapter_icons: if adapter.icons == nil {
@@ -2756,7 +2864,13 @@ fn _build_op_model(
   }
 }
 
-fn _render_adapter_handler(function_name: any, argument_names: any, transport: any) {
+fn _render_adapter_handler(
+  function_name: any,
+  argument_names: any,
+  transport: any,
+  operation_id: string,
+  error_schema: any,
+) {
   const authority = if transport == "connector_policy" {
     "harness"
   } else {
@@ -2770,6 +2884,24 @@ fn _render_adapter_handler(function_name: any, argument_names: any, transport: a
   // the typed handler envelope: JSON text for the model, the result as data.
   const outcome = "        agent_tool_handler_result(json_stringify(result), result)\n      }"
   const inline = function_name + "(" + join(args, ", ") + ")"
+  if error_schema != nil {
+    return "handler: { args ->\n"
+      + "        const result = try {\n          "
+      + inline
+      + "\n"
+      + "        } catch (error) {\n"
+      + "          const application = _adapter_application_error(error, \""
+      + _escape_string(operation_id)
+      + "\", "
+      + json_stringify(error_schema.oneOf.map({ branch -> branch.properties.status.const }))
+      + ")\n"
+      + "          if application != nil {\n"
+      + "            return agent_tool_handler_result(\"HTTP application error\", application, \"error\")\n"
+      + "          }\n"
+      + "          throw error\n"
+      + "        }\n"
+      + outcome
+  }
   if 8 + len("const result = " + inline) <= 100 {
     return "handler: { args ->\n        const result = " + inline + "\n" + outcome
   }

@@ -19,7 +19,10 @@ pipeline test_main(harness: Harness) {
   }
   assert(is_reference(ref_with_sibling), "is_reference should detect $ref dicts")
   const resolved: Schema = schema(doc, ref_with_sibling)
-  assert(resolved["$ref"] == nil, "schema() should resolve the control $ref keyword away")
+  if type_of(resolved) != "dict" {
+    throw "the referenced fixture must resolve to an object schema"
+  }
+  assert(resolved.get("$ref") == nil, "schema() should resolve the control $ref keyword away")
   assert(
     resolved.description == "sibling description",
     "schema() should preserve non-$ref siblings",

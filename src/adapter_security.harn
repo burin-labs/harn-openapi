@@ -90,15 +90,16 @@ fn resolve_security_scheme(name: string, schemes: dict, seen: list<string> = [])
     throw security_error("components.securitySchemes." + name + ".$ref", "must be a string")
   }
   const parts = reference.split("/")
+  const target = parts[3] ?? ""
   if len(parts) != 4 || parts[0] != "#" || parts[1] != "components"
     || parts[2] != "securitySchemes"
-    || parts[3] == "" {
+    || target == "" {
     throw security_error(
       "components.securitySchemes." + name + ".$ref",
       "must target a local '#/components/securitySchemes/<name>' object",
     )
   }
-  return resolve_security_scheme(pointer_token(parts[3]!), schemes, seen + [name])
+  return resolve_security_scheme(pointer_token(target), schemes, seen + [name])
 }
 
 fn portable_environment_prefix(value: string) -> bool {
