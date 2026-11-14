@@ -1,4 +1,4 @@
-import { codegen_module, parse } from "../src/lib"
+import { codegen_harn_toml, codegen_module, parse } from "../src/lib"
 
 pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
   const document = parse(
@@ -77,5 +77,38 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
     )
     require result.success,
       "${transport} must preserve literal source data: ${result.stdout} ${result.stderr}"
+  }
+}
+
+pipeline test_generated_manifest_preserves_literal_data() {
+  const literal = "literal \${1 + 1} with \"quotes\" and \\backslash"
+  const path = "src/\${name}.harn"
+  const source = codegen_harn_toml(
+    {
+      package_name: "literal-fixture",
+      description: literal,
+      default_export: path,
+      types_export: path,
+      entrypoint_export: path,
+      dependencies: {
+        "dependency\${name}": {
+          path: literal,
+          git: literal,
+          rev: literal,
+          branch: literal,
+          tag: literal,
+          version: literal,
+        },
+      },
+    },
+  )
+  const manifest = toml_parse(source)
+  assert_eq(manifest.package.description, literal)
+  assert_eq(manifest.exports.default, path)
+  assert_eq(manifest.exports.types, path)
+  assert_eq(manifest.exports.entrypoint, path)
+  const dependency = manifest.dependencies["dependency\${name}"]
+  for field in ["path", "git", "rev", "branch", "tag", "version"] {
+    assert_eq(dependency.get(field), literal)
   }
 }

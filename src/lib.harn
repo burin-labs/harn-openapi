@@ -4116,7 +4116,7 @@ fn _is_plain_identifier(s: any) {
   return regex_match("^[A-Za-z_][A-Za-z0-9_]*$", s) != nil
 }
 
-fn _escape_string(s: any) {
+fn _escape_string(s: any, syntax: "harn" | "toml" = "harn") {
   // Defence-in-depth: even though emitted code is re-checked by `harn check`
   // in tests, control characters smuggled in from a malicious OpenAPI spec
   // could close a Harn string literal early or break our codegen output. We
@@ -4131,12 +4131,14 @@ fn _escape_string(s: any) {
   out = replace(out, "\n", "\\n")
   out = replace(out, "\r", "\\r")
   out = replace(out, "\t", "\\t")
-  out = replace(out, "$" + "{", "\\" + "$" + "{")
+  if syntax == "harn" {
+    out = replace(out, "$" + "{", "\\" + "$" + "{")
+  }
   return out
 }
 
 fn _escape_toml_string(s: any) {
-  return _escape_string(to_string(s))
+  return _escape_string(to_string(s), "toml")
 }
 
 fn _toml_key(key: any) {
