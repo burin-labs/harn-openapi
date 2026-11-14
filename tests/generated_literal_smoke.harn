@@ -1,0 +1,81 @@
+import { codegen_module, parse } from "../src/lib"
+
+pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Literal data", version: "1"},
+        paths: {
+          "/echo": {
+            post: {
+              operationId: "send",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {value: {type: "string"}},
+                      required: ["value"],
+                    },
+                  },
+                },
+              },
+              responses: {"204": {description: "accepted"}},
+            },
+          },
+        },
+      },
+    ),
+  )
+  const directory = harness.fs.mkdtemp_in_workspace("openapi-literals")
+  const headers = {
+    "X-Literal": "\${1 + 1}",
+    "X-Quoted": "a \"quote\" and \\backslash",
+    "X-Unicode": "plain Δ text",
+  }
+  harness.fs.write_text("${directory}/expected.json", json_stringify(headers))
+  for transport in ["raw", "connector_policy"] {
+    const source = codegen_module(
+      harness.fs,
+      document,
+      {
+        module_name: "literal_fixture",
+        client_name: "LiteralClient",
+        default_base_url: "https://literal.example.test",
+        transport: transport,
+        header_overrides: headers,
+      },
+    )
+    harness.fs.write_text("${directory}/generated.harn", source)
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    harness.fs.write_text(
+      "${directory}/runner.harn",
+      """
+      import { new_client, send } from "./generated"
+
+      pipeline test_actual_request(harness: Harness) {
+        const expected = json_parse(harness.fs.read_text(harness.fs.source_dir() + "/expected.json"))
+        harness.testing.http_mock("POST", "https://literal.example.test/echo", {status: 204, headers: {}, body: ""})
+        send(${authority}, new_client(), {value: "positive"})
+        const calls = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(calls), 1)
+        assert_eq(calls[0].body, "{\"value\":\"positive\"}")
+        assert_eq(calls[0].headers.get("x-literal"), expected["X-Literal"])
+        assert_eq(calls[0].headers.get("x-quoted"), expected["X-Quoted"])
+        assert_eq(calls[0].headers.get("x-unicode"), expected["X-Unicode"])
+      }
+      """,
+    )
+    const result = harness.process.run(
+      {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${directory}/runner.harn"]},
+    )
+    require result.success,
+      "${transport} must preserve literal source data: ${result.stdout} ${result.stderr}"
+  }
+}

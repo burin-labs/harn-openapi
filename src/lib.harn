@@ -4131,6 +4131,7 @@ fn _escape_string(s: any) {
   out = replace(out, "\n", "\\n")
   out = replace(out, "\r", "\\r")
   out = replace(out, "\t", "\\t")
+  out = replace(out, "$" + "{", "\\" + "$" + "{")
   return out
 }
 
