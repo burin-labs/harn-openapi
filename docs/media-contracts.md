@@ -84,7 +84,12 @@ The native HTTP encoder creates the boundary. File contents don't enter
 generated source, catalog metadata or command arguments.
 
 Part headers retain their Header Object constraints, including local Header
-references. Required properties, dependent required properties, property names,
+references and each header schema's definitions and component references.
+Declared scalar values use simple serialization; for example, an integer header
+value `7` sends the text `7`. Header content objects, non-scalar schemas and
+other header styles require a value adapter and fail during generation.
+
+Required properties, dependent required properties, property names,
 property counts and array length bounds retain their meaning through part
 wrappers. Value-dependent object or array assertions that cannot be preserved
 through those wrappers fail during generation with the unsupported keyword.

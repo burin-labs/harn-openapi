@@ -143,6 +143,7 @@ def multipart_parts(record):
     assert parts[0].get_filename() == "proof.bin"
     assert [part.get_content_type() for part in parts] == ["application/octet-stream", "text/plain", "text/plain", "text/plain"]
     assert parts[0]["X-Part"] == "present"
+    assert parts[0]["X-Count"] == "7"
     assert all(not part.defects for part in parts)
     boundary = message.get_boundary().encode("ascii")
     assert record["body"].startswith(b"--" + boundary + b"\r\n")
@@ -170,7 +171,7 @@ def probe(binary, entrypoint):
         ("send_json", {"body": {"value": "sentinel"}}, "/json", "application/json", b'{"value":"sentinel"}', "", None),
         ("send_text", {"body": "plain Δ text"}, "/text", "text/plain; charset=utf-8", "plain Δ text".encode(), "", None),
         ("send_form", {"body": {"title": "a + b", "tags": ["one", "two"], "packed": ["a", "b"], "metadata": {"ok": True}}}, "/form", "application/x-www-form-urlencoded", b"metadata=%7B%22ok%22%3Atrue%7D&packed=a%7Cb&tags=one&tags=two&title=a+%2B+b", "", None),
-        ("send_multipart", {"body": {"file": {"value": WIRE_BINARY, "filename": "proof.bin", "headers": {"X-Part": "present"}}, "title": {"value": "title"}, "tags": [{"value": "a"}, {"value": "b"}]}}, "/multipart", "multipart/form-data", None, "", None),
+        ("send_multipart", {"body": {"file": {"value": WIRE_BINARY, "filename": "proof.bin", "headers": {"X-Part": "present", "X-Count": 7}}, "title": {"value": "title"}, "tags": [{"value": "a"}, {"value": "b"}]}}, "/multipart", "multipart/form-data", None, "", None),
         ("send_bytes", {"body": WIRE_BINARY}, "/bytes", "application/octet-stream", BINARY, "", None),
         ("send_multiple", {"body": {"content_type": "application/problem+json", "value": {"value": "json"}}}, "/multiple", "application/problem+json", b'{"value":"json"}', "", None),
         ("send_multiple", {"body": {"content_type": "text/plain", "value": "text"}}, "/multiple", "text/plain", b"text", "", None),

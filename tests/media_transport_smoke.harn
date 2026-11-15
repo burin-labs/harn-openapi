@@ -230,7 +230,10 @@ fn media_document() {
                 encoding: {
                   file: {
                     contentType: "application/octet-stream",
-                    headers: {"X-Part": {required: true, schema: {type: "string"}}},
+                    headers: {
+                      "X-Part": {required: true, schema: {type: "string"}},
+                      "X-Count": {required: true, schema: {type: "integer", minimum: 1}},
+                    },
                   },
                 },
               },
@@ -338,11 +341,12 @@ pipeline test_generated_media_sends_declared_bytes(harness: Harness) {
         const form = harness.testing.http_mock_calls({include_sensitive: true})[2]
         assert_eq(form.body, "metadata=%7B%22ok%22%3Atrue%7D&packed=a%7Cb&tags=one&tags=two&title=a+%2B+b")
         assert_eq(form.headers.get("content-type"), "application/x-www-form-urlencoded")
-        send_multipart(${authority}, client, {file: {value: bytes_from_base64("aGVsbG8="), filename: "proof.bin", headers: {"X-Part": "present"}}, title: {value: "title"}, tags: [{value: "a"}, {value: "b"}]})
+        send_multipart(${authority}, client, {file: {value: bytes_from_base64("aGVsbG8="), filename: "proof.bin", headers: {"X-Part": "present", "X-Count": 7}}, title: {value: "title"}, tags: [{value: "a"}, {value: "b"}]})
         const multipart = harness.testing.http_mock_calls({include_sensitive: true})[3]
         assert(multipart.body.contains("filename=\"proof.bin\""))
         assert(multipart.body.contains("content-type: application/octet-stream") || multipart.body.contains("Content-Type: application/octet-stream"))
         assert(multipart.body.contains("x-part: present"))
+        assert(multipart.body.contains("x-count: 7"))
         assert(multipart.body.contains("\r\n\r\nhello\r\n"))
         assert_eq(multipart.body.split("name=\"tags\"").len(), 3)
         send_bytes(${authority}, client, bytes_from_base64("aGVsbG8="))

@@ -6,6 +6,7 @@ import {
   nest_adapter_schema,
   normalize_adapter_schema,
   prepare_adapter_media_schema,
+  prepare_adapter_schema_projection,
   resolve_adapter_media_schema_shape,
 } from "./adapter_schema_graph"
 
@@ -239,15 +240,42 @@ fn media_encoding(operation: string, media_type: string, raw_encoding: unknown) 
   return encoding
 }
 
-type MediaPartHeaders = {schemas: dict<string, AdapterJsonSchema>, required: list<string>}
+type MediaPartHeaders = {
+  schemas: dict<string, AdapterJsonSchema>,
+  required: list<string>,
+  definitions: dict<string, AdapterJsonSchema>,
+}
+
+type PreparedMediaField = {field: OperationMediaField, definitions: dict<string, AdapterJsonSchema>}
+
+fn require_scalar_header_schema(
+  operation: string,
+  media_type: string,
+  shape: AdapterJsonSchema,
+) -> nil {
+  const declared = type_of(shape) == "dict" ? shape.get("type") : nil
+  const types = type_of(declared) == "list" ? declared : [declared]
+  if len(types) == 0 {
+    media_error(operation, media_type, "multipart headers require a declared scalar schema")
+  }
+  for item in types {
+    if !["string", "integer", "number", "boolean", "null"].contains(item) {
+      media_error(operation, media_type, "multipart headers require a declared scalar schema")
+    }
+  }
+  return nil
+}
 
 fn media_part_headers(
   operation: string,
   media_type: string,
   encoding: MediaEncoding,
+  context: MediaSchemaContext,
+  definitions: dict<string, AdapterJsonSchema>,
 ) -> MediaPartHeaders {
   let headers: dict<string, AdapterJsonSchema> = {}
   let required_headers: list<string> = []
+  let retained = definitions
   for header in (encoding.headers ?? {}) {
     if regex_match("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$", header.key) == nil
       || ["content-type", "content-disposition", "content-transfer-encoding"].contains(
@@ -258,7 +286,41 @@ fn media_part_headers(
     if type_of(header.value) != "dict" {
       media_error(operation, media_type, "multipart headers require Header Objects")
     }
-    headers = {...headers, [header.key]: header.value.get("schema") ?? {type: "string"}}
+    if header.value.get("$ref") != nil {
+      media_error(
+        operation,
+        media_type,
+        "multipart Header Objects must be resolved before preparation",
+      )
+    }
+    if header.value.get("content") != nil {
+      media_error(
+        operation,
+        media_type,
+        "multipart header content requires an unsupported value adapter",
+      )
+    }
+    if header.value.get("style") != nil && header.value.get("style") != "simple" {
+      media_error(operation, media_type, "multipart headers require simple serialization")
+    }
+    if header.value.get("explode") != nil && type_of(header.value.get("explode")) != "bool" {
+      media_error(operation, media_type, "multipart header explode must be a boolean")
+    }
+    let ordinal = len(retained)
+    let definition_key = "media_header_${ordinal}"
+    while retained.keys().contains(definition_key) {
+      ordinal = ordinal + 1
+      definition_key = "media_header_${ordinal}"
+    }
+    const prepared = prepare_adapter_schema_projection(
+      context.version,
+      header.value.get("schema") ?? {type: "string"},
+      definition_key,
+      context.graph,
+    )
+    require_scalar_header_schema(operation, media_type, prepared.shape)
+    retained = {...retained, ...prepared.definitions}
+    headers = {...headers, [header.key]: prepared.schema}
     if header.value.get("required") ?? false {
       required_headers.push(header.key)
     }
@@ -266,7 +328,7 @@ fn media_part_headers(
   if media_type_name(media_type) == "application/x-www-form-urlencoded" && len(headers) > 0 {
     media_error(operation, media_type, "part headers require multipart/form-data")
   }
-  return {schemas: headers, required: required_headers}
+  return {schemas: headers, required: required_headers, definitions: retained}
 }
 
 fn media_field(
@@ -276,7 +338,9 @@ fn media_field(
   schema: AdapterJsonSchema,
   raw_encoding: unknown,
   view: AdapterMediaSchemaView,
-) -> OperationMediaField {
+  context: MediaSchemaContext,
+  definitions: dict<string, AdapterJsonSchema>,
+) -> PreparedMediaField {
   const encoding = media_encoding(operation, media_type, raw_encoding)
   const resolved = resolve_adapter_media_schema_shape(schema, view)
   const object = if type_of(resolved) == "dict" {
@@ -338,8 +402,8 @@ fn media_field(
   if style == "deepObject" && !(encoding.explode ?? true) {
     media_error(operation, media_type, "deepObject with explode=false is undefined")
   }
-  const headers = media_part_headers(operation, media_type, encoding)
-  return schema_expect(
+  const headers = media_part_headers(operation, media_type, encoding, context, definitions)
+  const field = schema_expect(
     {
       name: name,
       schema: if kind == "bytes" {
@@ -358,6 +422,7 @@ fn media_field(
     },
     OperationMediaField,
   )
+  return {field: field, definitions: headers.definitions}
 }
 
 fn multipart_property(
@@ -481,19 +546,27 @@ fn media_alternative(
       }
     }
     let projected_properties = {}
+    let definitions: dict<string, AdapterJsonSchema> = {
+      ...object.get("$defs") ?? {},
+      ...view.definitions,
+    }
     for property in properties {
       const field_encoding = encoding.get(property.key) ?? {}
       if type_of(field_encoding) != "dict" {
         media_error(operation, content_type, "property encoding must be an object")
       }
-      const field = media_field(
+      const prepared_field = media_field(
         operation,
         content_type,
         property.key,
         property.value,
         field_encoding,
         view,
+        context,
+        definitions,
       )
+      const field = prepared_field.field
+      definitions = prepared_field.definitions
       fields.push(field)
       projected_properties = {
         ...projected_properties,
@@ -513,7 +586,7 @@ fn media_alternative(
     const additional = object.get("additionalProperties") ?? true
     let additional_schema: AdapterJsonSchema = false
     if additional != false {
-      const extra = media_field(
+      const prepared_extra = media_field(
         operation,
         content_type,
         "",
@@ -524,7 +597,11 @@ fn media_alternative(
         },
         {},
         view,
+        context,
+        definitions,
       )
+      const extra = prepared_extra.field
+      definitions = prepared_extra.definitions
       additional_field = extra
       additional_schema = schema_expect(
         if kind == "multipart" {
@@ -553,7 +630,7 @@ fn media_alternative(
       ...object,
       properties: projected_properties,
       additionalProperties: additional_schema,
-      "$defs": {...object.get("$defs") ?? {}, ...view.definitions},
+      "$defs": definitions,
     }
   } else if media.get("encoding") != nil {
     media_error(operation, content_type, "encoding is supported only for form and multipart bodies")
