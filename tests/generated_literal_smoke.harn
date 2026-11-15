@@ -25,6 +25,10 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
           "/echo": {
             post: {
               operationId: "send",
+              parameters: [
+                {in: "header", name: "X-Param", schema: {type: "string"}},
+                {in: "cookie", name: "flavor", schema: {type: "string"}},
+              ],
               requestBody: {
                 required: true,
                 content: {
@@ -51,7 +55,13 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
     "X-Unicode": "plain Δ text",
   }
   harness.fs.write_text("${directory}/expected.json", json_stringify(headers))
-  for transport in ["raw", "connector_policy"] {
+  for scenario in [
+    {transport: "raw", header: "X-Literal"},
+    {transport: "raw", header: "x-literal"},
+    {transport: "connector_policy", header: "X-Literal"},
+    {transport: "connector_policy", header: "x-literal"},
+  ] {
+    const transport = scenario.transport
     const source = codegen_module(
       harness.fs,
       document,
@@ -60,7 +70,11 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
         client_name: "LiteralClient",
         default_base_url: "https://literal.example.test",
         transport: transport,
-        header_overrides: headers,
+        header_overrides: {
+          [scenario.header]: headers["X-Literal"],
+          "X-Quoted": headers["X-Quoted"],
+          "X-Unicode": headers["X-Unicode"],
+        },
       },
     )
     harness.fs.write_text("${directory}/generated.harn", source)
@@ -96,13 +110,26 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
           assert_eq(inherited[index].headers.get("x-quoted"), expected["X-Quoted"])
           assert_eq(inherited[index].headers.get("x-unicode"), expected["X-Unicode"])
         }
-        send(${authority}, new_client("https://literal.example.test", {}, {"X-Literal": "caller", "X-Added": "new"}), {value: "override"})
+        for overrides in [{"X-Literal": "caller", "X-Added": "new"}, {"x-literal": "caller", "x-added": "new"}] {
+          send(${authority}, new_client("https://literal.example.test", {}, overrides), {value: "override"})
+        }
         const overridden = harness.testing.http_mock_calls({include_sensitive: true})
-        assert_eq(len(overridden), 4)
-        assert_eq(overridden[3].headers.get("x-literal"), "caller")
-        assert_eq(overridden[3].headers.get("x-added"), "new")
-        assert_eq(overridden[3].headers.get("x-quoted"), expected["X-Quoted"])
-        assert_eq(overridden[3].headers.get("x-unicode"), expected["X-Unicode"])
+        assert_eq(len(overridden), 5)
+        for index in [3, 4] {
+          assert_eq(overridden[index].headers.get("x-literal"), "caller")
+          assert_eq(overridden[index].headers.get("x-added"), "new")
+          assert_eq(overridden[index].headers.get("x-quoted"), expected["X-Quoted"])
+          assert_eq(overridden[index].headers.get("x-unicode"), expected["X-Unicode"])
+        }
+        const parameter_registry = adapter_registry({clock: harness.clock, net: harness.net}, {
+          base_url: "https://literal.example.test", credentials: {},
+          extra_headers: {"x-param": "default", "Cookie": "session=base"},
+        })
+        parameter_registry.tools[0].handler({body: {value: "parameters"}, x_param: "override", flavor: "vanilla"})
+        const parameters = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(parameters), 6)
+        assert_eq(parameters[5].headers.get("x-param"), "override")
+        assert_eq(parameters[5].headers.get("cookie"), "session=base; flavor=vanilla")
       }
       """,
     )
@@ -114,6 +141,18 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
       "${transport} must preserve literal source data: ${result.stdout} ${result.stderr}",
     )
   }
+  const duplicate = try {
+    codegen_module(
+      harness.fs,
+      document,
+      {header_overrides: {"X-Duplicate": "secret-header-value", "x-duplicate": "other-value"}},
+    )
+    nil
+  } catch (error) {
+    error
+  }
+  assert(duplicate != nil, "duplicate default HTTP identities must refuse before generation")
+  assert(!to_string(duplicate).contains("secret-header-value"))
 }
 
 pipeline test_generated_manifest_preserves_literal_data() {

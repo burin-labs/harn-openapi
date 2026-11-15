@@ -42,6 +42,9 @@ fn secured_doc() -> string {
           get: {
             operationId: "public-ping",
             security: [],
+            parameters: [
+              {in: "header", name: "X-Generated-Version", required: true, schema: {type: "string"}},
+            ],
             responses: {
               "200": {
                 description: "ok",
