@@ -1,9 +1,16 @@
+/** Helper aliases also reserve their names before response schemas are allocated. */
+pub fn media_transport_aliases() -> dict<string, string> {
+  return {MediaScalar: "string | int | float | bool | nil", MediaBinary: "bytes"}
+}
+
 /** Shared pure helpers emitted into standalone generated packages. */
 pub fn media_transport_helpers() -> string {
-  return """
-    type MediaScalar = string | int | float | bool | nil
-
-    type MediaBinary = bytes
+  let declarations: list<string> = []
+  for alias in media_transport_aliases() {
+    declarations.push("type ${alias.key} = ${alias.value}")
+  }
+  return declarations.join("\n\n") + "\n\n"
+    + """
 
     fn _media_scalar(value: unknown) -> string {
       match schema_parse(value, schema_of(MediaScalar)) {

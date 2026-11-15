@@ -9,6 +9,16 @@ fn registry_document() -> string {
           get: {
             operationId: "get-item-${index}",
             responses: {
+              "200": {
+                description: "item",
+                content: {
+                  "application/json": {
+                    schema: {
+                      "$ref": "#/components/schemas/${index == 0 ? "MediaScalar" : "MediaBinary"}",
+                    },
+                  },
+                },
+              },
               "204": {description: "done"},
               "404": {
                 description: "missing",
@@ -24,6 +34,16 @@ fn registry_document() -> string {
       openapi: "3.1.0",
       info: {title: "Registry", version: "1"},
       servers: [{url: "https://example.test"}],
+      components: {
+        schemas: {
+          MediaScalar: {type: "object", properties: {id: {type: "string"}}, required: ["id"]},
+          MediaBinary: {
+            type: "object",
+            properties: {id: {type: "string"}, binary: {type: "boolean"}},
+            required: ["id", "binary"],
+          },
+        },
+      },
       paths: paths,
     },
   )
@@ -79,6 +99,10 @@ pipeline test_large_generated_registry_survives_canonical_normalization(harness:
       + """
 
     fn main(harness: Harness) {
+      assert(is_ok(schema_parse({id: "scalar-object"}, schema_of(MediaScalar2))))
+      assert(is_ok(schema_parse({id: "binary-object", binary: true}, schema_of(MediaBinary2))))
+      assert(is_err(schema_parse("scalar", schema_of(MediaScalar2))))
+      assert(is_err(schema_parse(bytes_from_string("binary"), schema_of(MediaBinary2))))
       assert_eq(_media_scalar("literal"), "literal")
       assert_eq(_media_scalar(nil), "null")
       assert_eq(_media_scalar(true), "true")
