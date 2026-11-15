@@ -58,7 +58,7 @@ pipeline test_large_generated_registry_survives_canonical_normalization(harness:
   checked_command(host, ["lint", "--fix", module_path, entrypoint_path])
   checked_command(host, ["fmt", module_path, entrypoint_path])
   checked_command(host, ["lint", "--strict", module_path, entrypoint_path])
-  checked_command(host, ["check", module_path, entrypoint_path])
+  checked_command(host, ["check", "--strict", "--strict-types", module_path, entrypoint_path])
   const consumer = "${root}/consumer.harn"
   harness.fs.write_text(
     consumer,
@@ -72,4 +72,35 @@ pipeline test_large_generated_registry_survives_canonical_normalization(harness:
     """,
   )
   checked_command(host, ["run", consumer])
+  const values = "${root}/values.harn"
+  harness.fs.write_text(
+    values,
+    harness.fs.read_text(module_path)
+      + """
+
+    fn main(harness: Harness) {
+      assert_eq(_media_scalar("literal"), "literal")
+      assert_eq(_media_scalar(nil), "null")
+      assert_eq(_media_scalar(true), "true")
+      assert_eq(_media_scalar(2), "2")
+      assert_eq(_media_scalar(1.25), "1.25")
+      const binary = bytes_from_string("payload")
+      assert_eq(_media_encoded_value(binary, "bytes"), binary)
+      const invalid_scalars: list<unknown> = [[], {nested: true}, binary]
+      for value in invalid_scalars {
+        const result = try { _media_scalar(value) }
+        assert(is_err(result))
+        assert_eq(unwrap_err(result), "harn-openapi.generated: expected a scalar form value")
+      }
+      const invalid_binary: list<unknown> = [nil, 1, "bytes", []]
+      for value in invalid_binary {
+        const result = try { _media_encoded_value(value, "bytes") }
+        assert(is_err(result))
+        assert_eq(unwrap_err(result), "harn-openapi.generated: expected a binary media value")
+      }
+      harness.stdio.println("scalar and binary boundaries reached")
+    }
+    """,
+  )
+  checked_command(host, ["run", values])
 }
