@@ -192,6 +192,10 @@ import { parse } from "../src/lib"
   including the generator package's minimum Harn runtime requirement and an
   optional named entrypoint export.
 
+Generated SDK modules export `AdapterAbsentBody.Absent` for explicitly omitting
+an optional request body when supplying later positional arguments. Passing
+`nil` sends JSON null when that media contract permits it.
+
 ### Pre-1.0 change policy
 
 The package may make breaking changes before 1.0. Each change must update this

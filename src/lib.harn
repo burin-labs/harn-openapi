@@ -1151,7 +1151,8 @@ const _MODULE_TEMPLATE = """
   /** Extra HTTP headers supplied by the host. */
   pub type AdapterHeaders = dict<string, string>
 
-  enum AdapterAbsentBody {
+  /** Explicit omission for an optional request body, distinct from JSON null. */
+  pub enum AdapterAbsentBody {
     Absent
   }
 
@@ -1211,6 +1212,8 @@ const _MODULE_TEMPLATE = """
    * Build executable tools backed by the generated typed SDK functions.
    * This registry is the single source for MCP, CLI, and static catalog adapters.
    */
+  // Independent generated handlers contribute branches to this registry declaration.
+  @complexity(allow)
   pub fn {{ adapter_tools_decl }} {
     validate_client(client)
     let tools = tool_registry(
@@ -1646,7 +1649,7 @@ const _ENTRYPOINT_TEMPLATE = """
 
   pipeline main(harness: Harness) {
     const registry = adapter_registry(
-      {clock: harness.clock, net: harness.net},
+      pick(harness, ["clock", "net"]),
       adapter_environment_config(harness.env),
     )
     harness.tools.mcp_tools(registry)
@@ -1824,7 +1827,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     base_url_environment: _escape_string(security_plan.base_url_environment),
     server_name_environment: _escape_string(environment_prefix + "_SERVER_NAME"),
     adapter_authority: if transport == "connector_policy" {
-      "{clock: harness.clock, net: harness.net}"
+      "pick(harness, [\"clock\", \"net\"])"
     } else {
       "harness.net"
     },
