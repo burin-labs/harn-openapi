@@ -1966,6 +1966,8 @@ pub fn codegen_entrypoint(
   )
 }
 
+const _MINIMUM_HARN_REQUIREMENT = ">=0.10.200,<0.11"
+
 /** Emit a harn.toml manifest for a generated SDK package. */
 pub fn codegen_harn_toml(options: dict) -> string {
   const package_name = options.get("package_name") ?? options.get("module_name") ?? "generated-sdk"
@@ -1978,7 +1980,8 @@ pub fn codegen_harn_toml(options: dict) -> string {
   let out = "[package]\n"
   out = out + "name = \"" + _escape_toml_string(package_name) + "\"\n"
   out = out + "version = \"" + _escape_toml_string(version) + "\"\n"
-  out = out + "description = \"" + _escape_toml_string(description) + "\"\n\n"
+  out = out + "description = \"" + _escape_toml_string(description) + "\"\n"
+  out = "${out}harn = \"${_MINIMUM_HARN_REQUIREMENT}\"\n\n"
   out = out + "[exports]\n"
   out = out + "default = \"" + _escape_toml_string(default_export) + "\"\n"
   if types_export != nil {

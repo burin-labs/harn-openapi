@@ -189,7 +189,8 @@ import { parse } from "../src/lib"
   registers the SDK's one tool registry for CLI and MCP hosts.
 - `codegen_harn_toml(options: dict) -> string` — emit a package manifest for a
   generated SDK repo with `[package]`, `[exports]`, and `[dependencies]`,
-  including an optional named entrypoint export.
+  including the generator package's minimum Harn runtime requirement and an
+  optional named entrypoint export.
 
 ### Pre-1.0 change policy
 
@@ -376,6 +377,8 @@ Downstream SDK wrappers can expose the same two styles as methods, e.g.
 `client.update_page_markdown_insert_content({...})` for a static variant call.
 
 ## Development
+
+This package and its generated SDKs require Harn 0.10.200 or newer within 0.10.
 
 Read [AGENTS.md](./AGENTS.md) before making changes. It has the current agent
 rules, local gate, and fixture guidance.
