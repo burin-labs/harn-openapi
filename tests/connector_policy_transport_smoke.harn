@@ -257,14 +257,14 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     json_only_src,
-    "import { connector_http_json } from \"std/connectors/shared\"",
+    "import { connector_http_request } from \"std/connectors/shared\"",
     "JSON-only connector import",
   )
   require_not_contains(
     harness.stdio,
     json_only_src,
-    "connector_http_request",
-    "JSON-only generated SDK should not import unused opaque connector helper",
+    "connector_http_json(",
+    "the media plan owns response decoding for JSON-only clients too",
   )
   check_generates(harness, json_only_src)
   harness.stdio.println("connector_policy_transport_smoke: ok")

@@ -3292,6 +3292,7 @@ fn _media_headers_call(
   media: OperationMediaPlan,
   content_type: string,
   multipart: bool = false,
+  column: int = 2,
 ) -> string {
   const inline = "request_headers = _media_headers(request_headers, " + content_type + ", \""
     + _escape_string(media.accept)
@@ -3300,7 +3301,7 @@ fn _media_headers_call(
     + "\", "
     + to_string(multipart)
     + ")"
-  if len(inline) + 2 <= 100 {
+  if len(inline) + column <= 100 {
     return inline
   }
   return "request_headers = _media_headers(\n"
@@ -3446,7 +3447,7 @@ fn _render_request_lines(
     return "let resp: dict = {}\n"
       + "  if body == AdapterAbsentBody.Absent {\n"
       + "    "
-      + _indent_after_first(_media_headers_call(media, "nil"), "  ")
+      + _indent_after_first(_media_headers_call(media, "nil", false, 4), "  ")
       + "\n"
       + "    resp = "
       + _render_connector_call(method, no_body_options, "    ")
@@ -3471,7 +3472,7 @@ fn _render_request_lines(
   return "let resp: dict = {}\n"
     + "  if body == AdapterAbsentBody.Absent {\n"
     + "    "
-    + _indent_after_first(_media_headers_call(media, "nil"), "  ")
+    + _indent_after_first(_media_headers_call(media, "nil", false, 4), "  ")
     + "\n"
     + "    resp = "
     + _indent_after_first(_render_raw_media_call(raw_method, media, false, 6), "  ")
