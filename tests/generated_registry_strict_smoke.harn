@@ -1,0 +1,75 @@
+import { codegen_entrypoint, codegen_module, parse } from "../src/lib"
+
+fn registry_document() -> string {
+  let paths = {}
+  for index in range(13) {
+    paths = paths
+      + {
+        ["/items/${index}"]: {
+          get: {
+            operationId: "get-item-${index}",
+            responses: {
+              "204": {description: "done"},
+              "404": {
+                description: "missing",
+                content: {"application/json": {schema: {type: "object"}}},
+              },
+            },
+          },
+        },
+      }
+  }
+  return json_stringify(
+    {
+      openapi: "3.1.0",
+      info: {title: "Registry", version: "1"},
+      servers: [{url: "https://example.test"}],
+      paths: paths,
+    },
+  )
+}
+
+fn checked_command(harness: {env: HarnessEnv, process: HarnessProcess}, args: list<string>) -> nil {
+  const result = harness.process.run(
+    {
+      program: harness.env.get("HARN_BIN") ?? "harn",
+      args: args,
+      sandbox_profile: "workspace_paths",
+    },
+  )
+  require result.success, "${args.join(" ")}: ${result.stderr}\n${result.stdout}"
+  return nil
+}
+
+pipeline test_large_generated_registry_survives_canonical_normalization(harness: Harness) {
+  const host = pick(harness, ["env", "process"])
+  const doc = parse(registry_document())
+  const root = harness.fs.mkdtemp_in_workspace("generated-registry-strict-")
+  const module_path = "${root}/lib.harn"
+  const entrypoint_path = "${root}/main.harn"
+  harness.fs.write_text(
+    module_path,
+    codegen_module(harness.fs, doc, {module_name: "notion", environment_prefix: "NOTION"}),
+  )
+  harness.fs.write_text(
+    entrypoint_path,
+    codegen_entrypoint(harness.fs, doc, {module_import: "./lib", environment_prefix: "NOTION"}),
+  )
+  checked_command(host, ["lint", "--fix", module_path, entrypoint_path])
+  checked_command(host, ["fmt", module_path, entrypoint_path])
+  checked_command(host, ["lint", "--strict", module_path, entrypoint_path])
+  checked_command(host, ["check", module_path, entrypoint_path])
+  const consumer = "${root}/consumer.harn"
+  harness.fs.write_text(
+    consumer,
+    """
+    import { AdapterAbsentBody } from "./lib"
+
+    fn main(harness: Harness) {
+      assert(AdapterAbsentBody.Absent != nil)
+      harness.stdio.println("omitted body is available")
+    }
+    """,
+  )
+  checked_command(host, ["run", consumer])
+}
