@@ -9,6 +9,16 @@ fn registry_document() -> string {
           get: {
             operationId: "get-item-${index}",
             responses: {
+              "200": {
+                description: "item",
+                content: {
+                  "application/json": {
+                    schema: {
+                      "$ref": "#/components/schemas/${index == 0 ? "MediaScalar" : "MediaBinary"}",
+                    },
+                  },
+                },
+              },
               "204": {description: "done"},
               "404": {
                 description: "missing",
@@ -24,6 +34,16 @@ fn registry_document() -> string {
       openapi: "3.1.0",
       info: {title: "Registry", version: "1"},
       servers: [{url: "https://example.test"}],
+      components: {
+        schemas: {
+          MediaScalar: {type: "object", properties: {id: {type: "string"}}, required: ["id"]},
+          MediaBinary: {
+            type: "object",
+            properties: {id: {type: "string"}, binary: {type: "boolean"}},
+            required: ["id", "binary"],
+          },
+        },
+      },
       paths: paths,
     },
   )
@@ -58,7 +78,7 @@ pipeline test_large_generated_registry_survives_canonical_normalization(harness:
   checked_command(host, ["lint", "--fix", module_path, entrypoint_path])
   checked_command(host, ["fmt", module_path, entrypoint_path])
   checked_command(host, ["lint", "--strict", module_path, entrypoint_path])
-  checked_command(host, ["check", module_path, entrypoint_path])
+  checked_command(host, ["check", "--strict", "--strict-types", module_path, entrypoint_path])
   const consumer = "${root}/consumer.harn"
   harness.fs.write_text(
     consumer,
@@ -72,4 +92,39 @@ pipeline test_large_generated_registry_survives_canonical_normalization(harness:
     """,
   )
   checked_command(host, ["run", consumer])
+  const values = "${root}/values.harn"
+  harness.fs.write_text(
+    values,
+    harness.fs.read_text(module_path)
+      + """
+
+    fn main(harness: Harness) {
+      assert(is_ok(schema_parse({id: "scalar-object"}, schema_of(MediaScalar2))))
+      assert(is_ok(schema_parse({id: "binary-object", binary: true}, schema_of(MediaBinary2))))
+      assert(is_err(schema_parse("scalar", schema_of(MediaScalar2))))
+      assert(is_err(schema_parse(bytes_from_string("binary"), schema_of(MediaBinary2))))
+      assert_eq(_media_scalar("literal"), "literal")
+      assert_eq(_media_scalar(nil), "null")
+      assert_eq(_media_scalar(true), "true")
+      assert_eq(_media_scalar(2), "2")
+      assert_eq(_media_scalar(1.25), "1.25")
+      const binary = bytes_from_string("payload")
+      assert_eq(_media_encoded_value(binary, "bytes"), binary)
+      const invalid_scalars: list<unknown> = [[], {nested: true}, binary]
+      for value in invalid_scalars {
+        const result = try { _media_scalar(value) }
+        assert(is_err(result))
+        assert_eq(unwrap_err(result), "harn-openapi.generated: expected a scalar form value")
+      }
+      const invalid_binary: list<unknown> = [nil, 1, "bytes", []]
+      for value in invalid_binary {
+        const result = try { _media_encoded_value(value, "bytes") }
+        assert(is_err(result))
+        assert_eq(unwrap_err(result), "harn-openapi.generated: expected a binary media value")
+      }
+      harness.stdio.println("scalar and binary boundaries reached")
+    }
+    """,
+  )
+  checked_command(host, ["run", values])
 }

@@ -142,7 +142,7 @@ import { local_document_reference, prepare_document_identity } from "./openapi_i
 import { OpenApiServer, OpenApiServerPlan, prepare_server_plan } from "./openapi_servers"
 import { OperationMediaAlternative, OperationMediaField } from "./operation_media"
 pub import { OperationMediaPlan, prepare_operation_media } from "./operation_media"
-import { media_transport_helpers } from "./operation_media_codegen"
+import { media_transport_aliases, media_transport_helpers } from "./operation_media_codegen"
 import {
   OperationQueryPlan,
   prepare_operation_query,
@@ -1742,7 +1742,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   // Second pass (response types): collect response-type aliases, keyed so
   // refs to the same component schema are emitted once and reused by every
   // operation that returns it.
-  let alias_cache = {by_ref: {}, by_name: {}, order: []}
+  let alias_cache = {by_ref: {}, by_name: media_transport_aliases(), order: []}
   let op_return_types = []
   for entry in ops_raw.enumerate() {
     const op = entry.value

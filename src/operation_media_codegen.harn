@@ -1,14 +1,24 @@
+/** Helper aliases also reserve their names before response schemas are allocated. */
+pub fn media_transport_aliases() -> dict<string, string> {
+  return {MediaScalar: "string | int | float | bool | nil", MediaBinary: "bytes"}
+}
+
 /** Shared pure helpers emitted into standalone generated packages. */
 pub fn media_transport_helpers() -> string {
-  return """
+  let declarations: list<string> = []
+  for alias in media_transport_aliases() {
+    declarations.push("type ${alias.key} = ${alias.value}")
+  }
+  return declarations.join("\n\n") + "\n\n"
+    + """
+
     fn _media_scalar(value: unknown) -> string {
-      if type_of(value) == "string" {
-        return value
+      match schema_parse(value, schema_of(MediaScalar)) {
+        Ok(scalar) -> { return type_of(scalar) == "string" ? scalar : json_stringify(scalar) }
+        Err(_) -> {
+          throw "harn-openapi.generated: expected a scalar form value"
+        }
       }
-      if ["nil", "bool", "int", "float"].contains(type_of(value)) {
-        return json_stringify(value)
-      }
-      throw "harn-openapi.generated: expected a scalar form value"
     }
 
     fn _media_select_body(body: unknown, alternatives: list<dict>) -> dict {
@@ -177,10 +187,12 @@ pub fn media_transport_helpers() -> string {
         return json_stringify(value)
       }
       if kind == "bytes" {
-        if type_of(value) != "bytes" {
-          throw "harn-openapi.generated: expected a binary media value"
+        match schema_parse(value, schema_of(MediaBinary)) {
+          Ok(binary) -> { return binary }
+          Err(_) -> {
+            throw "harn-openapi.generated: expected a binary media value"
+          }
         }
-        return value
       }
       return _media_scalar(value)
     }
