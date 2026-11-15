@@ -168,7 +168,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
-    "import { connector_http_json, connector_http_request } from \"std/connectors/shared\"",
+    "import { connector_http_request } from \"std/connectors/shared\"",
     "connector helper import",
   )
   require_contains(
@@ -186,13 +186,13 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
-    "connector_http_json(\n    harness.clock,\n    harness.net,\n    \"GET\"",
+    "connector_http_request(\n    harness.clock,\n    harness.net,\n    \"GET\"",
     "GET connector transport",
   )
   require_contains(
     harness.stdio,
     src,
-    "connector_http_json(\n    harness.clock,\n    harness.net,\n    \"POST\"",
+    "connector_http_request(\n    harness.clock,\n    harness.net,\n    \"POST\"",
     "POST connector transport",
   )
   require_contains(
@@ -233,7 +233,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     raw_src,
-    "net.request(\"GET\"",
+    "net.request(\n    \"GET\"",
     "explicit raw transport emits net GET",
   )
   require_contains(
@@ -257,14 +257,14 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     json_only_src,
-    "import { connector_http_json } from \"std/connectors/shared\"",
+    "import { connector_http_request } from \"std/connectors/shared\"",
     "JSON-only connector import",
   )
   require_not_contains(
     harness.stdio,
     json_only_src,
-    "connector_http_request",
-    "JSON-only generated SDK should not import unused opaque connector helper",
+    "connector_http_json(",
+    "the media plan owns response decoding for JSON-only clients too",
   )
   check_generates(harness, json_only_src)
   harness.stdio.println("connector_policy_transport_smoke: ok")

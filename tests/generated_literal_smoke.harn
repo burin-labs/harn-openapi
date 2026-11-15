@@ -190,3 +190,14 @@ pipeline test_generated_manifest_preserves_literal_data() {
   assert_eq(dependency.tag, literal)
   assert_eq(dependency.version, literal)
 }
+
+type RuntimeManifest = {package: {harn: string}}
+
+pipeline test_generated_manifest_retains_package_runtime_requirement(harness: Harness) {
+  const package_manifest = schema_expect(
+    toml_parse(harness.fs.read_text("${harness.fs.source_dir()}/../harn.toml")),
+    RuntimeManifest,
+  )
+  const generated = schema_expect(toml_parse(codegen_harn_toml({})), RuntimeManifest)
+  assert_eq(generated.package.harn, package_manifest.package.harn)
+}

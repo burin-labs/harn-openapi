@@ -13,6 +13,16 @@ The prefix comes from `environment_prefix`. For `WIDGETS`, the base URL is:
 export WIDGETS_BASE_URL=https://api.example.com
 ```
 
+For an OpenAPI 3.2 document with named servers, select a declared name instead:
+
+```sh
+unset WIDGETS_BASE_URL
+export WIDGETS_SERVER_NAME=staging
+```
+
+Don't combine a server name with an explicit base URL override. Unknown names
+fail before tools are published. See [named server rules](openapi-revisions.md#named-servers).
+
 Each referenced OpenAPI security scheme gets its own variables:
 
 | OpenAPI scheme | Generated variable shape |

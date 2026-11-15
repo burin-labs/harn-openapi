@@ -3,7 +3,8 @@
 Generate a typed SDK and the executable registry that Harn can project as a
 CLI, MCP server, or static catalog.
 
-Create `generate.harn` beside an OpenAPI 3.1 JSON document:
+Create `generate.harn` beside an OpenAPI JSON document using a
+[supported revision](openapi-revisions.md):
 
 ```harn
 import {

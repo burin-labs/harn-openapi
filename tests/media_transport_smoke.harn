@@ -1,0 +1,513 @@
+import { codegen_entrypoint, codegen_module, parse } from "../src/lib"
+
+type MediaProjectionReceipt = {
+  reached: {cli: int, mcp: int},
+  refused: {cli: int, mcp: int},
+  http_requests: int,
+  pending: int,
+  measurement_errors: list<string>,
+}
+
+fn media_operation(operation: string, content: dict, required: bool = true) -> dict {
+  return {
+    post: {
+      operationId: operation,
+      requestBody: {required: required, content: content},
+      responses: {"204": {description: "accepted"}},
+    },
+  }
+}
+
+fn response_operation(operation: string, content: dict, status: string = "200") -> dict {
+  return {
+    get: {
+      operationId: operation,
+      responses: {[status]: {description: "response", content: content}},
+    },
+  }
+}
+
+fn check_media_module(
+  harness: {env: HarnessEnv, process: HarnessProcess},
+  directory: string,
+) -> nil {
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  const checked = harness.process.run(
+    {program: binary, args: ["check", "${directory}/generated.harn"]},
+  )
+  assert(
+    checked.success,
+    "generated media module must type-check: ${checked.stdout} ${checked.stderr}",
+  )
+  const formatted = harness.process.run(
+    {program: binary, args: ["fmt", "--check", "${directory}/generated.harn"]},
+  )
+  assert(
+    formatted.success,
+    "generated media module must be formatter-clean: ${directory} ${formatted.stdout} ${formatted.stderr}",
+  )
+}
+
+pipeline test_generated_media_decodes_declared_responses(harness: Harness) {
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Media responses", version: "1"},
+        paths: {
+          "/json": response_operation(
+            "get_json",
+            {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {ok: {type: "boolean"}},
+                  required: ["ok"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          ),
+          "/text": response_operation("get_text", {"text/plain": {schema: {type: "string"}}}),
+          "/bytes": response_operation("get_bytes", {"application/octet-stream": {}}),
+          "/multiple": response_operation(
+            "get_multiple",
+            {"text/plain": {schema: {type: "string"}}, "application/octet-stream": {}},
+          ),
+          "/range": response_operation(
+            "get_range",
+            {"text/plain": {schema: {type: "string"}}},
+            "2XX",
+          ),
+          "/empty": {get: {operationId: "get_empty", responses: {"204": {description: "empty"}}}},
+        },
+      },
+    ),
+  )
+  const directory = harness.fs.mkdtemp_in_workspace("openapi-media-response")
+  for transport in ["raw", "connector_policy"] {
+    const module = codegen_module(
+      harness.fs,
+      document,
+      {module_name: "media_response", transport: transport},
+    )
+    harness.fs.write_text("${directory}/generated.harn", module)
+    check_media_module(pick(harness, ["env", "process"]), directory)
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    harness.fs.write_text(
+      "${directory}/runner.harn",
+      """
+      import { new_client, get_json, get_text, get_bytes, get_multiple, get_range, get_empty, adapter_catalog } from "./generated"
+
+      pipeline test_media_responses(harness: Harness) {
+        const client = new_client("https://media.example.test")
+        harness.testing.http_mock("GET", "https://media.example.test/json", {status: 200, headers: {"Content-Type": "application/problem+json; charset=utf-8"}, body: "{\"ok\":true}"})
+        harness.testing.http_mock("GET", "https://media.example.test/text", {status: 200, headers: {"content-type": "text/plain; charset=utf-8"}, body: "plain Δ response"})
+        harness.testing.http_mock("GET", "https://media.example.test/bytes", {status: 200, headers: {"content-type": "application/octet-stream"}, body: "binary sentinel"})
+        harness.testing.http_mock("GET", "https://media.example.test/multiple", {responses: [
+          {status: 200, headers: {"content-type": "text/plain"}, body: "selected text"},
+          {status: 200, headers: {"content-type": "application/octet-stream"}, body: "selected bytes"},
+          {status: 200, headers: {}, body: "secret-body-value"},
+          {status: 200, headers: {"content-type": "image/png"}, body: "secret-body-value"},
+        ]})
+        harness.testing.http_mock("GET", "https://media.example.test/range", {status: 201, headers: {"content-type": "text/plain"}, body: "range"})
+        harness.testing.http_mock("GET", "https://media.example.test/empty", {responses: [
+          {status: 204, headers: {}, body: ""},
+          {status: 204, headers: {}, body: "secret-body-value"},
+        ]})
+        assert_eq(get_json(${authority}, client), {ok: true})
+        assert_eq(get_text(${authority}, client), "plain Δ response")
+        assert_eq(get_bytes(${authority}, client), bytes_from_string("binary sentinel"))
+        assert_eq(get_multiple(${authority}, client), "selected text")
+        assert_eq(get_multiple(${authority}, client), bytes_from_string("selected bytes"))
+        assert_eq(get_range(${authority}, client), "range")
+        assert_eq(get_empty(${authority}, client), nil)
+        for index in [1, 2] {
+          let refused = false
+          try { get_multiple(${authority}, client) } catch (error) {
+            refused = true
+            assert(!to_string(error).contains("secret-body-value"))
+          }
+          assert(refused)
+        }
+        let refused = false
+        try { get_empty(${authority}, client) } catch (error) {
+          refused = true
+          assert(!to_string(error).contains("secret-body-value"))
+        }
+        assert(refused)
+        const calls = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(calls), 10)
+        assert_eq(calls[0].headers.get("accept"), "application/problem+json")
+        assert_eq(calls[1].headers.get("accept"), "text/plain")
+        assert_eq(calls[2].headers.get("accept"), "application/octet-stream")
+        assert_eq(calls[3].headers.get("accept"), "application/octet-stream, text/plain")
+      }
+      """,
+    )
+    const result = harness.process.run(
+      {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${directory}/runner.harn"]},
+    )
+    assert(
+      result.success,
+      "${transport} media response path must decode the declared representation: ${result.stdout} ${result.stderr}",
+    )
+  }
+}
+
+fn media_document() {
+  return parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Media transport", version: "1"},
+        paths: {
+          "/response/json": response_operation(
+            "receive_json",
+            {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {ok: {type: "boolean"}},
+                  required: ["ok"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          ),
+          "/response/text": response_operation(
+            "receive_text",
+            {"text/plain": {schema: {type: "string"}}},
+          ),
+          "/response/bytes": response_operation("receive_bytes", {"application/octet-stream": {}}),
+          "/response/multiple": response_operation(
+            "receive_multiple",
+            {"text/plain": {schema: {type: "string"}}, "application/octet-stream": {}},
+          ),
+          "/response/oversized": response_operation(
+            "receive_oversized",
+            {"application/octet-stream": {}},
+          ),
+          "/form": media_operation(
+            "send_form",
+            {
+              "application/x-www-form-urlencoded": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: {type: "string"},
+                    tags: {type: "array", items: {type: "string"}},
+                    packed: {type: "array", items: {type: "string"}},
+                    metadata: {
+                      type: "object",
+                      properties: {ok: {type: "boolean"}},
+                      additionalProperties: false,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+                encoding: {packed: {style: "pipeDelimited", explode: false}},
+              },
+            },
+          ),
+          "/multipart": media_operation(
+            "send_multipart",
+            {
+              "multipart/form-data": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    file: {},
+                    title: {type: "string"},
+                    tags: {type: "array", items: {type: "string"}},
+                  },
+                  additionalProperties: false,
+                },
+                encoding: {
+                  file: {
+                    contentType: "application/octet-stream",
+                    headers: {
+                      "X-Part": {required: true, schema: {type: "string"}},
+                      "X-Count": {required: true, schema: {type: "integer", minimum: 1}},
+                    },
+                  },
+                },
+              },
+            },
+          ),
+          "/bytes": media_operation("send_bytes", {"application/octet-stream": {}}),
+          "/multiple": media_operation(
+            "send_multiple",
+            {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {value: {type: "string"}},
+                  additionalProperties: false,
+                },
+              },
+              "text/plain": {schema: {type: "string"}},
+            },
+          ),
+          "/optional": media_operation(
+            "send_optional",
+            {"application/json": {schema: {type: ["null", "string"]}}},
+            false,
+          ),
+          "/json": {
+            post: {
+              operationId: "send_json",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {value: {type: "string"}},
+                      required: ["value"],
+                    },
+                  },
+                },
+              },
+              responses: {"204": {description: "accepted"}},
+            },
+          },
+          "/text": {
+            post: {
+              operationId: "send_text",
+              requestBody: {
+                required: true,
+                content: {"text/plain; charset=utf-8": {schema: {type: "string"}}},
+              },
+              responses: {"204": {description: "accepted"}},
+            },
+          },
+        },
+      },
+    ),
+  )
+}
+
+pipeline test_generated_media_sends_declared_bytes(harness: Harness) {
+  const document = media_document()
+  const directory = harness.fs.mkdtemp_in_workspace("openapi-media")
+  for transport in ["raw", "connector_policy"] {
+    const module = codegen_module(
+      harness.fs,
+      document,
+      {
+        module_name: "media_fixture",
+        client_name: "MediaClient",
+        default_base_url: "https://media.example.test",
+        transport: transport,
+        header_overrides: {"X-Media-Literal": "\${1 + 1}"},
+      },
+    )
+    harness.fs.write_text("${directory}/generated.harn", module)
+    check_media_module(pick(harness, ["env", "process"]), directory)
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    harness.fs.write_text(
+      "${directory}/runner.harn",
+      """
+      import { new_client, send_json, send_text, send_form, send_multipart, send_bytes, send_multiple, send_optional } from "./generated"
+
+      pipeline test_exact_media(harness: Harness) {
+        const client = new_client("https://media.example.test")
+        harness.testing.http_mock("POST", "https://media.example.test/json", {status: 204, headers: {}, body: ""})
+        harness.testing.http_mock("POST", "https://media.example.test/text", {status: 204, headers: {}, body: ""})
+        send_json(${authority}, client, {value: "sentinel"})
+        const positive = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(positive), 1)
+        assert_eq(positive[0].body, "{\"value\":\"sentinel\"}")
+        assert_eq(positive[0].headers.get("content-type"), "application/json")
+        assert_eq(positive[0].headers.get("x-media-literal"), "$" + "{1 + 1}")
+        send_text(${authority}, client, "plain Δ text")
+        const calls = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(calls), 2)
+        assert_eq(calls[1].body, "plain Δ text")
+        assert_eq(calls[1].headers.get("content-type"), "text/plain; charset=utf-8")
+        for path in ["form", "multipart", "bytes", "multiple", "optional"] {
+          harness.testing.http_mock("POST", "https://media.example.test/" + path, {status: 204, headers: {}, body: ""})
+        }
+        send_form(${authority}, client, {title: "a + b", tags: ["one", "two"], packed: ["a", "b"], metadata: {ok: true}})
+        const form = harness.testing.http_mock_calls({include_sensitive: true})[2]
+        assert_eq(form.body, "metadata=%7B%22ok%22%3Atrue%7D&packed=a%7Cb&tags=one&tags=two&title=a+%2B+b")
+        assert_eq(form.headers.get("content-type"), "application/x-www-form-urlencoded")
+        send_multipart(${authority}, client, {file: {value: bytes_from_base64("aGVsbG8="), filename: "proof.bin", headers: {"X-Part": "present", "X-Count": 7}}, title: {value: "title"}, tags: [{value: "a"}, {value: "b"}]})
+        const multipart = harness.testing.http_mock_calls({include_sensitive: true})[3]
+        assert(multipart.body.contains("filename=\"proof.bin\""))
+        assert(multipart.body.contains("content-type: application/octet-stream") || multipart.body.contains("Content-Type: application/octet-stream"))
+        assert(multipart.body.contains("x-part: present"))
+        assert(multipart.body.contains("x-count: 7"))
+        assert(multipart.body.contains("\r\n\r\nhello\r\n"))
+        assert_eq(multipart.body.split("name=\"tags\"").len(), 3)
+        send_bytes(${authority}, client, bytes_from_base64("aGVsbG8="))
+        const binary = harness.testing.http_mock_calls({include_sensitive: true})[4]
+        assert_eq(binary.body, "hello")
+        assert_eq(binary.headers.get("content-type"), "application/octet-stream")
+        send_multiple(${authority}, client, {content_type: "application/problem+json", value: {value: "json"}})
+        send_multiple(${authority}, client, {content_type: "text/plain", value: "text"})
+        const multiple = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(multiple[5].headers.get("content-type"), "application/problem+json")
+        assert_eq(multiple[5].body, "{\"value\":\"json\"}")
+        assert_eq(multiple[6].body, "text")
+        send_optional(${authority}, client)
+        send_optional(${authority}, client, nil)
+        const optional = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(optional), 9)
+        assert_eq(optional[7].headers.get("content-type"), nil)
+        assert_eq(optional[8].headers.get("content-type"), "application/json")
+        assert_eq(optional[8].body, "null")
+        let refused = false
+        try { send_multiple(${authority}, client, {content_type: "secret-body-value", value: "secret-body-value"}) } catch (error) {
+          refused = true
+          assert(!to_string(error).contains("secret-body-value"))
+        }
+        assert(refused)
+        assert_eq(len(harness.testing.http_mock_calls()), 9)
+      }
+      """,
+    )
+    const result = harness.process.run(
+      {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${directory}/runner.harn"]},
+    )
+    assert(
+      result.success,
+      "${transport} media transport must preserve declared bytes: ${result.stdout} ${result.stderr}",
+    )
+  }
+}
+
+@heavy(threads: 2)
+pipeline test_generated_media_raw_cli_and_mcp_record_exact_bytes(harness: Harness) {
+  check_media_projections(harness, "raw")
+}
+
+@heavy(threads: 2)
+pipeline test_generated_media_connector_cli_and_mcp_record_exact_bytes(harness: Harness) {
+  check_media_projections(harness, "connector_policy")
+}
+
+fn check_media_projections(harness: Harness, transport: string) -> nil {
+  const document = media_document()
+  const directory = harness.fs.mkdtemp_in_workspace("openapi-media-projections")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  harness.fs.write_text(
+    "${directory}/generated.harn",
+    codegen_module(
+      harness.fs,
+      document,
+      {
+        module_name: "media_fixture",
+        environment_prefix: "MEDIA",
+        transport: transport,
+        header_overrides: {"X-Media-Literal": "\${1 + 1}"},
+      },
+    ),
+  )
+  harness.fs.write_text(
+    "${directory}/main.harn",
+    codegen_entrypoint(
+      harness.fs,
+      document,
+      {module_import: "./generated", environment_prefix: "MEDIA"},
+    ),
+  )
+  const result = harness.process.run(
+    {
+      program: "python3",
+      args: [
+        harness.fs.source_dir() + "/fixtures/media_projection_probe.py",
+        binary,
+        "${directory}/main.harn",
+      ],
+    },
+  )
+  assert(
+    result.success,
+    "${transport} real CLI/MCP media bytes must match the recorder: ${result.stdout} ${result.stderr}",
+  )
+  const receipt = schema_expect(json_parse(result.stdout), MediaProjectionReceipt)
+  assert_eq(receipt.reached, {cli: 14, mcp: 14})
+  assert_eq(receipt.refused, {cli: 2, mcp: 2})
+  assert_eq(receipt.http_requests, 30)
+  assert_eq(receipt.pending, 0)
+  assert_eq(receipt.measurement_errors, [])
+  return nil
+}
+
+pipeline test_generated_binary_response_keeps_json_error_details(harness: Harness) {
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Download errors", version: "1"},
+        servers: [{url: "https://binary.test"}],
+        paths: {
+          "/download": {
+            get: {
+              operationId: "download",
+              responses: {
+                "200": {description: "Binary", content: {"application/octet-stream": {}}},
+                "400": {
+                  description: "Rejected",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {code: {type: "string"}},
+                        required: ["code"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ),
+  )
+  const directory = harness.fs.mkdtemp_in_workspace("binary-errors")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  for transport in ["raw", "connector_policy"] {
+    harness.fs.write_text(
+      "${directory}/generated.harn",
+      codegen_module(harness.fs, document, {module_name: "binary_errors", transport: transport}),
+    )
+    check_media_module(pick(harness, ["env", "process"]), directory)
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { download, new_client } from "./generated"
+
+      pipeline test_error_details(harness: Harness) {
+        harness.testing.http_mock("GET", "https://binary.test/download", {
+          status: 400, headers: {"Content-Type": "application/json"},
+          body: "{\"code\":\"denied\"}",
+        })
+        const caught = try { download(AUTHORITY, new_client()); nil } catch (error) { error }
+        assert_eq(caught.status, 400)
+        assert_eq(caught.body, "{\"code\":\"denied\"}")
+        assert_eq(len(harness.testing.http_mock_calls()), 1)
+      }
+      """
+    harness.fs.write_text("${directory}/runner.harn", runner.replace("AUTHORITY", authority))
+    const result = harness.process.run(
+      {program: binary, args: ["test", "${directory}/runner.harn"]},
+    )
+    assert(result.success, "${transport}: ${result.stdout} ${result.stderr}")
+  }
+}

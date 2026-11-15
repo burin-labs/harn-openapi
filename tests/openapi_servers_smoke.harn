@@ -1,0 +1,212 @@
+import { codegen_module, parse } from "../src/lib"
+import { classify_openapi_revision } from "../src/openapi_dialect"
+import { prepare_document_identity } from "../src/openapi_identity"
+import { prepare_server_plan } from "../src/openapi_servers"
+
+pipeline test_named_servers_keep_identity_and_retrieval_relative_urls() {
+  const revision = classify_openapi_revision("3.2.0")
+  const identity = prepare_document_identity(
+    "https://retrieval.test/download/spec.json",
+    "https://canonical.test/spec.json",
+  )
+  const primary = {
+    name: "primary",
+    url: "../api/{version}",
+    variables: {version: {default: "v2", enum: ["v1", "v2"]}},
+  }
+  const staging = {name: "staging", url: "https://staging.test/v2"}
+  const first = prepare_server_plan([primary, staging], revision, identity)
+  const reordered = prepare_server_plan([staging, primary], revision, identity)
+  assert_eq(first.default_url, "https://retrieval.test/api/v2")
+  assert_eq(first.named_urls, reordered.named_urls)
+  assert_eq(first.named_urls.primary, "https://retrieval.test/api/v2")
+  assert_eq(prepare_server_plan([], revision, identity).default_url, "")
+}
+
+pipeline test_unsupported_servers_refuse_without_values() {
+  const revision = classify_openapi_revision("3.2.0")
+  const identity = prepare_document_identity()
+  for servers in [
+    [
+      {name: "secret-sentinel", url: "https://example.test"},
+      {name: "secret-sentinel", url: "https://other.test"},
+    ],
+    [{name: "", url: "https://example.test/secret-sentinel"}],
+    [{url: "relative/secret-sentinel"}],
+    [{url: "https://example.test/{secret-sentinel}"}],
+    [
+      {
+        url: "https://example.test/{version}",
+        variables: {version: {default: "secret-sentinel", enum: ["v1"]}},
+      },
+    ],
+    [{url: "https://example.test/?secret-sentinel"}],
+    [{url: "file:///secret-sentinel"}],
+  ] {
+    const rejected = try {
+      prepare_server_plan(servers, revision, identity)
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    assert(
+      to_string(rejected).contains("harn-openapi.servers:")
+        || to_string(rejected).contains("harn-openapi.identity:"),
+    )
+    assert(!to_string(rejected).contains("secret-sentinel"))
+  }
+  const old = try {
+    prepare_server_plan(
+      [{name: "secret-sentinel", url: "https://example.test"}],
+      classify_openapi_revision("3.1.1"),
+      identity,
+    )
+    nil
+  } catch (error) {
+    error
+  }
+  assert(to_string(old).contains("require OpenAPI 3.2.0"))
+  assert(!to_string(old).contains("secret-sentinel"))
+}
+
+pipeline test_generated_named_server_configuration_reaches_the_selected_url(harness: Harness) {
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.2.0",
+        info: {title: "Named servers", version: "1"},
+        servers: [
+          {name: "primary", url: "https://primary.test/v2"},
+          {name: "staging", url: "https://staging.test/v2"},
+        ],
+        paths: {
+          "/items": {get: {operationId: "listItems", responses: {"204": {description: "Done"}}}},
+        },
+      },
+    ),
+  )
+  const root = harness.fs.mkdtemp_in_workspace("named-servers")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  for transport in ["raw", "connector_policy"] {
+    harness.fs.write_text(
+      "${root}/generated.harn",
+      codegen_module(
+        harness.fs,
+        document,
+        {module_name: "servers", environment_prefix: "NAMED", transport: transport},
+      ),
+    )
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_environment_config, list_items, new_client } from "./generated"
+
+      pipeline test_selected_server(harness: Harness) {
+        const direct = new_client("", {}, {}, "primary")
+        assert_eq(direct.base_url, "https://primary.test/v2")
+        harness.testing.http_mock("GET", "https://primary.test/v2/items", {status: 204, body: ""})
+        list_items(AUTHORITY, direct)
+        const config = adapter_environment_config(harness.env)
+        assert_eq(config.server_name, "staging")
+        const configured = new_client(config.base_url, config.credentials, config.extra_headers, config.server_name)
+        assert_eq(configured.base_url, "https://staging.test/v2")
+        harness.testing.http_mock("GET", "https://staging.test/v2/items", {status: 204, body: ""})
+        list_items(AUTHORITY, configured)
+        assert_eq(len(harness.testing.http_mock_calls()), 2)
+        for selection in ["missing-secret-sentinel", ""] {
+          const rejected = try { new_client("", {}, {}, selection); nil } catch (error) { error }
+          assert(to_string(rejected).contains("configured server name is not declared"))
+          assert(!to_string(rejected).contains("secret-sentinel"))
+        }
+        const conflicting = try { new_client("https://override.test", {}, {}, "primary"); nil } catch (error) { error }
+        assert(to_string(conflicting).contains("either a base URL override or a server name"))
+        assert_eq(len(harness.testing.http_mock_calls()), 2)
+      }
+      """
+    harness.fs.write_text("${root}/runner.harn", runner.replace("AUTHORITY", authority))
+    const checked = harness.process.run({program: binary, args: ["check", "${root}/runner.harn"]})
+    assert(checked.success, checked.stdout + checked.stderr)
+    const result = harness.process.run(
+      {program: binary, args: ["test", "${root}/runner.harn"], env: {NAMED_SERVER_NAME: "staging"}},
+    )
+    assert(result.success, result.stdout + result.stderr)
+  }
+}
+
+pipeline test_scoped_servers_and_explicit_overrides_reach_their_declared_urls(harness: Harness) {
+  const response = {"204": {description: "Done"}}
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.2.0",
+        info: {title: "Scoped servers", version: "1"},
+        servers: [
+          {name: "production", url: "https://root.test"},
+          {name: "staging", url: "https://root-stage.test"},
+        ],
+        paths: {
+          "/path": {
+            servers: [
+              {name: "production", url: "https://path.test"},
+              {name: "staging", url: "https://path-stage.test"},
+            ],
+            get: {operationId: "readPath", responses: response},
+          },
+          "/operation": {
+            servers: [{name: "production", url: "https://path.test"}],
+            get: {
+              operationId: "readOperation",
+              responses: response,
+              servers: [
+                {name: "production", url: "https://operation.test"},
+                {name: "staging", url: "https://operation-stage.test"},
+              ],
+            },
+          },
+        },
+      },
+    ),
+  )
+  const root = harness.fs.mkdtemp_in_workspace("scoped-servers")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  for transport in ["raw", "connector_policy"] {
+    harness.fs.write_text(
+      "${root}/generated.harn",
+      codegen_module(harness.fs, document, {module_name: "scoped", transport: transport}),
+    )
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { adapter_tools, new_client, read_operation, read_path } from "./generated"
+
+      pipeline test_scoped_urls(harness: Harness) {
+        const normal = new_client()
+        const staged = new_client(nil, {}, {}, "staging")
+        const explicit_client = new_client("https://override.test")
+        const tools = adapter_tools(AUTHORITY, staged)
+        assert_eq(len(tools.tools), 2)
+        for item in [
+          {client: normal, path: "https://path.test/path", operation: "https://operation.test/operation"},
+          {client: staged, path: "https://path-stage.test/path", operation: "https://operation-stage.test/operation"},
+          {client: explicit_client, path: "https://override.test/path", operation: "https://override.test/operation"},
+        ] {
+          harness.testing.http_mock("GET", item.path, {status: 204, body: ""})
+          harness.testing.http_mock("GET", item.operation, {status: 204, body: ""})
+          read_path(AUTHORITY, item.client)
+          read_operation(AUTHORITY, item.client)
+        }
+        assert_eq(len(harness.testing.http_mock_calls()), 6)
+      }
+      """
+    harness.fs.write_text("${root}/runner.harn", runner.replace("AUTHORITY", authority))
+    const result = harness.process.run({program: binary, args: ["test", "${root}/runner.harn"]})
+    assert(result.success, result.stdout + result.stderr)
+  }
+}

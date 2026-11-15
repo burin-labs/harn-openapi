@@ -339,7 +339,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
-    "body: any = nil",
+    "body: any = AdapterAbsentBody.Absent",
     "optional request bodies should be optional in signatures",
   )
   const module_stem = check_generated(harness, src, "generated")
@@ -366,8 +366,8 @@ pipeline test_main(harness: Harness) {
       assert_eq(first_call.headers.cookie, "session=cookie%20value")
 
       harness.testing.http_mock("POST", "https://api.example.com/upload", {status: 200, body: "plain", headers: {}})
-      let opaque = upload_file({clock: harness.clock, net: harness.net}, client)
-      assert_eq(opaque.body, "plain")
+      let text = upload_file({clock: harness.clock, net: harness.net}, client)
+      assert_eq(text, "plain")
 
       harness.testing.http_mock(
         "GET",

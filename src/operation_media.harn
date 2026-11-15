@@ -1,0 +1,745 @@
+import { schema_json } from "std/schema"
+import {
+  AdapterJsonSchema,
+  AdapterMediaSchemaView,
+  PreparedAdapterSchemaGraph,
+  nest_adapter_schema,
+  normalize_adapter_schema,
+  prepare_adapter_media_schema,
+  prepare_adapter_schema_projection,
+  resolve_adapter_media_schema_shape,
+} from "./adapter_schema_graph"
+
+type MediaSchemaContext = {version: string, graph: PreparedAdapterSchemaGraph}
+
+pub type OperationMediaKind = "json" | "form" | "multipart" | "text" | "bytes"
+
+pub type OperationMediaField = {
+  name: string,
+  schema: AdapterJsonSchema,
+  kind: "json" | "text" | "bytes",
+  content_types: list<string>,
+  repeated: bool,
+  explode: bool,
+  style: "content" | "form" | "spaceDelimited" | "pipeDelimited" | "deepObject",
+  headers: dict<string, AdapterJsonSchema>,
+  required_headers: list<string>,
+  content_encoding: string?,
+}
+
+pub type OperationMediaAlternative = {
+  content_type: string,
+  kind: OperationMediaKind,
+  schema: AdapterJsonSchema,
+  fields: list<OperationMediaField>,
+  additional_field: OperationMediaField?,
+}
+
+pub type OperationMediaResponse = {status: string, alternatives: list<OperationMediaAlternative>}
+
+/** One normalized contract supplies schemas, headers and transport generation. */
+pub type OperationMediaPlan = {
+  operation: string,
+  request_required: bool,
+  request: list<OperationMediaAlternative>,
+  request_schema: AdapterJsonSchema?,
+  responses: list<OperationMediaResponse>,
+  accept: string,
+  max_response_bytes: int,
+  response_type: "text" | "bytes",
+}
+
+type MediaBytes = bytes
+
+type MediaObjectSchema = dict<string, unknown>
+
+type MediaEncoding = {
+  contentType?: string,
+  headers?: dict,
+  style?: string,
+  explode?: bool,
+  allowReserved?: bool,
+}
+
+pub fn media_bytes_schema() -> AdapterJsonSchema {
+  return schema_json(schema_of(MediaBytes))
+}
+
+fn media_binary_schema(
+  operation: string,
+  content_type: string,
+  resolved: AdapterJsonSchema,
+) -> AdapterJsonSchema {
+  if resolved == false {
+    return false
+  }
+  if type_of(resolved) == "dict" {
+    if resolved.get("type") != nil && resolved.get("type") != "string" {
+      media_error(operation, content_type, "binary data requires an opaque string schema")
+    }
+    for keyword in [
+      "allOf",
+      "anyOf",
+      "oneOf",
+      "not",
+      "if",
+      "then",
+      "else",
+      "enum",
+      "const",
+      "minLength",
+      "maxLength",
+      "pattern",
+      "contentSchema",
+    ] {
+      if resolved.get(keyword) != nil {
+        media_error(
+          operation,
+          content_type,
+          "binary schema assertion '${keyword}' requires an explicit value adapter",
+        )
+      }
+    }
+  }
+  return media_bytes_schema()
+}
+
+fn require_multipart_object_projection(
+  operation: string,
+  content_type: string,
+  object: MediaObjectSchema,
+) -> nil {
+  for keyword in [
+    "enum",
+    "const",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "dependentSchemas",
+    "patternProperties",
+    "unevaluatedProperties",
+  ] {
+    if object.get(keyword) != nil {
+      media_error(
+        operation,
+        content_type,
+        "multipart object assertion '${keyword}' cannot be preserved through part metadata wrappers",
+      )
+    }
+  }
+  return nil
+}
+
+fn repeated_field_schema(
+  operation: string,
+  content_type: string,
+  original: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+  item: AdapterJsonSchema,
+) -> AdapterJsonSchema {
+  const resolved = resolve_adapter_media_schema_shape(original, view)
+  const object = schema_expect(resolved, MediaObjectSchema)
+  if object.get("uniqueItems") == true {
+    media_error(
+      operation,
+      content_type,
+      "array uniqueness cannot be preserved through the media value projection",
+    )
+  }
+  for keyword in [
+    "enum",
+    "const",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "contains",
+    "prefixItems",
+    "unevaluatedItems",
+  ] {
+    if object.get(keyword) != nil {
+      media_error(
+        operation,
+        content_type,
+        "array assertion '${keyword}' cannot be preserved through the media value projection",
+      )
+    }
+  }
+  return {...object, items: item}
+}
+
+pub fn media_type_name(value: string) -> string {
+  return (value.split(";")[0] ?? value).trim().lower()
+}
+
+fn media_error(operation: string, content_type: string, detail: string) -> never {
+  throw "harn-openapi.media: operation '${operation}' media '${content_type}' ${detail}"
+}
+
+fn media_kind(operation: string, content_type: string, media: dict) -> OperationMediaKind {
+  if media.get("$ref") != nil {
+    media_error(operation, content_type, "referenced Media Type Objects are unsupported")
+  }
+  const normalized = media_type_name(content_type)
+  if regex_match("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$", normalized) == nil {
+    media_error(operation, content_type, "requires an exact media type")
+  }
+  if media.get("itemSchema") != nil || media.get("itemEncoding") != nil
+    || media.get("prefixEncoding") != nil
+    || ["text/event-stream", "application/json-seq", "application/jsonl", "application/x-ndjson"]
+      .contains(normalized) {
+    media_error(operation, content_type, "requires a streaming adapter")
+  }
+  if normalized == "application/json" || normalized.ends_with("+json") {
+    return "json"
+  }
+  if normalized == "application/x-www-form-urlencoded" {
+    return "form"
+  }
+  if normalized == "multipart/form-data" {
+    return "multipart"
+  }
+  if normalized.starts_with("text/") {
+    return "text"
+  }
+  if normalized == "application/octet-stream" || normalized == "application/pdf"
+    || normalized.starts_with("image/")
+    || normalized.starts_with("audio/")
+    || normalized.starts_with("video/") {
+    return "bytes"
+  }
+  media_error(operation, content_type, "has no supported serializer")
+  return "bytes"
+}
+
+fn media_encoding(operation: string, media_type: string, raw_encoding: unknown) -> MediaEncoding {
+  if !schema_is(raw_encoding, MediaEncoding) {
+    media_error(operation, media_type, "has an invalid property encoding")
+  }
+  const encoding = schema_expect(raw_encoding, MediaEncoding)
+  for entry in raw_encoding {
+    if !["contentType", "headers", "style", "explode", "allowReserved"].contains(entry.key)
+      && !entry.key.starts_with("x-") {
+      media_error(operation, media_type, "contains an unsupported property encoding field")
+    }
+  }
+  if encoding.allowReserved ?? false {
+    media_error(
+      operation,
+      media_type,
+      "allowReserved requires an unsupported reserved-character expansion",
+    )
+  }
+  return encoding
+}
+
+type MediaPartHeaders = {
+  schemas: dict<string, AdapterJsonSchema>,
+  required: list<string>,
+  definitions: dict<string, AdapterJsonSchema>,
+}
+
+type PreparedMediaField = {field: OperationMediaField, definitions: dict<string, AdapterJsonSchema>}
+
+fn require_scalar_header_schema(
+  operation: string,
+  media_type: string,
+  shape: AdapterJsonSchema,
+) -> nil {
+  const declared = type_of(shape) == "dict" ? shape.get("type") : nil
+  const types = type_of(declared) == "list" ? declared : [declared]
+  if len(types) == 0 {
+    media_error(operation, media_type, "multipart headers require a declared scalar schema")
+  }
+  for item in types {
+    if !["string", "integer", "number", "boolean", "null"].contains(item) {
+      media_error(operation, media_type, "multipart headers require a declared scalar schema")
+    }
+  }
+  return nil
+}
+
+fn media_part_headers(
+  operation: string,
+  media_type: string,
+  encoding: MediaEncoding,
+  context: MediaSchemaContext,
+  definitions: dict<string, AdapterJsonSchema>,
+) -> MediaPartHeaders {
+  let headers: dict<string, AdapterJsonSchema> = {}
+  let required_headers: list<string> = []
+  let retained = definitions
+  for header in (encoding.headers ?? {}) {
+    if regex_match("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$", header.key) == nil
+      || ["content-type", "content-disposition", "content-transfer-encoding"].contains(
+        header.key.lower(),
+      ) {
+      media_error(operation, media_type, "contains an unsupported multipart header")
+    }
+    if type_of(header.value) != "dict" {
+      media_error(operation, media_type, "multipart headers require Header Objects")
+    }
+    if header.value.get("$ref") != nil {
+      media_error(
+        operation,
+        media_type,
+        "multipart Header Objects must be resolved before preparation",
+      )
+    }
+    if header.value.get("content") != nil {
+      media_error(
+        operation,
+        media_type,
+        "multipart header content requires an unsupported value adapter",
+      )
+    }
+    if header.value.get("style") != nil && header.value.get("style") != "simple" {
+      media_error(operation, media_type, "multipart headers require simple serialization")
+    }
+    if header.value.get("explode") != nil && type_of(header.value.get("explode")) != "bool" {
+      media_error(operation, media_type, "multipart header explode must be a boolean")
+    }
+    let ordinal = len(retained)
+    let definition_key = "media_header_${ordinal}"
+    while retained.keys().contains(definition_key) {
+      ordinal = ordinal + 1
+      definition_key = "media_header_${ordinal}"
+    }
+    const prepared = prepare_adapter_schema_projection(
+      context.version,
+      header.value.get("schema") ?? {type: "string"},
+      definition_key,
+      context.graph,
+    )
+    require_scalar_header_schema(operation, media_type, prepared.shape)
+    retained = {...retained, ...prepared.definitions}
+    headers = {...headers, [header.key]: prepared.schema}
+    if header.value.get("required") ?? false {
+      required_headers.push(header.key)
+    }
+  }
+  if media_type_name(media_type) == "application/x-www-form-urlencoded" && len(headers) > 0 {
+    media_error(operation, media_type, "part headers require multipart/form-data")
+  }
+  return {schemas: headers, required: required_headers, definitions: retained}
+}
+
+fn media_field(
+  operation: string,
+  media_type: string,
+  name: string,
+  schema: AdapterJsonSchema,
+  raw_encoding: unknown,
+  view: AdapterMediaSchemaView,
+  context: MediaSchemaContext,
+  definitions: dict<string, AdapterJsonSchema>,
+) -> PreparedMediaField {
+  const encoding = media_encoding(operation, media_type, raw_encoding)
+  const resolved = resolve_adapter_media_schema_shape(schema, view)
+  const object = if type_of(resolved) == "dict" {
+    schema_expect(resolved, MediaObjectSchema)
+  } else {
+    {}
+  }
+  const repeated = object.get("type") == "array"
+  const element: AdapterJsonSchema = if repeated {
+    object.get("items") ?? {}
+  } else {
+    schema
+  }
+  const resolved_item = resolve_adapter_media_schema_shape(element, view)
+  const item = if type_of(resolved_item) == "dict" {
+    schema_expect(resolved_item, MediaObjectSchema)
+  } else {
+    {}
+  }
+  const content_encoding = item.get("contentEncoding")
+  if content_encoding != nil && !["base64", "base64url"].contains(content_encoding) {
+    media_error(operation, media_type, "contains an unsupported contentEncoding")
+  }
+  const default_type = if item.get("type") == "object" {
+    "application/json"
+  } else if item.get("type") == nil || content_encoding != nil {
+    "application/octet-stream"
+  } else {
+    "text/plain"
+  }
+  let content_types: list<string> = []
+  for alternative in (encoding.contentType ?? default_type).split(",") {
+    const content_type = alternative.trim()
+    const kind = media_kind(operation, content_type, {})
+    if kind == "form" || kind == "multipart" {
+      media_error(operation, media_type, "nested form parts are unsupported")
+    }
+    content_types.push(content_type)
+  }
+  const first = content_types[0] ?? default_type
+  const selected = media_kind(operation, first, {})
+  for content_type in content_types {
+    if media_kind(operation, content_type, {}) != selected {
+      media_error(operation, media_type, "part alternatives require the same serializer")
+    }
+  }
+  const kind = if content_encoding != nil {
+    "text"
+  } else {
+    selected
+  }
+  let style = encoding.style ?? "content"
+  if encoding.style == nil && (encoding.explode != nil || encoding.allowReserved != nil) {
+    style = "form"
+  }
+  if !["content", "form", "spaceDelimited", "pipeDelimited", "deepObject"].contains(style) {
+    media_error(operation, media_type, "contains an unsupported encoding style")
+  }
+  if style == "deepObject" && !(encoding.explode ?? true) {
+    media_error(operation, media_type, "deepObject with explode=false is undefined")
+  }
+  const headers = media_part_headers(operation, media_type, encoding, context, definitions)
+  const field = schema_expect(
+    {
+      name: name,
+      schema: if kind == "bytes" {
+        media_binary_schema(operation, media_type, resolved_item)
+      } else {
+        element
+      },
+      kind: kind,
+      content_types: content_types,
+      repeated: repeated,
+      explode: encoding.explode ?? true,
+      style: style,
+      headers: headers.schemas,
+      required_headers: headers.required,
+      content_encoding: content_encoding,
+    },
+    OperationMediaField,
+  )
+  return {field: field, definitions: headers.definitions}
+}
+
+fn multipart_property(
+  operation: string,
+  content_type: string,
+  field: OperationMediaField,
+  original: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+) -> AdapterJsonSchema {
+  const properties = {
+    value: field.schema,
+    filename: {type: "string"},
+    headers: {
+      type: "object",
+      properties: field.headers,
+      required: field.required_headers,
+      additionalProperties: false,
+    },
+    content_type: {type: "string", enum: field.content_types},
+  }
+  let required = ["value"]
+  if len(field.content_types) > 1 {
+    required.push("content_type")
+  }
+  if len(field.required_headers) > 0 {
+    required.push("headers")
+  }
+  const part: AdapterJsonSchema = {
+    type: "object",
+    properties: properties,
+    required: required,
+    additionalProperties: false,
+  }
+  return if field.repeated {
+    repeated_field_schema(operation, content_type, original, view, part)
+  } else {
+    part
+  }
+}
+
+fn media_text_schema(
+  operation: string,
+  content_type: string,
+  view: AdapterMediaSchemaView,
+) -> AdapterJsonSchema {
+  const resolved = view.shape
+  if resolved == false {
+    return false
+  }
+  if type_of(resolved) != "dict" {
+    media_error(operation, content_type, "requires a string schema")
+  }
+  const object = schema_expect(resolved, MediaObjectSchema)
+  if object.get("type") != nil && object.get("type") != "string" {
+    media_error(operation, content_type, "requires a string schema")
+  }
+  return {allOf: [view.schema, {type: "string"}], "$defs": view.definitions}
+}
+
+fn media_alternative(
+  operation: string,
+  content_type: string,
+  media: dict,
+  context: MediaSchemaContext,
+) -> OperationMediaAlternative {
+  const kind = media_kind(operation, content_type, media)
+  let schema = normalize_adapter_schema(context.version, media.get("schema") ?? {}, context.graph)
+  let fields: list<OperationMediaField> = []
+  let additional_field: OperationMediaField? = nil
+  if kind == "text" {
+    const view = prepare_adapter_media_schema(
+      context.version,
+      schema,
+      "media_source",
+      context.graph,
+    )
+    schema = media_text_schema(operation, content_type, view)
+  } else if kind == "bytes" {
+    const view = prepare_adapter_media_schema(
+      context.version,
+      schema,
+      "media_source",
+      context.graph,
+    )
+    schema = media_binary_schema(operation, content_type, view.shape)
+  } else if kind == "form" || kind == "multipart" {
+    const view = prepare_adapter_media_schema(
+      context.version,
+      schema,
+      "media_source",
+      context.graph,
+    )
+    schema = view.shape
+    if schema == false {
+      return {
+        content_type: content_type,
+        kind: kind,
+        schema: false,
+        fields: [],
+        additional_field: nil,
+      }
+    }
+    if type_of(schema) != "dict" {
+      media_error(operation, content_type, "requires an object schema")
+    }
+    const object = schema_expect(schema, MediaObjectSchema)
+    if object.get("type") != "object" {
+      media_error(operation, content_type, "requires an object schema")
+    }
+    if kind == "multipart" {
+      require_multipart_object_projection(operation, content_type, object)
+    }
+    const encoding = media.get("encoding") ?? {}
+    if type_of(encoding) != "dict" {
+      media_error(operation, content_type, "encoding must be an object")
+    }
+    const properties = object.get("properties") ?? {}
+    for encoded in encoding {
+      if !properties.keys().contains(encoded.key) {
+        media_error(operation, content_type, "encoding names an undeclared property")
+      }
+    }
+    let projected_properties = {}
+    let definitions: dict<string, AdapterJsonSchema> = {
+      ...object.get("$defs") ?? {},
+      ...view.definitions,
+    }
+    for property in properties {
+      const field_encoding = encoding.get(property.key) ?? {}
+      if type_of(field_encoding) != "dict" {
+        media_error(operation, content_type, "property encoding must be an object")
+      }
+      const prepared_field = media_field(
+        operation,
+        content_type,
+        property.key,
+        property.value,
+        field_encoding,
+        view,
+        context,
+        definitions,
+      )
+      const field = prepared_field.field
+      definitions = prepared_field.definitions
+      fields.push(field)
+      projected_properties = {
+        ...projected_properties,
+        [property.key]: if kind == "multipart" {
+          multipart_property(operation, content_type, field, property.value, view)
+        } else if field.kind == "bytes" {
+          if field.repeated {
+            repeated_field_schema(operation, content_type, property.value, view, field.schema)
+          } else {
+            field.schema
+          }
+        } else {
+          property.value
+        },
+      }
+    }
+    const additional = object.get("additionalProperties") ?? true
+    let additional_schema: AdapterJsonSchema = false
+    if additional != false {
+      const prepared_extra = media_field(
+        operation,
+        content_type,
+        "",
+        if additional == true {
+          {}
+        } else {
+          additional
+        },
+        {},
+        view,
+        context,
+        definitions,
+      )
+      const extra = prepared_extra.field
+      definitions = prepared_extra.definitions
+      additional_field = extra
+      additional_schema = schema_expect(
+        if kind == "multipart" {
+          multipart_property(
+            operation,
+            content_type,
+            extra,
+            additional == true ? {} : additional,
+            view,
+          )
+        } else if extra.kind == "bytes" {
+          if extra.repeated {
+            repeated_field_schema(operation, content_type, additional, view, extra.schema)
+          } else {
+            extra.schema
+          }
+        } else if additional == true {
+          {}
+        } else {
+          additional
+        },
+        AdapterJsonSchema,
+      )
+    }
+    schema = {
+      ...object,
+      properties: projected_properties,
+      additionalProperties: additional_schema,
+      "$defs": definitions,
+    }
+  } else if media.get("encoding") != nil {
+    media_error(operation, content_type, "encoding is supported only for form and multipart bodies")
+  }
+  return {
+    content_type: content_type,
+    kind: kind,
+    schema: schema,
+    fields: fields,
+    additional_field: additional_field,
+  }
+}
+
+fn media_alternatives(
+  operation: string,
+  content: dict,
+  context: MediaSchemaContext,
+) -> list<OperationMediaAlternative> {
+  let alternatives: list<OperationMediaAlternative> = []
+  let names: list<string> = []
+  for entry in content {
+    if type_of(entry.value) != "dict" {
+      media_error(operation, entry.key, "must be a Media Type Object")
+    }
+    const normalized = media_type_name(entry.key)
+    if names.contains(normalized) {
+      media_error(operation, entry.key, "duplicates another normalized representation")
+    }
+    names.push(normalized)
+    alternatives.push(media_alternative(operation, entry.key, entry.value, context))
+  }
+  return alternatives
+}
+
+/** Normalize media schemas and encoders without performing network retrieval. */
+pub fn prepare_operation_media(
+  operation: string,
+  request_body: dict?,
+  responses: dict,
+  openapi_version: string,
+  graph: PreparedAdapterSchemaGraph,
+  max_response_bytes: int = 16777216,
+) -> OperationMediaPlan {
+  if max_response_bytes <= 0 {
+    throw "harn-openapi.media: max_response_bytes must be positive"
+  }
+  const context: MediaSchemaContext = {version: openapi_version, graph: graph}
+  const request = media_alternatives(operation, request_body?.content ?? {}, context)
+  if request_body != nil && len(request) == 0 {
+    media_error(operation, "", "request content must not be empty")
+  }
+  let request_schema: AdapterJsonSchema? = nil
+  if len(request) == 1 {
+    request_schema = request[0]?.schema
+  } else if len(request) > 1 {
+    let variants: list<AdapterJsonSchema> = []
+    let definitions: dict<string, AdapterJsonSchema> = {}
+    for entry in request.enumerate() {
+      const alternative = entry.value
+      const embedded = nest_adapter_schema(
+        alternative.schema,
+        "request_media_" + to_string(entry.index),
+        graph,
+      )
+      definitions = {...definitions, ...embedded.definitions}
+      variants.push(
+        {
+          type: "object",
+          properties: {
+            content_type: {type: "string", const: alternative.content_type},
+            value: embedded.schema,
+          },
+          required: ["content_type", "value"],
+          additionalProperties: false,
+        },
+      )
+    }
+    request_schema = {oneOf: variants, "$defs": definitions}
+  }
+  let response_plans: list<OperationMediaResponse> = []
+  let accepted: list<string> = []
+  let response_type = "text"
+  for response in responses {
+    const alternatives = media_alternatives(operation, response.value.get("content") ?? {}, context)
+    for alternative in alternatives {
+      if alternative.kind == "bytes" {
+        response_type = "bytes"
+      }
+      if alternative.kind == "form" || alternative.kind == "multipart" {
+        media_error(operation, alternative.content_type, "requires an unsupported response decoder")
+      }
+    }
+    response_plans.push({status: response.key, alternatives: alternatives})
+    if regex_match("^2[0-9X][0-9X]$", response.key) != nil || response.key == "default" {
+      for alternative in alternatives {
+        if !accepted.contains(alternative.content_type) {
+          accepted.push(alternative.content_type)
+        }
+      }
+    }
+  }
+  return {
+    operation: operation,
+    request_required: request_body?.required ?? false,
+    request: request,
+    request_schema: request_schema,
+    responses: response_plans,
+    accept: len(accepted) == 0 ? "*/*" : accepted.join(", "),
+    max_response_bytes: max_response_bytes,
+    response_type: response_type,
+  }
+}

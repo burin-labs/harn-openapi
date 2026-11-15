@@ -1,0 +1,134 @@
+import { close_adapter_schema, prepare_adapter_schema_graph } from "../src/adapter_schema_graph"
+import { parse, schema } from "../src/lib"
+
+type SchemaObject = dict<string, unknown>
+
+import {
+  local_document_reference,
+  prepare_document_identity,
+  resolve_document_server,
+} from "../src/openapi_identity"
+
+pipeline test_self_identity_and_retrieval_have_distinct_reference_bases() {
+  const identity = prepare_document_identity(
+    "https://retrieval.test/download/openapi.json",
+    "https://canonical.test/spec/api.json",
+  )
+  assert_eq(identity.base_uri, "https://canonical.test/spec/api.json")
+  assert_eq(
+    local_document_reference("api.json#/components/schemas/Thing", identity),
+    "#/components/schemas/Thing",
+  )
+  assert_eq(
+    local_document_reference("#/components/schemas/Thing", identity),
+    "#/components/schemas/Thing",
+  )
+  assert_eq(resolve_document_server("../service", identity), "https://retrieval.test/service")
+  const relative = prepare_document_identity(
+    "https://example.test/download/spec.json",
+    "../canonical/api.json",
+  )
+  assert_eq(relative.self_uri, "https://example.test/canonical/api.json")
+  assert_eq(local_document_reference("./api.json#/paths/~1thing", relative), "#/paths/~1thing")
+  assert_eq(prepare_document_identity().base_uri, nil)
+  assert_eq(local_document_reference("#/local", prepare_document_identity()), "#/local")
+}
+
+pipeline test_identity_refusals_are_value_free_and_do_not_retrieve_resources() {
+  for input in [
+    {retrieval: "secret-sentinel/relative.json", self_uri: nil},
+    {retrieval: nil, self_uri: "secret-sentinel/relative.json"},
+    {retrieval: "https://example.test/spec#secret-sentinel", self_uri: nil},
+    {retrieval: nil, self_uri: "https://example.test/spec#secret-sentinel"},
+    {retrieval: {secret: "secret-sentinel"}, self_uri: nil},
+  ] {
+    const rejected = try {
+      prepare_document_identity(input.retrieval, input.self_uri)
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    assert(!to_string(rejected).contains("secret-sentinel"))
+  }
+  const identity = prepare_document_identity("https://example.test/spec.json")
+  for reference in [
+    "https://external.test/secret-sentinel.json#/Thing",
+    "other-secret-sentinel.json#/Thing",
+  ] {
+    const rejected = try {
+      local_document_reference(reference, identity)
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    assert(to_string(rejected).contains("explicit host resource loader"))
+    assert(!to_string(rejected).contains("secret-sentinel"))
+  }
+}
+
+pipeline test_parser_and_schema_graph_share_same_document_identity() {
+  const doc = parse(
+    json_stringify(
+      {
+        openapi: "3.2.0",
+        "$self": "../canonical/api.json",
+        info: {title: "Identity fixture", version: "1"},
+        components: {schemas: {Code: {type: "string", pattern: "^[a-z]+$"}}},
+      },
+    ),
+    {retrieval_uri: "https://example.test/download/openapi.json"},
+  )
+  assert_eq(doc.document_identity?.self_uri, "https://example.test/canonical/api.json")
+  assert_eq(
+    schema(doc, {"$ref": "api.json#/components/schemas/Code"}),
+    {type: "string", pattern: "^[a-z]+$"},
+  )
+  const identity = prepare_document_identity(
+    "https://example.test/download/openapi.json",
+    "../canonical/api.json",
+  )
+  const graph = prepare_adapter_schema_graph(
+    "3.2.0",
+    {
+      Code: {type: "string", pattern: "^[a-z]+$"},
+      Wrapped: {
+        type: "object",
+        properties: {code: {"$ref": "api.json#/components/schemas/Code"}},
+        examples: [{"$ref": "https://instance-data.test/secret-sentinel"}],
+      },
+    },
+    nil,
+    identity,
+  )
+  assert_eq(
+    graph.schemas.Wrapped,
+    {
+      type: "object",
+      properties: {code: {"$ref": "#/components/schemas/Code"}},
+      examples: [{"$ref": "https://instance-data.test/secret-sentinel"}],
+    },
+  )
+  const closed = close_adapter_schema(
+    "3.2.0",
+    {"$ref": "api.json#/components/schemas/Wrapped"},
+    graph,
+  )
+  assert(
+    schema_expect(closed, SchemaObject).get("$defs") != nil,
+    "same-document references must retain component validation",
+  )
+  const rejected = try {
+    close_adapter_schema(
+      "3.2.0",
+      {"$ref": "other-secret-sentinel.json#/components/schemas/Code"},
+      graph,
+    )
+    nil
+  } catch (error) {
+    error
+  }
+  assert(rejected != nil)
+  assert(!to_string(rejected).contains("secret-sentinel"))
+}

@@ -1,0 +1,290 @@
+import { codegen_entrypoint, codegen_module, parse } from "../src/lib"
+import { classify_openapi_revision } from "../src/openapi_dialect"
+
+type DialectProjectionReceipt = {
+  reached: {cli: int, mcp: int},
+  refused: {cli: int, mcp: int},
+  http_requests: int,
+  pending: int,
+  measurement_errors: list<string>,
+}
+
+pipeline test_supported_revision_matrix_is_explicit() {
+  for version in ["3.1.0", "3.1.1", "3.1.2", "3.1.999"] {
+    const revision = classify_openapi_revision(version)
+    assert_eq(revision.version, version)
+    assert_eq(revision.dialect, "oas_3_1")
+    assert(!revision.querystring_parameters)
+    assert(!revision.document_self_identity)
+    assert(!revision.named_servers)
+  }
+  const modern = classify_openapi_revision("3.2.0")
+  assert_eq(modern.version, "3.2.0")
+  assert_eq(modern.dialect, "oas_3_2")
+  assert(modern.querystring_parameters)
+  assert(modern.document_self_identity)
+  assert(modern.named_servers)
+  assert_eq(classify_openapi_revision("3.1", true).dialect, "oas_3_1")
+}
+
+pipeline test_unsupported_revisions_refuse_without_echoing_input() {
+  for value in [
+    "3.0.3",
+    "3.1",
+    "3.2.1",
+    "3.1.x",
+    "3.1.0+dev",
+    "secret-version-sentinel",
+    31,
+    nil,
+    {private: "secret-version-sentinel"},
+    ["secret-version-sentinel"],
+  ] {
+    const rejected = try {
+      classify_openapi_revision(value)
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil, "unsupported revisions must not acquire supported feature facts")
+    assert(!to_string(rejected).contains("secret-version-sentinel"))
+  }
+}
+
+pipeline test_supported_dialect_projects_real_cli_and_mcp(harness: Harness) {
+  const empty = {"204": {description: "Done"}}
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.2.0",
+        "$self": "../canonical/openapi.json",
+        info: {title: "Supported 3.2 contracts", version: "1"},
+        servers: [
+          {name: "primary", url: "https://primary.example.test"},
+          {name: "staging", url: "https://staging.example.test"},
+        ],
+        components: {
+          schemas: {
+            Criteria: {
+              type: "object",
+              properties: {label: {type: "string", pattern: "^a [+] b$"}},
+              required: ["label"],
+              additionalProperties: false,
+            },
+          },
+          parameters: {
+            JsonQuery: {
+              name: "criteria",
+              in: "querystring",
+              required: true,
+              content: {
+                "application/json": {schema: {"$ref": "openapi.json#/components/schemas/Criteria"}},
+              },
+            },
+          },
+        },
+        paths: {
+          "/query/json": {
+            get: {
+              operationId: "searchJson",
+              responses: empty,
+              parameters: [{"$ref": "openapi.json#/components/parameters/JsonQuery"}],
+            },
+          },
+          "/query/form": {
+            get: {
+              operationId: "searchForm",
+              responses: empty,
+              parameters: [
+                {
+                  name: "criteria",
+                  in: "querystring",
+                  required: true,
+                  content: {
+                    "application/x-www-form-urlencoded": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          term: {type: "string"},
+                          tags: {type: "array", items: {type: "string"}},
+                        },
+                        required: ["term", "tags"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          "/query/optional": {
+            get: {
+              operationId: "searchOptional",
+              responses: empty,
+              parameters: [
+                {
+                  name: "criteria",
+                  in: "querystring",
+                  content: {"application/json": {schema: {type: "object"}}},
+                },
+              ],
+            },
+          },
+        },
+      },
+    ),
+    {retrieval_uri: "https://retrieval.example.test/download/openapi.json"},
+  )
+  const root = harness.fs.mkdtemp_in_workspace("dialect-projections")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  for transport in ["raw", "connector_policy"] {
+    harness.fs.write_text(
+      "${root}/generated.harn",
+      codegen_module(
+        harness.fs,
+        document,
+        {module_name: "dialect", environment_prefix: "DIALECT", transport: transport},
+      ),
+    )
+    harness.fs.write_text(
+      "${root}/main.harn",
+      codegen_entrypoint(
+        harness.fs,
+        document,
+        {module_import: "./generated", environment_prefix: "DIALECT"},
+      ),
+    )
+    const result = harness.process.run(
+      {
+        program: "python3",
+        args: [
+          harness.fs.source_dir() + "/fixtures/dialect_projection_probe.py",
+          binary,
+          "${root}/main.harn",
+        ],
+      },
+    )
+    assert(result.success, result.stdout + result.stderr)
+    const receipt = schema_expect(json_parse(result.stdout), DialectProjectionReceipt)
+    assert_eq(receipt.reached, {cli: 3, mcp: 3})
+    assert_eq(receipt.refused, {cli: 1, mcp: 1})
+    assert_eq(receipt.http_requests, 6)
+    assert_eq(receipt.pending, 0)
+    assert_eq(receipt.measurement_errors, [])
+  }
+}
+
+pipeline test_unsupported_dialect_contracts_refuse_before_generation(harness: Harness) {
+  const response = {"204": {description: "Done"}}
+  const operation = {operationId: "inspect", responses: response}
+  const base = {
+    openapi: "3.2.0",
+    info: {title: "Refusal fixture", version: "1"},
+    servers: [{name: "primary", url: "https://primary.test"}],
+  }
+  const whole = {
+    name: "criteria",
+    in: "querystring",
+    content: {"application/json": {schema: {type: "object"}}},
+  }
+  for path_item in [
+    {query: operation},
+    {additionalOperations: {COPY: operation}},
+    {
+      get: {
+        ...operation,
+        servers: [
+          {name: "other", url: "https://first.test"},
+          {name: "other", url: "https://secret-sentinel.test"},
+        ],
+      },
+    },
+    {
+      servers: [
+        {name: "other", url: "https://first.test"},
+        {name: "other", url: "https://secret-sentinel.test"},
+      ],
+      get: operation,
+    },
+    {parameters: [whole, whole], get: {...operation, parameters: [whole]}},
+    {parameters: [whole, {name: "other", in: "query", schema: {type: "string"}}], get: operation},
+  ] {
+    const rejected = try {
+      codegen_module(
+        harness.fs,
+        parse(json_stringify({...base, paths: {"/inspect": path_item}})),
+        {module_name: "refusal"},
+      )
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    const message = to_string(rejected)
+    assert(
+      message.contains("harn-openapi.dialect:") || message.contains("harn-openapi.servers:")
+        || message.contains("harn-openapi.querystring:"),
+      message,
+    )
+    assert(!message.contains("secret-sentinel"))
+  }
+  for media in [
+    {itemSchema: {type: "object"}},
+    {itemSchema: false},
+    {itemEncoding: {contentType: "text/plain"}},
+    {prefixEncoding: []},
+    {"$ref": "https://secret-sentinel.test/media"},
+  ] {
+    const rejected = try {
+      codegen_module(
+        harness.fs,
+        parse(
+          json_stringify(
+            {
+              ...base,
+              paths: {
+                "/inspect": {
+                  get: {
+                    operationId: "inspect",
+                    responses: {"200": {description: "Done", content: {"application/json": media}}},
+                  },
+                },
+              },
+            },
+          ),
+        ),
+        {module_name: "refusal"},
+      )
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    assert(to_string(rejected).contains("harn-openapi.media:"), to_string(rejected))
+    assert(!to_string(rejected).contains("secret-sentinel"))
+  }
+  const auth_conflict = try {
+    codegen_module(
+      harness.fs,
+      parse(
+        json_stringify(
+          {
+            ...base,
+            components: {securitySchemes: {queryKey: {type: "apiKey", in: "query", name: "key"}}},
+            security: [{queryKey: []}],
+            paths: {"/inspect": {get: {...operation, parameters: [whole]}}},
+          },
+        ),
+      ),
+      {module_name: "refusal"},
+    )
+    nil
+  } catch (error) {
+    error
+  }
+  assert(
+    to_string(auth_conflict).contains(
+      "whole-query content cannot be combined with query authentication",
+    ),
+  )
+}

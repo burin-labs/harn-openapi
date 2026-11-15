@@ -1,4 +1,6 @@
 import { JsonSchema202012 } from "std/tools"
+import { classify_openapi_revision } from "./openapi_dialect"
+import { OpenApiDocumentIdentity, local_document_reference } from "./openapi_identity"
 
 /** Draft 2020-12 schema document carried by the portable tool catalog. */
 pub type AdapterJsonSchema = JsonSchema202012
@@ -17,12 +19,23 @@ pub type AdapterSchemaEmbedding = {
   definitions: dict<string, AdapterJsonSchema>,
 }
 
+/** Presentation and validation share one retained schema resource. */
+pub type AdapterSchemaView = {
+  schema: AdapterJsonSchema,
+  shape: AdapterJsonSchema,
+  definitions: dict<string, AdapterJsonSchema>,
+}
+
+/** Media serialization uses the same resource with stricter shape admission. */
+pub type AdapterMediaSchemaView = AdapterSchemaView
+
 /** Immutable schema graph prepared once for every adapter projection. */
 pub type PreparedAdapterSchemaGraph = {
   schemas: dict<string, AdapterJsonSchema>,
   direct_dependencies: dict<string, list<string>>,
   transitive_dependencies: dict<string, list<string>>,
   work: AdapterSchemaGraphWork,
+  document_identity?: OpenApiDocumentIdentity,
 }
 
 const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema"
@@ -99,30 +112,48 @@ fn schema_dialect(value: unknown, field: string) -> nil {
   return nil
 }
 
-fn normalized_schema_map(value: unknown, field: string) -> dict<string, AdapterJsonSchema> {
+fn normalized_schema_map(
+  value: unknown,
+  field: string,
+  identity: OpenApiDocumentIdentity?,
+) -> dict<string, AdapterJsonSchema> {
   if type_of(value) != "dict" {
     return reject_schema_map(field, "must be an object of JSON Schemas")
   }
   let out: dict<string, AdapterJsonSchema> = {}
   for key in value.keys().sorted() {
-    out = {...out, [key]: normalize_schema_node(value.get(key), field + "." + key)}
+    out = {...out, [key]: normalize_schema_node(value.get(key), field + "." + key, identity)}
   }
   return out
 }
 
-fn normalized_schema_list(value: unknown, field: string) -> list<AdapterJsonSchema> {
+fn normalized_schema_list(
+  value: unknown,
+  field: string,
+  identity: OpenApiDocumentIdentity?,
+) -> list<AdapterJsonSchema> {
   if type_of(value) != "list" {
     return reject_schema_list(field, "must be a list of JSON Schemas")
   }
   let out: list<AdapterJsonSchema> = []
   for enumerated in value.enumerate() {
     out = out
-      + [normalize_schema_node(enumerated.value, field + "[" + to_string(enumerated.index) + "]")]
+      + [
+        normalize_schema_node(
+          enumerated.value,
+          field + "[" + to_string(enumerated.index) + "]",
+          identity,
+        ),
+      ]
   }
   return out
 }
 
-fn normalize_schema_node(value: unknown, field: string) -> AdapterJsonSchema {
+fn normalize_schema_node(
+  value: unknown,
+  field: string,
+  identity: OpenApiDocumentIdentity? = nil,
+) -> AdapterJsonSchema {
   if type_of(value) == "bool" {
     return value
   }
@@ -159,22 +190,37 @@ fn normalize_schema_node(value: unknown, field: string) -> AdapterJsonSchema {
     }
   }
   let out = value
+  if identity != nil && value.get("$ref") != nil {
+    if type_of(value.get("$ref")) != "string" {
+      return reject_schema(field + ".$ref", "must be a URI reference string")
+    }
+    out = {...out, "$ref": local_document_reference(value.get("$ref"), identity)}
+  }
   if value.get("$schema") != nil {
     out = {...out, "$schema": JSON_SCHEMA_2020_12}
   }
   for keyword in SINGLE_SCHEMA_KEYWORDS {
     if value.get(keyword) != nil {
-      out = {...out, [keyword]: normalize_schema_node(value.get(keyword), field + "." + keyword)}
+      out = {
+        ...out,
+        [keyword]: normalize_schema_node(value.get(keyword), field + "." + keyword, identity),
+      }
     }
   }
   for keyword in ARRAY_SCHEMA_KEYWORDS {
     if value.get(keyword) != nil {
-      out = {...out, [keyword]: normalized_schema_list(value.get(keyword), field + "." + keyword)}
+      out = {
+        ...out,
+        [keyword]: normalized_schema_list(value.get(keyword), field + "." + keyword, identity),
+      }
     }
   }
   for keyword in MAP_SCHEMA_KEYWORDS {
     if value.get(keyword) != nil {
-      out = {...out, [keyword]: normalized_schema_map(value.get(keyword), field + "." + keyword)}
+      out = {
+        ...out,
+        [keyword]: normalized_schema_map(value.get(keyword), field + "." + keyword, identity),
+      }
     }
   }
   return out
@@ -383,9 +429,7 @@ fn validate_schema_refs(
 }
 
 fn validate_openapi_version(openapi_version: string) -> nil {
-  if regex_match("^3\\.1(\\.[0-9]+)?$", openapi_version) == nil {
-    return reject_nil("openapi", "must be an OpenAPI 3.1 version")
-  }
+  classify_openapi_revision(openapi_version, true)
   return nil
 }
 
@@ -405,7 +449,7 @@ pub fn normalize_adapter_schema(
 ) -> AdapterJsonSchema {
   validate_openapi_version(openapi_version)
   validate_document_dialect(json_schema_dialect)
-  const normalized = normalize_schema_node(value, "schema")
+  const normalized = normalize_schema_node(value, "schema", graph.document_identity)
   validate_schema_refs(normalized, normalized, graph.schemas, "schema")
   return normalized
 }
@@ -654,6 +698,304 @@ pub fn nest_adapter_schema(
   return schema_embedding(value, definition_key, graph.schemas, true)
 }
 
+const MEDIA_REFERENCE_ANNOTATIONS = [
+  "$ref",
+  "$schema",
+  "$defs",
+  "definitions",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "$comment",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]
+
+const PROJECTION_MAX_DEPTH = 32
+
+const PROJECTION_MAX_ALL_OF = 64
+
+const PROJECTION_MAX_PROPERTIES = 1024
+
+const PROJECTION_MAX_VISITS = 16384
+
+type AdapterSchemaProjectionStep = {schema: AdapterJsonSchema, remaining: int}
+
+fn reject_projection(detail: string) -> AdapterSchemaProjectionStep {
+  throw schema_error("schema projection", detail)
+}
+
+fn projection_without(value: AdapterJsonSchema, omitted: string) -> AdapterJsonSchema {
+  if type_of(value) == "bool" {
+    return value
+  }
+  let out = {}
+  for entry in value {
+    if entry.key != omitted {
+      out = {...out, [entry.key]: entry.value}
+    }
+  }
+  return out
+}
+
+/** Merge presentation hints; validation always retains the original conjunction. */
+pub fn merge_adapter_schema_projection(
+  base: AdapterJsonSchema,
+  overlay: AdapterJsonSchema,
+) -> AdapterJsonSchema {
+  if type_of(base) == "bool" {
+    if !base {
+      return false
+    }
+    if type_of(overlay) == "dict" && len(overlay) == 0 {
+      return true
+    }
+    return overlay
+  }
+  if type_of(overlay) == "bool" {
+    if !overlay {
+      return false
+    }
+    if len(base) == 0 {
+      return true
+    }
+    return base
+  }
+  let merged = base
+  for entry in overlay {
+    const key = entry.key
+    const value = entry.value
+    if key == "properties" {
+      const combined = (merged.get(key) ?? {}) + value
+      if len(combined) > PROJECTION_MAX_PROPERTIES {
+        return reject_schema("schema projection", "properties count exceeds the limit")
+      }
+      merged = {...merged, properties: combined}
+    } else if key == "required" {
+      let names: list<string> = []
+      for name in (merged.get(key) ?? []) + value {
+        if type_of(name) != "string" {
+          return reject_schema("schema projection.required", "must contain property names")
+        }
+        if !names.contains(name) {
+          names = names + [name]
+        }
+      }
+      merged = {...merged, required: names}
+    } else if key == "allOf" {
+      const combined = (merged.get(key) ?? []) + value
+      if len(combined) > PROJECTION_MAX_ALL_OF {
+        return reject_schema("schema projection", "allOf branch count exceeds the limit")
+      }
+      merged = {...merged, allOf: combined}
+    } else {
+      merged = {...merged, [key]: value}
+    }
+  }
+  return merged
+}
+
+fn resolved_projection_shape(
+  value: AdapterJsonSchema,
+  root: AdapterJsonSchema,
+  seen: list<AdapterSchemaLocation>,
+  depth: int,
+  remaining: int,
+) -> AdapterSchemaProjectionStep {
+  if remaining <= 0 {
+    return reject_projection("cumulative work limit exceeded")
+  }
+  const available = remaining - 1
+  if type_of(value) == "bool" {
+    return {schema: value, remaining: available}
+  }
+  if depth >= PROJECTION_MAX_DEPTH {
+    return reject_projection("depth exceeded for references or composition")
+  }
+  const reference = value.get("$ref")
+  if reference != nil {
+    const location = resolve_reference(reference, root, {}, "schema projection.$ref")
+    if seen.contains(location) {
+      return reject_projection("circular $ref detected")
+    }
+    const target = resolved_projection_shape(
+      location.schema,
+      location.root,
+      seen + [location],
+      depth + 1,
+      available,
+    )
+    const siblings = resolved_projection_shape(
+      projection_without(
+        projection_without(projection_without(value, "$ref"), "$defs"),
+        "definitions",
+      ),
+      root,
+      seen,
+      depth + 1,
+      target.remaining,
+    )
+    return {
+      schema: merge_adapter_schema_projection(target.schema, siblings.schema),
+      remaining: siblings.remaining,
+    }
+  }
+  const branches = value.get("allOf")
+  if branches == nil {
+    return {schema: value, remaining: available}
+  }
+  if len(branches) > PROJECTION_MAX_ALL_OF {
+    return reject_projection("allOf branch count exceeds the limit")
+  }
+  let merged: AdapterJsonSchema = {}
+  let budget = available
+  for branch in branches {
+    const step = resolved_projection_shape(branch, root, seen, depth + 1, budget)
+    merged = merge_adapter_schema_projection(merged, step.schema)
+    budget = step.remaining
+  }
+  return {
+    schema: merge_adapter_schema_projection(merged, projection_without(value, "allOf")),
+    remaining: budget,
+  }
+}
+
+/** Prepare an SDK presentation shape without changing the schema's validation root. */
+pub fn prepare_adapter_schema_projection(
+  openapi_version: string,
+  value: AdapterJsonSchema,
+  definition_key: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterSchemaView {
+  const closed = close_adapter_schema(openapi_version, value, graph)
+  const embedding = embed_adapter_schema(closed, definition_key)
+  const root: AdapterJsonSchema = {"$defs": embedding.definitions}
+  return {
+    schema: embedding.schema,
+    shape: resolved_projection_shape(
+      rewrite_embedded_schema_references(
+        closed,
+        "#/$defs/" + encode_pointer_segment(definition_key),
+      ),
+      root,
+      [],
+      0,
+      PROJECTION_MAX_VISITS,
+    ).schema,
+    definitions: embedding.definitions,
+  }
+}
+
+/** Resolve a projected child against its retained schema resource. */
+pub fn resolve_adapter_schema_projection(
+  value: AdapterJsonSchema,
+  view: AdapterSchemaView,
+) -> AdapterJsonSchema {
+  return resolved_projection_shape(value, {"$defs": view.definitions}, [], 0, PROJECTION_MAX_VISITS)
+    .schema
+}
+
+fn projection_has_reference(value: AdapterJsonSchema) -> bool {
+  if type_of(value) == "bool" {
+    return false
+  }
+  if value.get("$ref") != nil {
+    return true
+  }
+  for keyword in SINGLE_SCHEMA_KEYWORDS {
+    if value.get(keyword) != nil && projection_has_reference(value.get(keyword)) {
+      return true
+    }
+  }
+  for keyword in ARRAY_SCHEMA_KEYWORDS {
+    for child in value.get(keyword) ?? [] {
+      if projection_has_reference(child) {
+        return true
+      }
+    }
+  }
+  for keyword in MAP_SCHEMA_KEYWORDS {
+    for entry in (value.get(keyword) ?? {}) {
+      if projection_has_reference(entry.value) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/** Return a self-contained presentation schema without unused resource definitions. */
+pub fn close_adapter_schema_projection(view: AdapterSchemaView) -> AdapterJsonSchema {
+  const shape = projection_without(projection_without(view.shape, "$defs"), "definitions")
+  if type_of(shape) == "bool" || !projection_has_reference(shape) {
+    return shape
+  }
+  const closed: AdapterJsonSchema = {...shape, "$defs": view.definitions}
+  validate_schema_refs(closed, closed, {}, "schema projection")
+  return closed
+}
+
+fn resolved_media_shape(value: AdapterJsonSchema, root: AdapterJsonSchema) -> AdapterJsonSchema {
+  let location: AdapterSchemaLocation = {schema: value, root: root}
+  let seen: list<AdapterSchemaLocation> = []
+  while true {
+    const node = location.schema
+    if type_of(node) == "bool" {
+      return node
+    }
+    const reference = node.get("$ref")
+    if reference == nil {
+      return node
+    }
+    if seen.contains(location) {
+      return reject_schema(
+        "media schema.$ref",
+        "has a cyclic root reference without a concrete shape",
+      )
+    }
+    seen = seen + [location]
+    for key in node.keys() {
+      if !MEDIA_REFERENCE_ANNOTATIONS.contains(key) {
+        return reject_schema(
+          "media schema.$ref",
+          "has assertion siblings that do not define one unambiguous serialization shape",
+        )
+      }
+    }
+    location = resolve_reference(reference, location.root, {}, "media schema.$ref")
+  }
+}
+
+/** Resolve media structure while retaining the original resource for validation. */
+pub fn prepare_adapter_media_schema(
+  openapi_version: string,
+  value: AdapterJsonSchema,
+  definition_key: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterMediaSchemaView {
+  const closed = close_adapter_schema(openapi_version, value, graph)
+  const embedding = embed_adapter_schema(closed, definition_key)
+  const shape = resolved_media_shape(closed, closed)
+  return {
+    schema: embedding.schema,
+    shape: rewrite_embedded_schema_references(
+      shape,
+      "#/$defs/" + encode_pointer_segment(definition_key),
+    ),
+    definitions: embedding.definitions,
+  }
+}
+
+/** Classify a child in its retained resource instead of changing its reference root. */
+pub fn resolve_adapter_media_schema_shape(
+  value: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+) -> AdapterJsonSchema {
+  return resolved_media_shape(value, {"$defs": view.definitions})
+}
+
 fn schema_embedding(
   value: AdapterJsonSchema,
   definition_key: string,
@@ -724,6 +1066,7 @@ pub fn prepare_adapter_schema_graph(
   openapi_version: string,
   value: unknown,
   json_schema_dialect: string? = nil,
+  document_identity: OpenApiDocumentIdentity? = nil,
 ) -> PreparedAdapterSchemaGraph {
   validate_openapi_version(openapi_version)
   validate_document_dialect(json_schema_dialect)
@@ -737,7 +1080,11 @@ pub fn prepare_adapter_schema_graph(
     if name.trim() == "" {
       return reject_graph("components.schemas", "contains an empty component name")
     }
-    const normalized = normalize_schema_node(raw.get(name), "components.schemas." + name)
+    const normalized = normalize_schema_node(
+      raw.get(name),
+      "components.schemas." + name,
+      document_identity,
+    )
     schemas = {...schemas, [name]: normalized}
     nodes = nodes + schema_node_count(normalized)
   }
@@ -760,6 +1107,7 @@ pub fn prepare_adapter_schema_graph(
     closure_visits = closure_visits + closure.visits
   }
   return {
+    document_identity: document_identity,
     schemas: schemas,
     direct_dependencies: direct_dependencies,
     transitive_dependencies: transitive_dependencies,
