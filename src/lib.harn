@@ -129,6 +129,9 @@ pub import {
   normalize_adapter_security_plan,
   select_adapter_security_alternative,
 } from "./adapter_security"
+import { OperationMediaField } from "./operation_media"
+pub import { OperationMediaPlan, prepare_operation_media } from "./operation_media"
+import { media_transport_helpers } from "./operation_media_codegen"
 
 // -------------------------------------------------------------------------------------------------
 // Types
@@ -1182,6 +1185,10 @@ const _MODULE_TEMPLATE = """
   /** Extra HTTP headers supplied by the host. */
   pub type AdapterHeaders = dict<string, string>
 
+  enum AdapterAbsentBody {
+    Absent
+  }
+
   pub type AdapterClient = {
     base_url: string,
     credentials: dict<string, AdapterCredential>,
@@ -1304,7 +1311,7 @@ const _MODULE_TEMPLATE = """
   {{ end }}
 
   fn _no_auth_headers(client: AdapterClient) -> AdapterHeaders {
-    let hs: AdapterHeaders = {"Content-Type": "application/json"}
+    let hs: AdapterHeaders = {}
     for entry in client.extra_headers {
       hs = {...hs, [entry.key]: entry.value}
     }
@@ -1328,6 +1335,41 @@ const _MODULE_TEMPLATE = """
     }
     return hs
   }
+
+  fn _media_headers(
+    headers: AdapterHeaders,
+    content_type: string?,
+    accept: string,
+    operation: string,
+    multipart: bool = false,
+  ) -> AdapterHeaders {
+    let out: AdapterHeaders = {}
+    for header in headers {
+      const name = header.key.lower()
+      if name == "content-type" {
+        if content_type == nil || header.value.lower() != content_type.lower() {
+          throw "harn-openapi.generated: operation '" + operation
+            + "' Content-Type conflicts with its media plan"
+        }
+      } else if name == "accept" {
+        if header.value.lower() != accept.lower() {
+          throw "harn-openapi.generated: operation '" + operation
+            + "' Accept conflicts with its media plan"
+        }
+      } else {
+        out = {...out, [header.key]: header.value}
+      }
+    }
+    if content_type != nil && !multipart {
+      out = {...out, "Content-Type": content_type}
+    }
+    if accept != "" {
+      out = {...out, Accept: accept}
+    }
+    return out
+  }
+
+  {{ media_helpers }}
 
   fn _append_cookie_header(headers: AdapterHeaders, name: string, value: any) -> AdapterHeaders {
     if value == nil {
@@ -1647,8 +1689,9 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   // operation that returns it.
   let alias_cache = {by_ref: {}, by_name: {}, order: []}
   let op_return_types = []
-  for op in ops_raw {
-    const rt = _resolve_response_type(doc, op, alias_cache)
+  for entry in ops_raw.enumerate() {
+    const op = entry.value
+    const rt = _resolve_response_type(doc, op, adapters[entry.index].media, alias_cache)
     alias_cache = rt.cache
     op_return_types = op_return_types + [rt.info]
   }
@@ -1712,11 +1755,12 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     client_name: client_name,
     default_base_url: default_base_url,
     new_client_decl: new_client_decl,
-    new_client_return: _render_new_client_return(),
+    new_client_return: _render_new_client_return(header_overrides),
     has_adapter_handlers: len(published_operations) > 0,
     has_connector_imports: connector_imports != "",
     connector_imports: connector_imports,
     auth_helpers: auth_helpers,
+    media_helpers: media_transport_helpers(),
     environment_schemes: environment_schemes,
     base_url_environment: _escape_string(security_plan.base_url_environment),
     adapter_authority: if transport == "connector_policy" {
@@ -1963,18 +2007,24 @@ fn _render_new_client_decl(default_base_url: any, header_overrides: any) {
   return _render_fn_decl_suffix("new_client", parts, "AdapterClient")
 }
 
-fn _render_new_client_return() {
-  const parts = ["base_url: base_url", "credentials: credentials", "extra_headers: extra_headers"]
+fn _render_new_client_return(header_overrides: dict) {
+  const prepared = "const defaults = " + _render_dict_literal(header_overrides)
+    + "\n  const configured_headers = _merge_header_dicts([defaults, extra_headers])\n  "
+  const parts = [
+    "base_url: base_url",
+    "credentials: credentials",
+    "extra_headers: configured_headers",
+  ]
   const inline = "{" + join(parts, ", ") + "}"
   if len("  return " + inline) <= 100 {
-    return "return " + inline
+    return prepared + "return " + inline
   }
   let out = "return {\n"
   for part in parts {
     out = out + "    " + part + ",\n"
   }
   out = out + "  }"
-  return out
+  return prepared + out
 }
 
 fn _render_pub_fn_decl(name: any, params: any, return_type: any) {
@@ -2033,7 +2083,7 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
       + "' produced no credential\"\n"
       + "  }\n"
       + "  let hs: dict = "
-      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
+      + _render_binding_dict([])
       + "\n"
       + "  if token != \"\" {\n"
       + "    hs = {...hs, Authorization: \"Bearer \" + token}\n"
@@ -2052,7 +2102,7 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
       + "' requires both username and password\"\n"
       + "  }\n"
       + "  let hs: dict = "
-      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
+      + _render_binding_dict([])
       + "\n"
       + "  const encoded = base64_encode(to_string(basic.user) + \":\" + to_string(basic.password))\n"
       + "  hs = {...hs, Authorization: \"Basic \" + encoded}\n"
@@ -2071,7 +2121,7 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
       + "' produced no credential\"\n"
       + "  }\n"
       + "  let hs: dict = "
-      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
+      + _render_binding_dict([])
       + "\n"
       + "  hs = {...hs, "
       + _harn_dict_entry(header_name, "api_key")
@@ -2091,7 +2141,7 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
       + "' produced no credential\"\n"
       + "  }\n"
       + "  let hs: dict = "
-      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
+      + _render_binding_dict([])
       + "\n"
       + "  hs = _append_cookie_header(hs, \""
       + _escape_string(cookie_name)
@@ -2106,7 +2156,7 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
     const query_name = scheme.parameter_name
     return "fn " + fn_name + "(client: AdapterClient) -> dict {\n"
       + "  let hs: dict = "
-      + _render_binding_dict([_harn_dict_entry("Content-Type", "\"application/json\"")])
+      + _render_binding_dict([])
       + "\n"
       + "  return _with_extra_headers(hs, client)\n"
       + "}\n"
@@ -2380,6 +2430,7 @@ fn _adapter_input_schema(
   params: dict,
   header_overrides: dict,
   graph: PreparedAdapterSchemaGraph,
+  media: OperationMediaPlan,
 ) -> AdapterJsonSchema {
   let properties = {}
   let definitions = {}
@@ -2407,7 +2458,7 @@ fn _adapter_input_schema(
     }
   }
   if op.request_body != nil {
-    const request_schema = _request_json_schema(doc, op.request_body)
+    const request_schema = media.request_schema
     const embedded = nest_adapter_schema(request_schema ?? {}, "input_body", graph)
     definitions = {...definitions, ...embedded.definitions}
     properties = {...properties, body: embedded.schema}
@@ -2431,12 +2482,53 @@ fn _adapter_output_schema(
   doc: OpenApiDoc,
   op: dict,
   graph: PreparedAdapterSchemaGraph,
+  media: OperationMediaPlan,
 ) -> AdapterJsonSchema? {
-  const picked = _pick_success_response(doc, op)
-  if picked == nil || picked.kind != "json" || picked.schema == nil {
-    return nil
+  if op.method == "head" {
+    return {
+      type: "object",
+      properties: {
+        status: {type: "integer"},
+        headers: {type: "object", additionalProperties: {type: "string"}},
+        body: {type: "string", const: ""},
+      },
+      required: ["status", "headers", "body"],
+      additionalProperties: false,
+    }
   }
-  return normalize_adapter_schema(doc.openapi, picked.schema, graph)
+  let schemas: list<AdapterJsonSchema> = []
+  for response in media.responses {
+    if !_is_success_code(response.status) && response.status != "default" {
+      continue
+    }
+    if len(response.alternatives) == 0 {
+      schemas.push({type: "null"})
+    }
+    for alternative in response.alternatives {
+      schemas.push(alternative.schema)
+    }
+  }
+  let variants: list<AdapterJsonSchema> = []
+  let definitions: dict<string, AdapterJsonSchema> = {}
+  if len(schemas) > 1 {
+    for entry in schemas.enumerate() {
+      const embedded = nest_adapter_schema(
+        entry.value,
+        "response_media_" + to_string(entry.index),
+        graph,
+      )
+      variants.push(embedded.schema)
+      definitions = {...definitions, ...embedded.definitions}
+    }
+  }
+  const output: AdapterJsonSchema = if len(schemas) == 0 {
+    false
+  } else if len(schemas) == 1 {
+    schemas[0] ?? false
+  } else {
+    {anyOf: variants, "$defs": definitions}
+  }
+  return normalize_adapter_schema(doc.openapi, output, graph)
 }
 
 fn _adapter_error_schema(
@@ -2588,17 +2680,14 @@ fn _adapter_operation(
 ) {
   const extension = _x_harn_config(op)
   const params = _operation_param_models(op.parameters, op.operation_id)
+  const media = _operation_media_plan(doc, op, schema_graph)
   let cli_parameters = []
   for parameter in params.path + params.query + params.header + params.cookie {
     if parameter.get("in") != "header" || header_overrides.get(parameter.name) == nil {
       cli_parameters = cli_parameters + [parameter]
     }
   }
-  const request_schema = if op.request_body != nil {
-    _request_json_schema(doc, op.request_body)
-  } else {
-    nil
-  }
+  const request_schema = media.request_schema
   const cli_op = {
     ...op,
     cli_parameters: cli_parameters,
@@ -2633,9 +2722,10 @@ fn _adapter_operation(
     name: name,
     title: title,
     description: description,
-    input_schema: _adapter_input_schema(doc, op, params, header_overrides, schema_graph),
+    input_schema: _adapter_input_schema(doc, op, params, header_overrides, schema_graph, media),
+    media: media,
     param_model: params,
-    output_schema: _adapter_output_schema(doc, op, schema_graph),
+    output_schema: _adapter_output_schema(doc, op, schema_graph, media),
     error_schema: _adapter_error_schema(doc, op, schema_graph),
     annotations: normalize_adapter_annotations(
       op.method,
@@ -2700,7 +2790,7 @@ fn _signature_model(
       required_sig = required_sig + ["body: any"]
       required_arg_names = required_arg_names + ["body"]
     } else {
-      optional_sig = optional_sig + ["body: any = nil"]
+      optional_sig = optional_sig + ["body: any = AdapterAbsentBody.Absent"]
       optional_arg_names = optional_arg_names + ["body"]
     }
   }
@@ -2799,10 +2889,10 @@ fn _build_op_model(
       has_body,
       body_required,
       transport,
-      ret,
       fn_name,
       module_name,
       idempotency_key_param,
+      adapter.media,
     ),
     body_variant_constructors: _render_body_variant_constructors(body_variants),
     body_variant_fn_names: _body_variant_fn_names(body_variants),
@@ -2815,7 +2905,7 @@ fn _build_op_model(
     security_call: "_security_" + fn_name,
     return_type: ret.type_name,
     returns_nil: ret.returns_nil,
-    return_lines: _render_return_lines(fn_name, ret, transport),
+    return_lines: _render_return_lines(fn_name, ret, adapter.media),
     error_lines: _render_error_lines(fn_name, transport),
     adapter_expose: adapter.expose,
     adapter_name: _escape_string(adapter.name),
@@ -2878,7 +2968,14 @@ fn _render_adapter_handler(
   }
   let args = [authority, "client"]
   for name in argument_names {
-    args = args + ["args.get(\"" + _escape_string(name) + "\")"]
+    args = args
+      + [
+        if name == "body" {
+          "args.keys().contains(\"body\") ? args.body : AdapterAbsentBody.Absent"
+        } else {
+          "args.get(\"" + _escape_string(name) + "\")"
+        },
+      ]
   }
   // Tool dispatch refuses freeform dict returns, so wrap the SDK result in
   // the typed handler envelope: JSON text for the model, the result as data.
@@ -2921,7 +3018,7 @@ fn _render_adapter_handler(
 fn _render_error_throw(fn_name: any) {
   const dict_inline = "operation: \""
     + fn_name
-    + "\", status: resp.status, body: resp.body, headers: resp.headers"
+    + "\", status: resp.status, body: _media_error_body(resp), headers: resp.headers"
   if 12 + len(dict_inline) <= 100 {
     return "throw {" + dict_inline + "}"
   }
@@ -2930,7 +3027,7 @@ fn _render_error_throw(fn_name: any) {
     + fn_name
     + "\",\n"
     + "      status: resp.status,\n"
-    + "      body: resp.body,\n"
+    + "      body: _media_error_body(resp),\n"
     + "      headers: resp.headers,\n"
     + "    }"
 }
@@ -2938,7 +3035,7 @@ fn _render_error_throw(fn_name: any) {
 fn _render_error_lines(fn_name: any, transport: any) {
   if transport == "connector_policy" {
     return "if !(resp.ok ?? false) {\n"
-      + "    throw resp\n"
+      + "    throw {...resp, body: _media_error_body(resp)}\n"
       + "  }"
   }
   return "if resp.status < 200 || resp.status >= 300 {\n"
@@ -3127,35 +3224,8 @@ fn _idempotency_key_param(header_params: any) {
   return nil
 }
 
-fn _connector_http_function(ret: any) {
-  if ret.response_mode == "json_any" || ret.response_mode == "json_dict" {
-    return "connector_http_json"
-  }
-  return "connector_http_request"
-}
-
 fn _connector_imports(return_types: any, transport: string) -> string {
-  if transport != "connector_policy" {
-    return ""
-  }
-  let needs_json = false
-  let needs_request = false
-  for ret in return_types {
-    const helper = _connector_http_function(ret)
-    if helper == "connector_http_json" {
-      needs_json = true
-    } else if helper == "connector_http_request" {
-      needs_request = true
-    }
-  }
-  let imports = []
-  if needs_json {
-    imports = imports + ["connector_http_json"]
-  }
-  if needs_request {
-    imports = imports + ["connector_http_request"]
-  }
-  return join(imports, ", ")
+  return transport == "connector_policy" && len(return_types) > 0 ? "connector_http_request" : ""
 }
 
 fn _connector_retry_attempts(method: any, idempotency_key_param: any) {
@@ -3168,8 +3238,11 @@ fn _render_connector_options(
   module_name: any,
   has_body: any,
   idempotency_key_param: any,
+  media: OperationMediaPlan,
 ) {
   let parts = [
+    _harn_dict_entry("response_type", "\"" + media.response_type + "\""),
+    _harn_dict_entry("max_response_bytes", to_string(media.max_response_bytes)),
     _harn_dict_entry("headers", "request_headers"),
     _harn_dict_entry("provider", "\"" + _escape_string(module_name) + "\""),
     _harn_dict_entry("operation", "\"" + _escape_string(fn_name) + "\""),
@@ -3179,7 +3252,7 @@ fn _render_connector_options(
     ),
   ]
   if has_body {
-    parts = parts + [_harn_dict_entry("body", "body_str")]
+    parts = parts + ["..._media_body"]
   }
   if idempotency_key_param != nil {
     parts = parts + [_harn_dict_entry("idempotency_key", idempotency_key_param)]
@@ -3187,10 +3260,9 @@ fn _render_connector_options(
   return parts
 }
 
-fn _render_connector_call(method: any, ret: any, option_parts: any, indent: any) {
+fn _render_connector_call(method: any, option_parts: any, indent: any) {
   const options_expr = _render_binding_dict_for_column(option_parts, len(indent) + 2)
-  return _connector_http_function(ret)
-    + "(\n"
+  return "connector_http_request(\n"
     + indent
     + "  harness.clock,\n"
     + indent
@@ -3209,17 +3281,121 @@ fn _render_connector_call(method: any, ret: any, option_parts: any, indent: any)
     + ")"
 }
 
+fn _media_headers_call(
+  media: OperationMediaPlan,
+  content_type: string,
+  multipart: bool = false,
+) -> string {
+  const inline = "request_headers = _media_headers(request_headers, " + content_type + ", \""
+    + _escape_string(media.accept)
+    + "\", \""
+    + _escape_string(media.operation)
+    + "\", "
+    + to_string(multipart)
+    + ")"
+  if len(inline) + 2 <= 100 {
+    return inline
+  }
+  return "request_headers = _media_headers(\n"
+    + "    request_headers,\n    "
+    + content_type
+    + ",\n    \""
+    + _escape_string(media.accept)
+    + "\",\n    \""
+    + _escape_string(media.operation)
+    + "\",\n    "
+    + to_string(multipart)
+    + ",\n  )"
+}
+
+fn _media_field_projection(field: OperationMediaField?) -> dict? {
+  if field == nil {
+    return nil
+  }
+  return {
+    name: field.name,
+    kind: field.kind,
+    content_types: field.content_types,
+    repeated: field.repeated,
+    explode: field.explode,
+    style: field.style,
+    headers: field.headers.keys(),
+    required_headers: field.required_headers,
+    content_encoding: field.content_encoding,
+  }
+}
+
+fn _render_media_body(media: OperationMediaPlan) -> string {
+  let alternatives: list<dict> = []
+  for alternative in media.request {
+    alternatives.push(
+      {
+        content_type: alternative.content_type,
+        kind: alternative.kind,
+        fields: alternative.fields.map({ field -> _media_field_projection(field) }),
+        additional_field: _media_field_projection(alternative.additional_field),
+      },
+    )
+  }
+  return "const _media_prepared = _media_prepare_request(\n    request_headers,\n    body,\n    "
+    + _render_json_parse_expr_at(alternatives, "    ")
+    + ",\n    \""
+    + _escape_string(media.accept)
+    + "\",\n    \""
+    + _escape_string(media.operation)
+    + "\",\n  )\n"
+    + "  request_headers = _media_prepared.headers\n  const _media_body = _media_prepared.options"
+}
+
+fn _operation_media_plan(
+  doc: OpenApiDoc,
+  op: dict,
+  graph: PreparedAdapterSchemaGraph,
+) -> OperationMediaPlan {
+  const request = if op.request_body == nil {
+    nil
+  } else {
+    _resolve_ref(doc, op.request_body)
+  }
+  let responses = {}
+  for response in op.responses {
+    responses = {...responses, [response.key]: _resolve_ref(doc, response.value)}
+  }
+  return prepare_operation_media(op.operation_id, request, responses, doc.openapi, graph)
+}
+
+fn _render_raw_media_call(
+  method: string,
+  media: OperationMediaPlan,
+  has_body: bool,
+  column: int = 4,
+) -> string {
+  const options = (has_body ? ["..._media_body"] : [])
+    + [
+      "headers: request_headers",
+      "response_type: \"" + media.response_type + "\"",
+      "max_response_bytes: " + to_string(media.max_response_bytes),
+    ]
+  return "net.request(\n    \"" + method + "\",\n    url,\n    "
+    + _indent_after_first(_render_binding_dict_for_column(options, column), "  ")
+    + ",\n  )"
+}
+
 fn _render_request_lines(
   method: any,
   has_body: any,
   body_required: any,
   transport: any,
-  ret: any,
   fn_name: any,
   module_name: any,
   idempotency_key_param: any,
+  media: OperationMediaPlan,
 ) {
-  const body_prepare = "const body_str = json_stringify(body)"
+  const body_prepare = if has_body {
+    _render_media_body(media)
+  } else {
+    ""
+  }
   if transport == "connector_policy" {
     if !has_body {
       const options = _render_connector_options(
@@ -3228,8 +3404,10 @@ fn _render_request_lines(
         module_name,
         false,
         idempotency_key_param,
+        media,
       )
-      return "const resp = " + _render_connector_call(method, ret, options, "  ")
+      return _media_headers_call(media, "nil") + "\n  const resp = "
+        + _render_connector_call(method, options, "  ")
     }
     if body_required {
       const options = _render_connector_options(
@@ -3238,8 +3416,9 @@ fn _render_request_lines(
         module_name,
         true,
         idempotency_key_param,
+        media,
       )
-      return body_prepare + "\n  const resp = " + _render_connector_call(method, ret, options, "  ")
+      return body_prepare + "\n  const resp = " + _render_connector_call(method, options, "  ")
     }
     const no_body_options = _render_connector_options(
       method,
@@ -3247,6 +3426,7 @@ fn _render_request_lines(
       module_name,
       false,
       idempotency_key_param,
+      media,
     )
     const body_options = _render_connector_options(
       method,
@@ -3254,82 +3434,80 @@ fn _render_request_lines(
       module_name,
       true,
       idempotency_key_param,
+      media,
     )
-    return "let resp = nil\n"
-      + "  if body == nil {\n"
+    return "let resp: dict = {}\n"
+      + "  if body == AdapterAbsentBody.Absent {\n"
+      + "    "
+      + _indent_after_first(_media_headers_call(media, "nil"), "  ")
+      + "\n"
       + "    resp = "
-      + _render_connector_call(method, ret, no_body_options, "    ")
+      + _render_connector_call(method, no_body_options, "    ")
       + "\n"
       + "  } else {\n"
       + "    "
-      + _indent_after_first(body_prepare, "    ")
+      + _indent_after_first(body_prepare, "  ")
       + "\n"
       + "    resp = "
-      + _render_connector_call(method, ret, body_options, "    ")
+      + _render_connector_call(method, body_options, "    ")
       + "\n"
       + "  }"
   }
   const raw_method = to_string(method ?? "get").upper()
   if !has_body {
-    return "const resp = net.request(\""
-      + raw_method
-      + "\", url, {headers: request_headers})"
+    return _media_headers_call(media, "nil") + "\n  const resp = "
+      + _render_raw_media_call(raw_method, media, false)
   }
   if body_required {
-    return body_prepare
-      + "\n  const resp = net.request(\""
-      + raw_method
-      + "\", url, {body: body_str, headers: request_headers})"
+    return body_prepare + "\n  const resp = " + _render_raw_media_call(raw_method, media, true)
   }
-  return "let resp = nil\n"
-    + "  if body == nil {\n"
-    + "    resp = net.request(\""
-    + raw_method
-    + "\", url, {headers: request_headers})\n"
+  return "let resp: dict = {}\n"
+    + "  if body == AdapterAbsentBody.Absent {\n"
+    + "    "
+    + _indent_after_first(_media_headers_call(media, "nil"), "  ")
+    + "\n"
+    + "    resp = "
+    + _indent_after_first(_render_raw_media_call(raw_method, media, false, 6), "  ")
+    + "\n"
     + "  } else {\n"
     + "    "
-    + _indent_after_first(body_prepare, "    ")
+    + _indent_after_first(body_prepare, "  ")
     + "\n"
-    + "    resp = net.request(\""
-    + raw_method
-    + "\", url, {body: body_str, headers: request_headers})\n"
+    + "    resp = "
+    + _indent_after_first(_render_raw_media_call(raw_method, media, true, 6), "  ")
+    + "\n"
     + "  }"
 }
 
-fn _render_return_lines(fn_name: any, ret: any, transport: any) {
-  if ret.returns_nil {
-    return "return nil"
+fn _render_return_lines(fn_name: string, ret: dict, media: OperationMediaPlan) -> string {
+  if ret.response_mode == "head" {
+    return "return {status: resp.status, headers: resp.headers, body: \"\"}"
   }
-  if ret.response_mode == "opaque" {
-    return "return {status: resp.status, headers: resp.headers, body: resp.body}"
+  if ret.type_name == "never" {
+    return "throw \"harn-openapi.generated: received a response forbidden by its JSON Schema\""
   }
-  if ret.response_mode == "json_never" {
-    return "throw \""
-      + fn_name
-      + ": received a response forbidden by its JSON Schema\""
+  let plans: list<dict> = []
+  for response in media.responses {
+    plans.push(
+      {
+        status: response.status,
+        alternatives: response.alternatives.map(
+          { alternative ->
+            {
+              content_type: alternative.content_type,
+              kind: alternative.kind,
+              forbidden: alternative.schema == false,
+            }
+          },
+        ),
+      },
+    )
   }
-  if transport == "connector_policy" {
-    if ret.response_mode == "json_any" {
-      return "return resp.json"
-    }
-    return "const raw = resp.json\n"
-      + "  if type_of(raw) != \"dict\" {\n"
-      + "    throw \""
-      + fn_name
-      + ": expected dict response, got \" + type_of(raw)\n"
-      + "  }\n"
-      + "  return raw"
-  }
-  if ret.response_mode == "json_any" {
-    return "return json_parse(resp.body)"
-  }
-  return "const raw = json_parse(resp.body)\n"
-    + "  if type_of(raw) != \"dict\" {\n"
-    + "    throw \""
-    + fn_name
-    + ": expected dict response, got \" + type_of(raw)\n"
-    + "  }\n"
-    + "  return raw"
+  return "return _media_decode_response(\n    resp,\n    "
+    + _render_json_parse_expr_at(plans, "    ")
+    + ",\n    \""
+    + _escape_string(fn_name)
+    + "\",\n  )"
 }
 
 fn _render_binding_dict(parts: any) {
@@ -3673,19 +3851,34 @@ fn _response_type(type_name: string, mode: string, cache: any, alias_name: strin
   }
 }
 
-fn _resolve_response_type(doc: any, op: any, cache: any) {
-  const picked = _pick_success_response(doc, op)
-  if picked == nil {
-    // No 2xx declared at all — legacy `dict` with empty-body fallback.
-    return _response_type("dict", "json_dict", cache)
+fn _resolve_response_type(doc: any, op: any, media: OperationMediaPlan, cache: any) {
+  if op.method == "head" {
+    return _response_type("{status: int, headers: AdapterHeaders, body: string}", "head", cache)
   }
-  if picked.kind == "nil" {
-    return _response_type("nil", "nil", cache)
+  let current = cache
+  let types: list<string> = []
+  for response in media.responses {
+    if !_is_success_code(response.status) && response.status != "default" {
+      continue
+    }
+    if len(response.alternatives) == 0 {
+      types.push("nil")
+    }
+    for alternative in response.alternatives {
+      if alternative.kind == "json" {
+        const resolved = _resolve_json_response_type(doc, op, alternative.schema, current)
+        current = resolved.cache
+        types.push(resolved.info.type_name)
+      } else {
+        types.push(alternative.kind == "text" ? "string" : "bytes")
+      }
+    }
   }
-  if picked.kind == "opaque" {
-    return _response_type("dict", "opaque", cache)
-  }
-  const schema_raw = picked.schema ?? true
+  const names = _dedupe(types)
+  return _response_type(len(names) == 0 ? "never" : names.join(" | "), "media", current)
+}
+
+fn _resolve_json_response_type(doc: any, op: any, schema_raw: AdapterJsonSchema, cache: any) {
   const ref = if type_of(schema_raw) == "dict" {
     schema_raw.get("$ref")
   } else {
@@ -4116,7 +4309,7 @@ fn _is_plain_identifier(s: any) {
   return regex_match("^[A-Za-z_][A-Za-z0-9_]*$", s) != nil
 }
 
-fn _escape_string(s: any) {
+fn _escape_string(s: any, syntax: "harn" | "toml" = "harn") {
   // Defence-in-depth: even though emitted code is re-checked by `harn check`
   // in tests, control characters smuggled in from a malicious OpenAPI spec
   // could close a Harn string literal early or break our codegen output. We
@@ -4131,11 +4324,14 @@ fn _escape_string(s: any) {
   out = replace(out, "\n", "\\n")
   out = replace(out, "\r", "\\r")
   out = replace(out, "\t", "\\t")
+  if syntax == "harn" {
+    out = replace(out, "$" + "{", "\\" + "$" + "{")
+  }
   return out
 }
 
 fn _escape_toml_string(s: any) {
-  return _escape_string(to_string(s))
+  return _escape_string(to_string(s), "toml")
 }
 
 fn _toml_key(key: any) {

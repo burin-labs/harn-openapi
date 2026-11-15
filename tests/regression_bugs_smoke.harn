@@ -339,7 +339,7 @@ pipeline test_main(harness: Harness) {
   require_contains(
     harness.stdio,
     src,
-    "body: any = nil",
+    "body: any = AdapterAbsentBody.Absent",
     "optional request bodies should be optional in signatures",
   )
   const module_stem = check_generated(harness, src, "generated")

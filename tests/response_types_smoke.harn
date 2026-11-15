@@ -208,14 +208,13 @@ pipeline test_main(harness: Harness) {
   )
   const delete_block_start = _count_occurrences(src, "pub fn delete_page")
   assert(delete_block_start == 1, "delete_page must be emitted once")
-  // --- Acceptance 6: non-JSON success body -> untyped fallback dict,
-  // no bogus alias emission. ---
+  // Raw binary responses retain their native bytes type.
   assert(
     contains(
       src,
-      "pub fn get_raw_bytes(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n) -> dict",
+      "pub fn get_raw_bytes(\n  harness: {clock: HarnessClock, net: HarnessNet},\n  client: AdapterClient,\n) -> bytes",
     ),
-    "non-JSON response body must fall back to dict",
+    "binary response body must retain its bytes type",
   )
   const raw_alias = _count_occurrences(src, "type GetRawBytesResponse")
   assert(raw_alias == 0, "no alias should be synthesized for non-JSON responses")

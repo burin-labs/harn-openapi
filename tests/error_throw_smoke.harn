@@ -56,7 +56,10 @@ pipeline test_main(harness: Harness) {
     contains(src, "connector_http_request("),
     "default generated source must use connector transport",
   )
-  assert(contains(src, "throw resp"), "generated source must throw the connector envelope")
+  assert(
+    contains(src, "throw {...resp, body: _media_error_body(resp)}"),
+    "generated source must preserve the connector error envelope",
+  )
   assert(
     !contains(src, "throw \"get_thing: HTTP \""),
     "legacy string-throw format must be gone for non-2xx responses",

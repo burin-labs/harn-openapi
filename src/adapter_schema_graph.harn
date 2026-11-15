@@ -17,6 +17,13 @@ pub type AdapterSchemaEmbedding = {
   definitions: dict<string, AdapterJsonSchema>,
 }
 
+/** Media classification and validation share one retained schema resource. */
+pub type AdapterMediaSchemaView = {
+  schema: AdapterJsonSchema,
+  shape: AdapterJsonSchema,
+  definitions: dict<string, AdapterJsonSchema>,
+}
+
 /** Immutable schema graph prepared once for every adapter projection. */
 pub type PreparedAdapterSchemaGraph = {
   schemas: dict<string, AdapterJsonSchema>,
@@ -652,6 +659,80 @@ pub fn nest_adapter_schema(
   graph: PreparedAdapterSchemaGraph,
 ) -> AdapterSchemaEmbedding {
   return schema_embedding(value, definition_key, graph.schemas, true)
+}
+
+const MEDIA_REFERENCE_ANNOTATIONS = [
+  "$ref",
+  "$schema",
+  "$defs",
+  "definitions",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "$comment",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]
+
+fn resolved_media_shape(value: AdapterJsonSchema, root: AdapterJsonSchema) -> AdapterJsonSchema {
+  let location: AdapterSchemaLocation = {schema: value, root: root}
+  let seen: list<AdapterSchemaLocation> = []
+  while true {
+    const node = location.schema
+    if type_of(node) == "bool" {
+      return node
+    }
+    const reference = node.get("$ref")
+    if reference == nil {
+      return node
+    }
+    if seen.contains(location) {
+      return reject_schema(
+        "media schema.$ref",
+        "has a cyclic root reference without a concrete shape",
+      )
+    }
+    seen = seen + [location]
+    for key in node.keys() {
+      if !MEDIA_REFERENCE_ANNOTATIONS.contains(key) {
+        return reject_schema(
+          "media schema.$ref",
+          "has assertion siblings that do not define one unambiguous serialization shape",
+        )
+      }
+    }
+    location = resolve_reference(reference, location.root, {}, "media schema.$ref")
+  }
+}
+
+/** Resolve media structure while retaining the original resource for validation. */
+pub fn prepare_adapter_media_schema(
+  openapi_version: string,
+  value: AdapterJsonSchema,
+  definition_key: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> AdapterMediaSchemaView {
+  const closed = close_adapter_schema(openapi_version, value, graph)
+  const embedding = embed_adapter_schema(closed, definition_key)
+  const shape = resolved_media_shape(closed, closed)
+  return {
+    schema: embedding.schema,
+    shape: rewrite_embedded_schema_references(
+      shape,
+      "#/$defs/" + encode_pointer_segment(definition_key),
+    ),
+    definitions: embedding.definitions,
+  }
+}
+
+/** Classify a child in its retained resource instead of changing its reference root. */
+pub fn resolve_adapter_media_schema_shape(
+  value: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+) -> AdapterJsonSchema {
+  return resolved_media_shape(value, {"$defs": view.definitions})
 }
 
 fn schema_embedding(

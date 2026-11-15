@@ -1,0 +1,314 @@
+/** Shared pure helpers emitted into standalone generated packages. */
+pub fn media_transport_helpers() -> string {
+  return """
+    fn _media_scalar(value: unknown) -> string {
+      if type_of(value) == "string" {
+        return value
+      }
+      if ["nil", "bool", "int", "float"].contains(type_of(value)) {
+        return json_stringify(value)
+      }
+      throw "harn-openapi.generated: expected a scalar form value"
+    }
+
+    fn _media_select_body(body: unknown, alternatives: list<dict>) -> dict {
+      if len(alternatives) == 1 {
+        return {...alternatives[0], value: body}
+      }
+      if type_of(body) != "dict" || !body.keys().contains("content_type")
+        || !body.keys().contains("value") {
+        throw "harn-openapi.generated: select request content_type and value explicitly"
+      }
+      for entry in body {
+        if !["content_type", "value"].contains(entry.key) {
+          throw "harn-openapi.generated: undeclared representation metadata"
+        }
+      }
+      for alternative in alternatives {
+        if alternative.content_type == body.content_type {
+          return {...alternative, value: body.value}
+        }
+      }
+      throw "harn-openapi.generated: undeclared request Content-Type"
+    }
+
+    fn _media_prepare_request(
+      headers: AdapterHeaders,
+      body: unknown,
+      alternatives: list<dict>,
+      accept: string,
+      operation: string,
+    ) -> dict {
+      const selected = _media_select_body(body, alternatives)
+      const prepared_headers = _media_headers(
+        headers,
+        selected.content_type,
+        accept,
+        operation,
+        selected.kind == "multipart",
+      )
+      if selected.kind == "json" {
+        return {headers: prepared_headers, options: {body: json_stringify(selected.value)}}
+      }
+      if selected.kind == "text" || selected.kind == "bytes" {
+        if type_of(selected.value) != (selected.kind == "text" ? "string" : "bytes") {
+          throw "harn-openapi.generated: invalid request body representation"
+        }
+        return {headers: prepared_headers, options: {body: selected.value}}
+      }
+      if type_of(selected.value) != "dict" {
+        throw "harn-openapi.generated: expected an object media value"
+      }
+      const options = if selected.kind == "form" {
+        {body: _media_form(selected.value, selected.fields, selected.additional_field)}
+      } else {
+        {multipart: _media_multipart(selected.value, selected.fields, selected.additional_field)}
+      }
+      return {headers: prepared_headers, options: options}
+    }
+
+    fn _media_text(response: dict, operation: string) -> string {
+      const decoded = try {
+        response.get("body_bytes") != nil ? bytes_to_string(response.body_bytes) : response.get("body")
+          ?? ""
+      }
+      if !is_ok(decoded) {
+        throw "harn-openapi.generated: operation '" + operation + "' response is not UTF-8 text"
+      }
+      return unwrap(decoded)
+    }
+
+    fn _media_error_body(response: dict) -> string {
+      return type_of(response.get("body")) == "string" ? response.body : ""
+    }
+
+    fn _media_decode_response(response: dict, plans: list<dict>, operation: string) -> any {
+      const status = to_string(response.status)
+      const range = substring(status, 0, 1) + "XX"
+      let selected: dict? = nil
+      for key in [status, range, "default"] {
+        for plan in plans {
+          if plan.status == key {
+            selected = plan
+            break
+          }
+        }
+        if selected != nil {
+          break
+        }
+      }
+      if selected == nil {
+        throw "harn-openapi.generated: operation '" + operation
+          + "' received an undeclared success status"
+      }
+      const body = response.get("body_bytes") ?? bytes_from_string(response.get("body") ?? "")
+      if len(selected.alternatives) == 0 {
+        if bytes_len(body) != 0 {
+          throw "harn-openapi.generated: operation '" + operation
+            + "' received an undeclared response body"
+        }
+        return nil
+      }
+      let content_type: string? = nil
+      for header in response.headers {
+        if header.key.lower() == "content-type" {
+          if content_type != nil {
+            throw "harn-openapi.generated: conflicting response Content-Type headers"
+          }
+          content_type = (header.value.split(";")[0] ?? header.value).trim().lower()
+        }
+      }
+      let representation: dict? = nil
+      for alternative in selected.alternatives {
+        const expected = (alternative.content_type.split(";")[0] ?? alternative.content_type).trim()
+          .lower()
+        if content_type == expected || (content_type == nil && len(selected.alternatives) == 1) {
+          representation = alternative
+        }
+      }
+      if representation == nil {
+        throw "harn-openapi.generated: operation '" + operation
+          + "' received an undeclared response Content-Type"
+      }
+      if representation.forbidden {
+        throw "harn-openapi.generated: received a response forbidden by its JSON Schema"
+      }
+      if representation.kind == "bytes" {
+        return body
+      }
+      const text = _media_text(response, operation)
+      if representation.kind == "text" {
+        return text
+      }
+      const parsed = try {
+        json_parse(text)
+      }
+      if !is_ok(parsed) {
+        throw {
+          category: "invalid_json",
+          status: response.status,
+          operation: operation,
+          retryable: false,
+        }
+      }
+      return unwrap(parsed)
+    }
+
+    fn _media_encoded_value(value: unknown, kind: string) -> string | bytes {
+      if kind == "json" {
+        return json_stringify(value)
+      }
+      if kind == "bytes" {
+        if type_of(value) != "bytes" {
+          throw "harn-openapi.generated: expected a binary media value"
+        }
+        return value
+      }
+      return _media_scalar(value)
+    }
+
+    fn _media_form_escape(value: string) -> string {
+      return replace(url_encode(value), "%20", "+")
+    }
+
+    fn _media_field(fields: list<dict>, name: string, additional: dict?) -> dict {
+      for field in fields {
+        if field.name == name {
+          return field
+        }
+      }
+      if additional != nil {
+        return additional
+      }
+      throw "harn-openapi.generated: undeclared form property"
+    }
+
+    fn _media_form_pair(name: string, value: string) -> string {
+      return _media_form_escape(name) + "=" + _media_form_escape(value)
+    }
+
+    fn _media_form(body: dict, fields: list<dict>, additional: dict?) -> string {
+      let pairs: list<string> = []
+      for entry in body {
+        const field = _media_field(fields, entry.key, additional)
+        const value = entry.value
+        if field.style != "content" && type_of(value) == "dict" {
+          let flattened: list<string> = []
+          for property in value {
+            const scalar = _media_scalar(property.value)
+            if field.style == "deepObject" {
+              pairs.push(_media_form_pair(entry.key + "[" + property.key + "]", scalar))
+            } else if field.explode {
+              pairs.push(_media_form_pair(property.key, scalar))
+            } else {
+              flattened.push(property.key)
+              flattened.push(scalar)
+            }
+          }
+          if len(flattened) > 0 {
+            const delimiter =
+              field.style == "spaceDelimited" ? " " : field.style == "pipeDelimited" ? "|" : ","
+            pairs.push(_media_form_pair(entry.key, flattened.join(delimiter)))
+          }
+          continue
+        }
+        const values = if field.repeated {
+          if type_of(value) != "list" {
+            throw "harn-openapi.generated: expected an array form property"
+          }
+          value
+        } else {
+          [value]
+        }
+        let encoded: list<string> = []
+        for item in values {
+          const serialized = _media_encoded_value(item, field.kind)
+          encoded.push(type_of(serialized) == "bytes" ? bytes_to_base64(serialized) : serialized)
+        }
+        if field.repeated && !field.explode {
+          const delimiter =
+            field.style == "spaceDelimited" ? " " : field.style == "pipeDelimited" ? "|" : ","
+          pairs.push(_media_form_pair(entry.key, encoded.join(delimiter)))
+        } else {
+          for item in encoded {
+            pairs.push(_media_form_pair(entry.key, item))
+          }
+        }
+      }
+      return pairs.join("&")
+    }
+
+    fn _media_part(name: string, part: dict, field: dict) -> dict {
+      if !part.keys().contains("value") {
+        throw "harn-openapi.generated: multipart property requires a value"
+      }
+      for entry in part {
+        if !["value", "filename", "headers", "content_type"].contains(entry.key) {
+          throw "harn-openapi.generated: undeclared multipart metadata"
+        }
+      }
+      const content_type = part.get("content_type") ?? field.content_types[0]
+      if !field.content_types.contains(content_type) {
+        throw "harn-openapi.generated: multipart Content-Type conflicts with its media plan"
+      }
+      if len(field.content_types) > 1 && !part.keys().contains("content_type") {
+        throw "harn-openapi.generated: select a multipart Content-Type explicitly"
+      }
+      let headers: dict<string, string> = {}
+      const provided = part.get("headers") ?? {}
+      if type_of(provided) != "dict" {
+        throw "harn-openapi.generated: multipart headers must be an object"
+      }
+      for header in provided {
+        if !field.headers.contains(header.key) {
+          throw "harn-openapi.generated: undeclared multipart header"
+        }
+        headers = {...headers, [header.key]: _media_scalar(header.value)}
+      }
+      for required in field.required_headers {
+        if !provided.keys().contains(required) {
+          throw "harn-openapi.generated: required multipart header is absent"
+        }
+      }
+      if field.content_encoding != nil {
+        headers = {...headers, "Content-Transfer-Encoding": field.content_encoding}
+      }
+      let result = {
+        name: name,
+        value: _media_encoded_value(part.value, field.kind),
+        content_type: content_type,
+        headers: headers,
+      }
+      const filename = part.get("filename")
+      if filename != nil {
+        if type_of(filename) != "string" {
+          throw "harn-openapi.generated: multipart filename must be a string"
+        }
+        result = {...result, filename: filename}
+      }
+      return result
+    }
+
+    fn _media_multipart(body: dict, fields: list<dict>, additional: dict?) -> list<dict> {
+      let parts: list<dict> = []
+      for entry in body {
+        const field = _media_field(fields, entry.key, additional)
+        const values = if field.repeated {
+          if type_of(entry.value) != "list" {
+            throw "harn-openapi.generated: expected an array multipart property"
+          }
+          entry.value
+        } else {
+          [entry.value]
+        }
+        for value in values {
+          if type_of(value) != "dict" {
+            throw "harn-openapi.generated: multipart properties require value and optional metadata"
+          }
+          parts.push(_media_part(entry.key, value, field))
+        }
+      }
+      return parts
+    }
+    """
+}

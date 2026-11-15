@@ -1,0 +1,204 @@
+import {
+  AdapterJsonSchema,
+  prepare_adapter_media_schema,
+  prepare_adapter_schema_graph,
+  resolve_adapter_media_schema_shape,
+} from "../src/adapter_schema_graph"
+
+type ObjectShape = {
+  type: string,
+  properties: dict<string, AdapterJsonSchema>,
+  required: list<string>,
+}
+
+type ArrayShape = {type: string, items: AdapterJsonSchema}
+
+type SchemaKind = {type: string}
+
+type PatternSchema = {pattern: string}
+
+type CommandResult = {success: bool, stdout: string, stderr: string}
+
+type CommandHost = {env: HarnessEnv, process: HarnessProcess}
+
+fn view_rejection(value: AdapterJsonSchema) -> string {
+  const caught = try {
+    prepare_adapter_media_schema("3.1.1", value, "media", prepare_adapter_schema_graph("3.1.1", {}))
+    nil
+  } catch (error) {
+    error
+  }
+  return to_string(caught)
+}
+
+fn validator_server(fs: HarnessFs, schema: AdapterJsonSchema) -> string {
+  const root = fs.mkdtemp_in_workspace("media-schema")
+  const path = root + "/server.harn"
+  fs.write_text(
+    path,
+    "fn main(harness: Harness) {\n"
+      + "  let registry = tool_registry()\n"
+      + "  registry = tool_define(registry, \"check\", \"Validate the retained schema\", {input_schema: "
+      + json_stringify(schema)
+      + ", handler: { value -> {reached: true} }})\n"
+      + "  harness.tools.mcp_tools(registry)\n}\n",
+  )
+  return path
+}
+
+fn check_value(host: CommandHost, server: string, value: unknown) -> CommandResult {
+  const result = host.process.run(
+    {
+      program: host.env.get("HARN_BIN") ?? "harn",
+      args: ["tool", "run", server, "check", "--harn-input", json_stringify(value)],
+    },
+  )
+  return pick(result, ["success", "stdout", "stderr"])
+}
+
+fn schema_kind(value: AdapterJsonSchema) -> string {
+  return schema_expect(value, SchemaKind).type
+}
+
+@test
+pipeline retained_roots_survive_multipart_and_array_nesting(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const view = prepare_adapter_media_schema(
+    "3.1.1",
+    {
+      "$defs": {Code: {type: "string", pattern: "^[a-z]+$"}},
+      type: "object",
+      properties: {
+        code: {"$ref": "#/$defs/Code"},
+        copy: {"$ref": "#/properties/code"},
+        values: {type: "array", items: {"$ref": "#/$defs/Code"}},
+      },
+      required: ["code", "copy", "values"],
+      additionalProperties: false,
+    },
+    "media/body",
+    graph,
+  )
+  const shape = schema_expect(view.shape, ObjectShape)
+  assert_eq(schema_kind(resolve_adapter_media_schema_shape(shape.properties.copy, view)), "string")
+  const array = schema_expect(shape.properties.values, ArrayShape)
+  assert_eq(schema_kind(resolve_adapter_media_schema_shape(array.items, view)), "string")
+  const wrapped = {
+    type: "object",
+    properties: {
+      value: {
+        type: "object",
+        properties: shape.properties,
+        required: shape.required,
+        additionalProperties: false,
+      },
+    },
+    required: ["value"],
+    additionalProperties: false,
+    "$defs": view.definitions,
+  }
+  const server = validator_server(harness.fs, wrapped)
+  const host = pick(harness, ["env", "process"])
+  const good = check_value(host, server, {value: {code: "ok", copy: "copy", values: ["item"]}})
+  assert(good.success, good.stderr)
+  assert_eq(json_parse(good.stdout), {reached: true})
+  for value in [
+    {value: {code: "BAD", copy: "copy", values: ["item"]}},
+    {value: {code: "ok", copy: "BAD", values: ["item"]}},
+    {value: {code: "ok", copy: "copy", values: ["BAD"]}},
+  ] {
+    const bad = check_value(host, server, value)
+    assert(!bad.success, "moved children must still validate against their original schema")
+    assert((bad.stdout + bad.stderr).contains("pattern"), bad.stderr)
+    assert(
+      !(bad.stdout + bad.stderr).contains("\"reached\":true"),
+      "invalid data must not reach the handler",
+    )
+  }
+}
+
+@test
+pipeline referenced_roots_and_component_children_keep_validation(harness: Harness) {
+  const graph = prepare_adapter_schema_graph(
+    "3.1.1",
+    {
+      Code: {type: "string", pattern: "^[a-z]+$"},
+      List: {type: "array", items: {"$ref": "#/components/schemas/Code"}},
+      Scoped: {
+        "$defs": {Code: {type: "string", pattern: "^[0-9]+$"}},
+        type: "array",
+        items: {"$ref": "#/$defs/Code"},
+      },
+    },
+  )
+  const view = prepare_adapter_media_schema(
+    "3.1.1",
+    {"$ref": "#/components/schemas/List"},
+    "body",
+    graph,
+  )
+  const shape = schema_expect(view.shape, ArrayShape)
+  assert_eq(shape.type, "array")
+  assert_eq(schema_kind(resolve_adapter_media_schema_shape(shape.items, view)), "string")
+  const server = validator_server(
+    harness.fs,
+    {
+      type: "object",
+      properties: {value: view.schema},
+      required: ["value"],
+      "$defs": view.definitions,
+    },
+  )
+  const host = pick(harness, ["env", "process"])
+  const good = check_value(host, server, {value: ["ok"]})
+  assert(good.success, good.stderr)
+  const bad = check_value(host, server, {value: ["BAD"]})
+  assert(!bad.success, "component validation must survive nesting")
+  assert((bad.stdout + bad.stderr).contains("pattern"), bad.stderr)
+  const scoped = prepare_adapter_media_schema(
+    "3.1.1",
+    {"$ref": "#/components/schemas/Scoped"},
+    "scoped",
+    graph,
+  )
+  const scoped_shape = schema_expect(scoped.shape, ArrayShape)
+  const scoped_item = resolve_adapter_media_schema_shape(scoped_shape.items, scoped)
+  assert_eq(schema_expect(scoped_item, PatternSchema).pattern, "^[0-9]+$")
+  const scoped_server = validator_server(
+    harness.fs,
+    {
+      type: "object",
+      properties: {value: {type: "array", items: scoped_shape.items}},
+      required: ["value"],
+      "$defs": scoped.definitions,
+    },
+  )
+  const scoped_good = check_value(host, scoped_server, {value: ["123"]})
+  assert(scoped_good.success, scoped_good.stderr)
+  const scoped_bad = check_value(host, scoped_server, {value: ["letters"]})
+  assert(!scoped_bad.success, "component-local definitions must not bind to another component")
+  assert((scoped_bad.stdout + scoped_bad.stderr).contains("pattern"), scoped_bad.stderr)
+  const local = prepare_adapter_media_schema(
+    "3.1.1",
+    {
+      "$defs": {Body: {type: "object", properties: {count: {type: "integer"}}}},
+      "$ref": "#/$defs/Body",
+    },
+    "local",
+    graph,
+  )
+  assert_eq(schema_kind(local.shape), "object")
+}
+
+@test
+pipeline ambiguous_or_external_shapes_refuse_without_instance_data() {
+  assert(view_rejection({"$ref": "#"}).contains("cyclic root reference"))
+  assert(
+    view_rejection({"$defs": {Body: {type: "object"}}, "$ref": "#/$defs/Body", type: "array"})
+      .contains("assertion siblings"),
+  )
+  const external = view_rejection({"$ref": "https://private.invalid/secret-schema"})
+  assert(external.contains("external schema resources are not portable"))
+  assert(!external.contains("private.invalid"))
+  assert(!external.contains("secret-schema"))
+}

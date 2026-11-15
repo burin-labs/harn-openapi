@@ -161,7 +161,8 @@ pipeline test_head_returns_headers_without_decoding_a_body(harness: Harness) {
         assert_eq(result.headers.etag, "version-1")
         assert_eq(result.body, "")
         const tool = adapter_tools(AUTHORITY, client).tools[0]
-        assert_eq(tool.get("outputSchema"), nil)
+        assert_eq(tool.outputSchema.properties.body.const, "")
+        assert_eq(tool.outputSchema.required, ["status", "headers", "body"])
         assert_eq(tool.handler({}).data.headers.etag, "version-1")
         assert_eq(len(harness.testing.http_mock_calls()), 2)
       }
