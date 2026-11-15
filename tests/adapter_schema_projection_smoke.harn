@@ -1,0 +1,284 @@
+import {
+  AdapterJsonSchema,
+  AdapterSchemaView,
+  PreparedAdapterSchemaGraph,
+  close_adapter_schema_projection,
+  prepare_adapter_media_schema,
+  prepare_adapter_schema_graph,
+  prepare_adapter_schema_projection,
+  resolve_adapter_schema_projection,
+} from "../src/adapter_schema_graph"
+
+type ProjectionObject = {
+  type: string,
+  properties: dict<string, AdapterJsonSchema>,
+  required: list<string>,
+}
+
+type ProjectionString = {type: string, pattern: string}
+
+type ProjectionHost = {env: HarnessEnv, process: HarnessProcess}
+
+fn repeated_projection_graph(levels: int, fanout: int) -> PreparedAdapterSchemaGraph {
+  let schemas: dict<string, AdapterJsonSchema> = {Base: {type: "string", minLength: 2}}
+  let previous = "Base"
+  let level = 0
+  while level < levels {
+    let branches: list<AdapterJsonSchema> = []
+    let branch = 0
+    while branch < fanout {
+      branches = branches + [{"$ref": "#/components/schemas/${previous}"}]
+      branch = branch + 1
+    }
+    const name = "Level${level}"
+    schemas = {...schemas, [name]: {allOf: branches}}
+    previous = name
+    level = level + 1
+  }
+  return prepare_adapter_schema_graph("3.1.1", schemas)
+}
+
+@test
+pipeline repeated_dag_projection_has_one_cumulative_work_budget() {
+  const small = repeated_projection_graph(3, 4)
+  const projected = prepare_adapter_schema_projection(
+    "3.1.1",
+    {"$ref": "#/components/schemas/Level2"},
+    "small",
+    small,
+  )
+  assert_eq(close_adapter_schema_projection(projected), {type: "string", minLength: 2})
+  const larger = repeated_projection_graph(4, 16)
+  const caught = try {
+    prepare_adapter_schema_projection(
+      "3.1.1",
+      {"$ref": "#/components/schemas/Level3"},
+      "larger",
+      larger,
+    )
+  }
+  assert(is_err(caught), "valid repeated references must share a bounded projection budget")
+  assert(to_string(caught).contains("schema projection cumulative work limit exceeded"))
+}
+
+fn validate_projected_value(
+  host: ProjectionHost,
+  server: string,
+  value: unknown,
+  accepted: bool,
+  wrapped: bool = true,
+) -> nil {
+  const result = host.process.run(
+    {
+      program: host.env.get("HARN_BIN") ?? "harn",
+      args: [
+        "tool",
+        "run",
+        server,
+        "check",
+        "--harn-input",
+        json_stringify(wrapped ? {value: value} : value),
+      ],
+    },
+  )
+  assert_eq(result.success, accepted, result.stderr)
+  if accepted {
+    assert_eq(json_parse(result.stdout), {reached: true})
+  } else {
+    assert(!(result.stdout + result.stderr).contains("\"reached\":true"))
+  }
+  return nil
+}
+
+fn projection_validator(fs: HarnessFs, view: AdapterSchemaView) -> string {
+  const schema = {
+    type: "object",
+    properties: {value: view.schema},
+    required: ["value"],
+    additionalProperties: false,
+    "$defs": view.definitions,
+  }
+  return raw_projection_validator(fs, schema)
+}
+
+fn raw_projection_validator(fs: HarnessFs, schema: AdapterJsonSchema) -> string {
+  const path = fs.mkdtemp_in_workspace("schema-projection") + "/server.harn"
+  fs.write_text(
+    path,
+    "fn main(harness: Harness) { let registry = tool_registry(); registry = tool_define(registry, \"check\", \"Validate original schema\", {input_schema: ${json_stringify(schema)}, handler: { value -> {reached: true} }}); harness.tools.mcp_tools(registry) }",
+  )
+  return path
+}
+
+@test
+pipeline closed_projection_omits_unused_definitions_and_keeps_child_validation(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const primitive = prepare_adapter_schema_projection(
+    "3.1.1",
+    {"$defs": {Word: {type: "string"}}, "$ref": "#/$defs/Word", minLength: 2},
+    "primitive",
+    graph,
+  )
+  assert_eq(close_adapter_schema_projection(primitive), {type: "string", minLength: 2})
+  for value in [true, false] {
+    assert_eq(
+      close_adapter_schema_projection(
+        prepare_adapter_schema_projection("3.1.1", value, "boolean", graph),
+      ),
+      value,
+    )
+  }
+  const instance: AdapterJsonSchema = {type: "object", examples: [{"$ref": "instance-data"}]}
+  assert_eq(
+    close_adapter_schema_projection(
+      prepare_adapter_schema_projection("3.1.1", instance, "instance", graph),
+    ),
+    instance,
+  )
+  const view = prepare_adapter_schema_projection(
+    "3.1.1",
+    {
+      "$defs": {retained: {type: "string", pattern: "^[a-z]+$"}},
+      type: "object",
+      properties: {code: {"$ref": "#/$defs/retained"}},
+      required: ["code"],
+    },
+    "retained",
+    graph,
+  )
+  const closed = close_adapter_schema_projection(view)
+  const server = raw_projection_validator(harness.fs, closed)
+  const host = pick(harness, ["env", "process"])
+  validate_projected_value(host, server, {code: "ok"}, true, false)
+  validate_projected_value(host, server, {code: "BAD"}, false, false)
+  validate_projected_value(host, server, {}, false, false)
+}
+
+@test
+pipeline local_roots_with_the_same_reference_keep_distinct_projection_and_validation(
+  harness: Harness,
+) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const host = pick(harness, ["env", "process"])
+  for pattern in ["^[a-z]+$", "^[0-9]+$"] {
+    const view = prepare_adapter_schema_projection(
+      "3.1.1",
+      {
+        "$defs": {
+          Payload: {
+            type: "object",
+            properties: {
+              code: {type: "string", pattern: pattern},
+              copy: {"$ref": "#/$defs/Payload/properties/code"},
+            },
+            required: ["code", "copy"],
+            additionalProperties: false,
+          },
+        },
+        "$ref": "#/$defs/Payload",
+      },
+      "local",
+      graph,
+    )
+    const shape = schema_expect(view.shape, ProjectionObject)
+    assert_eq(shape.type, "object")
+    assert_eq(shape.required, ["code", "copy"])
+    const code = resolve_adapter_schema_projection(shape.properties.code, view)
+    assert_eq(schema_expect(code, ProjectionString).pattern, pattern)
+    const server = projection_validator(harness.fs, view)
+    const valid = pattern == "^[a-z]+$" ? "letters" : "123"
+    const invalid = pattern == "^[a-z]+$" ? "123" : "letters"
+    validate_projected_value(host, server, {code: valid, copy: valid}, true)
+    validate_projected_value(host, server, {code: invalid, copy: valid}, false)
+    validate_projected_value(host, server, {code: valid, copy: invalid}, false)
+  }
+}
+
+@test
+pipeline components_all_of_and_ref_siblings_share_one_projection_owner(harness: Harness) {
+  const graph = prepare_adapter_schema_graph(
+    "3.2.0",
+    {
+      Code: {type: "integer"},
+      Base: {
+        "$defs": {Code: {type: "string", pattern: "^[a-z]+$"}},
+        type: "object",
+        properties: {code: {"$ref": "#/$defs/Code"}},
+        required: ["code"],
+      },
+      Combined: {
+        allOf: [
+          {"$ref": "#/components/schemas/Base"},
+          {type: "object", properties: {id: {type: "integer"}}, required: ["id", "code"]},
+        ],
+      },
+    },
+  )
+  const value: AdapterJsonSchema = {
+    "$ref": "#/components/schemas/Combined",
+    properties: {label: {type: "string"}},
+    required: ["label"],
+  }
+  const view = prepare_adapter_schema_projection("3.2.0", value, "combined", graph)
+  const shape = schema_expect(view.shape, ProjectionObject)
+  assert_eq(shape.properties.keys().sorted(), ["code", "id", "label"])
+  assert_eq(shape.required.sorted(), ["code", "id", "label"])
+  const code = resolve_adapter_schema_projection(shape.properties.code, view)
+  assert_eq(schema_expect(code, ProjectionString).pattern, "^[a-z]+$")
+  const host = pick(harness, ["env", "process"])
+  const server = projection_validator(harness.fs, view)
+  validate_projected_value(host, server, {code: "ok", id: 1, label: "shown"}, true)
+  validate_projected_value(host, server, {code: "BAD", id: 1, label: "shown"}, false)
+  validate_projected_value(host, server, {code: "ok", label: "shown"}, false)
+  const strict = try {
+    prepare_adapter_media_schema("3.2.0", value, "combined", graph)
+  }
+  assert(is_err(strict), "presentation merging must not authorize ambiguous media serialization")
+}
+
+@test
+pipeline repeated_sibling_references_are_not_a_reference_cycle() {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const view = prepare_adapter_schema_projection(
+    "3.1.1",
+    {
+      "$defs": {Code: {type: "string", pattern: "^[a-z]+$"}},
+      "$ref": "#/$defs/Code",
+      allOf: [{"$ref": "#/$defs/Code"}],
+    },
+    "code",
+    graph,
+  )
+  assert_eq(schema_expect(view.shape, ProjectionString).pattern, "^[a-z]+$")
+}
+
+@test
+pipeline projection_keeps_constraint_validation_and_value_free_refusals(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const view = prepare_adapter_schema_projection(
+    "3.1.1",
+    {
+      "$defs": {Word: {type: "string", pattern: "^[a-z]+$", minLength: 3}},
+      "$ref": "#/$defs/Word",
+      maxLength: 5,
+    },
+    "word",
+    graph,
+  )
+  const host = pick(harness, ["env", "process"])
+  const server = projection_validator(harness.fs, view)
+  validate_projected_value(host, server, "word", true)
+  for invalid in ["ab", "longer", "BAD"] {
+    validate_projected_value(host, server, invalid, false)
+  }
+  for value in [
+    {"$ref": "https://private-sentinel.test/schema"},
+    {"$defs": {Cycle: {"$ref": "#/$defs/Cycle"}}, "$ref": "#/$defs/Cycle"},
+  ] {
+    const caught = try {
+      prepare_adapter_schema_projection("3.1.1", value, "invalid", graph)
+    }
+    assert(is_err(caught))
+    assert(!to_string(caught).contains("private-sentinel"))
+  }
+}

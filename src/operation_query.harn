@@ -1,0 +1,64 @@
+import { PreparedAdapterSchemaGraph } from "./adapter_schema_graph"
+import { classify_openapi_revision } from "./openapi_dialect"
+import { OperationMediaAlternative, prepare_operation_media } from "./operation_media"
+
+/** Whole-query serialization uses the same normalized media representation as bodies. */
+pub type OperationQueryPlan = {
+  name: string,
+  required: bool,
+  representation: OperationMediaAlternative,
+}
+
+fn reject_query(operation: string, detail: string) -> never {
+  throw "harn-openapi.querystring: operation '${operation}' ${detail}"
+}
+
+/** Validate declaration scopes before path and operation overrides are merged. */
+pub fn validate_query_scope(operation: string, parameters: list<dict>) -> nil {
+  const whole = parameters.filter({ parameter -> parameter.get("in") == "querystring" })
+  const ordinary = parameters.filter({ parameter -> parameter.get("in") == "query" })
+  if len(whole) > 1 || (len(whole) == 1 && len(ordinary) != 0) {
+    reject_query(operation, "requires one querystring parameter and no ordinary query parameters")
+  }
+  return nil
+}
+
+/** Prepare the one whole-query value before any generated dispatch is published. */
+pub fn prepare_operation_query(
+  operation: string,
+  parameters: list<dict>,
+  openapi_version: string,
+  graph: PreparedAdapterSchemaGraph,
+) -> OperationQueryPlan? {
+  const whole = parameters.filter({ parameter -> parameter.get("in") == "querystring" })
+  if len(whole) == 0 {
+    return nil
+  }
+  if !classify_openapi_revision(openapi_version).querystring_parameters {
+    return reject_query(operation, "requires OpenAPI 3.2.0")
+  }
+  validate_query_scope(operation, parameters)
+  const parameter = whole[0] ?? {}
+  if type_of(parameter.get("name")) != "string" || parameter.name == "" {
+    return reject_query(operation, "requires a named input value")
+  }
+  if parameter.get("schema") != nil || parameter.get("style") != nil
+    || parameter.get("explode") != nil
+    || parameter.get("allowReserved") != nil {
+    return reject_query(operation, "must declare only content-based serialization")
+  }
+  const content = parameter.get("content")
+  if type_of(content) != "dict" || len(content) != 1 {
+    return reject_query(operation, "requires exactly one content Media Type Object")
+  }
+  const media = prepare_operation_media(operation, {content: content}, {}, openapi_version, graph)
+  const representation = media.request[0]
+  if representation == nil || !["json", "form"].contains(representation.kind) {
+    return reject_query(operation, "supports only JSON, +json and form querystring content")
+  }
+  return {
+    name: parameter.name,
+    required: parameter.get("required") ?? false,
+    representation: representation,
+  }
+}

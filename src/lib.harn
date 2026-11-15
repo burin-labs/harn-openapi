@@ -1,15 +1,15 @@
-// harn-openapi — Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers.
+// Pure-Harn OpenAPI 3.1.x and 3.2.0 parsing and SDK generation.
 //
 // Exported surface:
 //
 //   parse(json_string)           -> OpenApiDoc
-//       Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc with
+//       Parse a supported OpenAPI JSON document into a normalized OpenApiDoc with
 //       shape { openapi, info, servers, paths, webhooks, components,
 //       security_schemes, security, tags }. OAS 3.1 makes `paths`
 //       optional and introduces first-class `webhooks` plus
 //       `components.pathItems` — all three are surfaced here. The
 //       doc-level `security` is also surfaced so operation-level
-//       security falls back cleanly. Throws on non-3.1.x docs.
+//       security falls back cleanly. Rejects unsupported revisions.
 //
 //   operations(doc)              -> list<Operation>
 //       Flatten path-itemed operations in `doc.paths` into a list of
@@ -33,8 +33,8 @@
 //   schema(doc, ref_or_inline)   -> Schema
 //       Resolve a `$ref` like "#/components/schemas/Foo" against the
 //       parsed doc, or return an inline schema unchanged. Preserves
-//       `$ref` siblings, merges one level of `allOf`, and leaves
-//       `oneOf`/`anyOf` un-merged.
+//       `$ref` siblings and `allOf` project through the prepared schema graph.
+//       Registry validation retains the original schema resource.
 //
 //   enum_values(schema)          -> list | nil
 //       Return the enum variant list on a schema, or nil if absent.
@@ -118,7 +118,14 @@ pub import {
   normalize_adapter_schema,
   prepare_adapter_schema_graph,
 } from "./adapter_schema_graph"
-import { adapter_schema_cli_defaults } from "./adapter_schema_graph"
+import {
+  AdapterSchemaView,
+  adapter_schema_cli_defaults,
+  close_adapter_schema_projection,
+  merge_adapter_schema_projection,
+  prepare_adapter_schema_projection,
+  resolve_adapter_schema_projection,
+} from "./adapter_schema_graph"
 pub import {
   AdapterOperationSecurityPlan,
   AdapterSecurityAlternative,
@@ -129,9 +136,18 @@ pub import {
   normalize_adapter_security_plan,
   select_adapter_security_alternative,
 } from "./adapter_security"
-import { OperationMediaField } from "./operation_media"
+pub import { OpenApiRevision, classify_openapi_revision } from "./openapi_dialect"
+pub import { OpenApiDocumentIdentity } from "./openapi_identity"
+import { local_document_reference, prepare_document_identity } from "./openapi_identity"
+import { OpenApiServer, OpenApiServerPlan, prepare_server_plan } from "./openapi_servers"
+import { OperationMediaAlternative, OperationMediaField } from "./operation_media"
 pub import { OperationMediaPlan, prepare_operation_media } from "./operation_media"
 import { media_transport_helpers } from "./operation_media_codegen"
+import {
+  OperationQueryPlan,
+  prepare_operation_query,
+  validate_query_scope,
+} from "./operation_query"
 
 // -------------------------------------------------------------------------------------------------
 // Types
@@ -159,9 +175,7 @@ type Info = {
   version: string,
 }
 
-type ServerVariable = {enum?: list<string>, default: string, description?: string}
-
-type Server = {url: string, description?: string, variables?: dict<string, ServerVariable>}
+type Server = OpenApiServer
 
 type ExternalDocumentation = {description?: string, url: string}
 
@@ -189,12 +203,15 @@ type Encoding = {
 
 type MediaType = {
   schema?: Schema,
+  itemSchema?: Schema,
   example?: any,
   examples?: dict<string, RefOr<Example>>,
   encoding?: dict<string, Encoding>,
+  itemEncoding?: Encoding,
+  prefixEncoding?: list<Encoding>,
 }
 
-type ParameterLocation = "query" | "header" | "path" | "cookie"
+type ParameterLocation = "query" | "querystring" | "header" | "path" | "cookie"
 
 type Parameter = {
   name: string,
@@ -279,6 +296,8 @@ type PathItem = {
   head?: Operation,
   patch?: Operation,
   trace?: Operation,
+  query?: Operation,
+  additionalOperations?: dict<string, Operation>,
   servers?: list<Server>,
   parameters?: list<RefOr<Parameter>>,
 }
@@ -353,7 +372,11 @@ type OpenApiDoc = {
   externalDocs?: ExternalDocumentation,
   security_schemes?: dict<string, RefOr<SecurityScheme>>,
   x_harn?: dict,
+  document_identity?: OpenApiDocumentIdentity,
 }
+
+/** An explicit retrieval location; parsing never retrieves another resource. */
+pub type OpenApiParseOptions = {retrieval_uri?: string}
 
 type WebhookOperation = {
   name: string,
@@ -415,24 +438,22 @@ type RateLimitMetadata = {
 // Parsing
 // -------------------------------------------------------------------------------------------------
 
-/** Parse an OpenAPI 3.1 JSON document into a normalized OpenApiDoc. */
-pub fn parse(json_string: string) -> OpenApiDoc {
+/** Parse a supported OpenAPI JSON document without retrieving other resources. */
+pub fn parse(json_string: string, options: OpenApiParseOptions = {}) -> OpenApiDoc {
   const raw = json_parse(json_string)
   const raw_version = raw.get("openapi")
   if raw_version == nil {
     throw "harn-openapi.parse: missing top-level 'openapi' field"
   }
-  if type_of(raw_version) != "string" {
-    throw "harn-openapi.parse: expected openapi to be a string, got " + type_of(raw_version)
+  const revision = classify_openapi_revision(raw_version)
+  if raw.get("$self") != nil && !revision.document_self_identity {
+    throw "harn-openapi.parse: document $self requires OpenAPI 3.2.0"
   }
-  const version = raw_version
-  if regex_match("^3\\.1\\.[0-9]+$", version) == nil {
-    throw "harn-openapi.parse: expected openapi 3.1.x, got " + version
-  }
+  const identity = prepare_document_identity(options.retrieval_uri, raw.get("$self"))
   const components = raw.get("components") ?? {}
   const components_with_path_items = {...components, pathItems: components.get("pathItems") ?? {}}
   const doc = {
-    openapi: version,
+    openapi: revision.version,
     info: raw.get("info") ?? {},
     jsonSchemaDialect: raw.get("jsonSchemaDialect"),
     servers: raw.get("servers") ?? [],
@@ -444,6 +465,7 @@ pub fn parse(json_string: string) -> OpenApiDoc {
     tags: raw.get("tags") ?? [],
     externalDocs: raw.get("externalDocs"),
     x_harn: raw.get("x-harn"),
+    document_identity: identity,
   }
   return schema_expect(filter_nil(doc), OpenApiDoc)
 }
@@ -483,6 +505,9 @@ fn _flatten_path_item_map(items: any, doc: any, mode: any) {
   for entry in items {
     const key = entry.key
     const item = _resolve_ref(doc, entry.value)
+    if item.get("query") != nil || item.get("additionalOperations") != nil {
+      throw "harn-openapi.dialect: QUERY and additional HTTP operations are unsupported"
+    }
     for method in _HTTP_METHODS {
       const op = item.get(method)
       if op != nil {
@@ -538,6 +563,8 @@ fn _flatten_path_item_map(items: any, doc: any, mode: any) {
 fn _merge_parameters(path_params: any, op_params: any, doc: any) {
   const resolved_path = _resolve_param_list(path_params, doc)
   const resolved_op = _resolve_param_list(op_params, doc)
+  validate_query_scope("path parameters", resolved_path)
+  validate_query_scope("operation parameters", resolved_op)
   if len(resolved_path) == 0 {
     return resolved_op
   }
@@ -584,51 +611,32 @@ fn _synth_operation_id(method: any, path: any) {
 // (or accidental fan-out) from exhausting the stack during codegen.
 const _MAX_REF_DEPTH = 32
 
-/** Resolve a `$ref` against `doc`, merge one level of `allOf`. */
+/** Project reference and composition shapes through the prepared schema graph. */
 pub fn schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema {
-  return _schema(doc, ref_or_inline)
+  return _schema(doc, schema_expect(ref_or_inline, AdapterJsonSchema))
 }
 
-fn _schema(doc: any, ref_or_inline: any) {
-  return _schema_inner(doc, ref_or_inline, [])
+fn _schema(
+  doc: any,
+  value: AdapterJsonSchema,
+  graph: PreparedAdapterSchemaGraph? = nil,
+) -> AdapterJsonSchema {
+  return close_adapter_schema_projection(_schema_view(doc, value, graph))
 }
 
-fn _schema_inner(doc: any, ref_or_inline: any, seen_refs: any) {
-  const resolved = _resolve_ref_inner(doc, ref_or_inline, seen_refs)
-  if type_of(resolved) == "bool" {
-    return resolved
-  }
-  const all_of = resolved.get("allOf")
-  if all_of == nil {
-    return resolved
-  }
-  if type_of(all_of) == "list" && len(all_of) > _MAX_ALL_OF {
-    throw "harn-openapi.schema: allOf branch count " + to_string(len(all_of))
-      + " exceeds limit "
-      + to_string(_MAX_ALL_OF)
-  }
-  const next_seen = _ref_chain_for(ref_or_inline, seen_refs)
-  let merged = {}
-  for part in all_of {
-    const piece = _resolve_ref_inner(doc, part, next_seen)
-    merged = _merge_schema(merged, piece)
-  }
-  const own = _omit_key(resolved, "allOf")
-  return _merge_schema(merged, own)
-}
-
-fn _ref_chain_for(node: any, seen_refs: any) {
-  if type_of(node) != "dict" {
-    return seen_refs
-  }
-  const ref = node.get("$ref")
-  if ref == nil || type_of(ref) != "string" {
-    return seen_refs
-  }
-  if seen_refs.contains(ref) {
-    return seen_refs
-  }
-  return seen_refs + [ref]
+fn _schema_view(
+  doc: any,
+  value: AdapterJsonSchema,
+  graph: PreparedAdapterSchemaGraph? = nil,
+) -> AdapterSchemaView {
+  const prepared = graph
+    ?? prepare_adapter_schema_graph(
+      doc.openapi,
+      (doc.components ?? {}).get("schemas") ?? {},
+      doc.jsonSchemaDialect,
+      doc.document_identity,
+    )
+  return prepare_adapter_schema_projection(doc.openapi, value, "schema_projection", prepared)
 }
 
 fn _resolve_ref(doc: any, node: any) {
@@ -642,13 +650,17 @@ fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
   if type_of(node) != "dict" {
     return {}
   }
-  const ref = node.get("$ref")
-  if ref == nil {
+  const reference = node.get("$ref")
+  if reference == nil {
     return node
   }
-  if type_of(ref) != "string" {
-    throw "harn-openapi.schema: expected string $ref, got " + type_of(ref)
+  if type_of(reference) != "string" {
+    throw "harn-openapi.schema: expected a URI reference string"
   }
+  const ref = local_document_reference(
+    reference,
+    doc.document_identity ?? prepare_document_identity(),
+  )
   if seen_refs.contains(ref) {
     throw "harn-openapi.schema: circular $ref detected: " + ref
   }
@@ -658,7 +670,10 @@ fn _resolve_ref_inner(doc: any, node: any, seen_refs: any) {
   const target = _lookup_ref(doc, ref)
   const resolved_target = _resolve_ref_inner(doc, target, seen_refs + [ref])
   const siblings = _omit_key(node, "$ref")
-  return _merge_schema(resolved_target, siblings)
+  return merge_adapter_schema_projection(
+    schema_expect(resolved_target, AdapterJsonSchema),
+    schema_expect(siblings, AdapterJsonSchema),
+  )
 }
 
 fn _lookup_ref(doc: OpenApiDoc, ref: string) -> unknown {
@@ -675,63 +690,6 @@ fn _lookup_ref(doc: OpenApiDoc, ref: string) -> unknown {
 
 fn _unescape_pointer(seg: any) {
   return replace(replace(seg, "~1", "/"), "~0", "~")
-}
-
-// DoS backstops for malicious specs: a deeply chained allOf or a schema
-// declaring thousands of properties can spike CPU/memory during codegen.
-const _MAX_ALL_OF = 64
-
-const _MAX_PROPERTIES = 1024
-
-fn _merge_schema(base: any, overlay: any) {
-  if base == false || overlay == false {
-    return false
-  }
-  if base == true && type_of(overlay) == "dict" && len(overlay) == 0 {
-    return true
-  }
-  if overlay == true && type_of(base) == "dict" && len(base) == 0 {
-    return true
-  }
-  if base == true {
-    return overlay
-  }
-  if overlay == true {
-    return base
-  }
-  if type_of(overlay) != "dict" {
-    return base
-  }
-  let merged = base
-  for entry in overlay {
-    const k = entry.key
-    const v = entry.value
-    if k == "properties" {
-      const existing = merged.get("properties") ?? {}
-      const combined = existing + v
-      if type_of(combined) == "dict" && len(combined) > _MAX_PROPERTIES {
-        throw "harn-openapi.schema: properties count " + to_string(len(combined))
-          + " exceeds limit "
-          + to_string(_MAX_PROPERTIES)
-      }
-      merged = {...merged, properties: combined}
-    } else if k == "required" {
-      const existing = merged.get("required") ?? []
-      merged = {...merged, required: _dedupe(existing + v)}
-    } else if k == "allOf" {
-      const existing = merged.get("allOf") ?? []
-      const combined = existing + v
-      if type_of(combined) == "list" && len(combined) > _MAX_ALL_OF {
-        throw "harn-openapi.schema: allOf chain length " + to_string(len(combined))
-          + " exceeds limit "
-          + to_string(_MAX_ALL_OF)
-      }
-      merged = {...merged, allOf: combined}
-    } else {
-      merged = {...merged, [k]: v}
-    }
-  }
-  return merged
 }
 
 fn _merge_shallow(base: any, overlay: any) {
@@ -884,10 +842,17 @@ pub fn pagination_plans(doc: OpenApiDoc) -> list<PaginationPlan> {
   return _pagination_plans(doc)
 }
 
-fn _pagination_plans(doc: any) {
+fn _pagination_plans(doc: any, graph: PreparedAdapterSchemaGraph? = nil) {
+  const prepared = graph
+    ?? prepare_adapter_schema_graph(
+      doc.openapi,
+      (doc.components ?? {}).get("schemas") ?? {},
+      doc.jsonSchemaDialect,
+      doc.document_identity,
+    )
   let out = []
   for op in _operations(doc) {
-    const plan = _pagination_plan_for_op(doc, op)
+    const plan = _pagination_plan_for_op(doc, op, prepared)
     if plan != nil {
       out = out + [plan]
     }
@@ -895,9 +860,9 @@ fn _pagination_plans(doc: any) {
   return out
 }
 
-fn _pagination_plan_for_op(doc: any, op: any) {
+fn _pagination_plan_for_op(doc: any, op: any, graph: PreparedAdapterSchemaGraph) {
   const params = op.parameters ?? []
-  const body_props = _request_body_json_properties(doc, op)
+  const body_props = _request_body_json_properties(doc, op, graph)
   const cursor = _pagination_request_field(
     params,
     body_props,
@@ -917,7 +882,7 @@ fn _pagination_plan_for_op(doc: any, op: any) {
   if picked == nil || picked.kind != "json" {
     return nil
   }
-  const full = _schema(doc, picked.schema)
+  const full = _schema_view(doc, picked.schema, graph).shape
   if type_of(full) != "dict" {
     return nil
   }
@@ -975,12 +940,12 @@ fn _pagination_plan_for_op(doc: any, op: any) {
   return nil
 }
 
-fn _request_body_json_properties(doc: any, op: any) -> dict {
+fn _request_body_json_properties(doc: any, op: any, graph: PreparedAdapterSchemaGraph) -> dict {
   const request_schema = _request_json_schema(doc, op.request_body)
   if request_schema == nil {
     return {}
   }
-  const full = _schema(doc, request_schema)
+  const full = _schema_view(doc, request_schema, graph).shape
   if type_of(full) != "dict" {
     return {}
   }
@@ -1145,6 +1110,7 @@ fn _adapter_operations(
       header_overrides,
       annotation_defaults,
       schema_graph,
+      options.get("default_base_url"),
     )
     if adapter.expose {
       if exposed_names.contains(adapter.name) {
@@ -1193,13 +1159,48 @@ const _MODULE_TEMPLATE = """
     base_url: string,
     credentials: dict<string, AdapterCredential>,
     extra_headers: AdapterHeaders,
+    server_name?: string,
+    base_url_override?: bool,
   }
 
   /** Host-owned runtime configuration; secret values never enter the static catalog. */
   pub type AdapterRuntimeConfig = {
-    base_url: string,
+    base_url?: string,
     credentials: dict<string, AdapterCredential>,
     extra_headers: AdapterHeaders,
+    server_name?: string,
+  }
+
+  const _ADAPTER_NAMED_SERVERS: dict<string, string> = {{ named_server_urls }}
+
+  fn _adapter_server_url(
+    base_url: string?,
+    server_name: string?,
+    default_url: string = "{{ default_base_url }}",
+    named_urls: dict<string, string> = _ADAPTER_NAMED_SERVERS,
+  ) -> string {
+    if server_name == nil {
+      return base_url ?? default_url
+    }
+    const selected = named_urls.get(server_name)
+    if selected == nil {
+      throw "harn-openapi.generated: configured server name is not declared"
+    }
+    if base_url != nil && base_url != "" {
+      throw "harn-openapi.generated: configure either a base URL override or a server name"
+    }
+    return selected
+  }
+
+  fn _adapter_operation_server(
+    client: AdapterClient,
+    default_url: string,
+    named_urls: dict<string, string>,
+  ) -> string {
+    if client.base_url_override ?? true {
+      return client.base_url
+    }
+    return _adapter_server_url(nil, client.server_name, default_url, named_urls)
   }
 
   {{ for alias in response_aliases }}
@@ -1278,9 +1279,19 @@ const _MODULE_TEMPLATE = """
     const base_url = if configured_base_url != nil && configured_base_url != "" {
       configured_base_url
     } else {
-      "{{ default_base_url }}"
+      nil
     }
-    return {base_url: base_url, credentials: credentials, extra_headers: {}}
+    const server_name = env.get("{{ server_name_environment }}")
+    return {
+      base_url: base_url,
+      credentials: credentials,
+      extra_headers: {},
+      server_name: if server_name == "" {
+        nil
+      } else {
+        server_name
+      },
+    }
   }
 
   /** Construct the one registry projected by CLI, MCP, and static schema commands. */
@@ -1288,20 +1299,25 @@ const _MODULE_TEMPLATE = """
     harness: {clock: HarnessClock, net: HarnessNet},
     config: AdapterRuntimeConfig,
   ) -> ToolRegistry {
-    const client = new_client(config.base_url, config.credentials, config.extra_headers)
+    const client = new_client(
+      config.base_url,
+      config.credentials,
+      config.extra_headers,
+      config.server_name,
+    )
     return adapter_tools({{ adapter_authority }}, client)
   }
 
   /** Validate runtime configuration before publishing any generated tool. */
   pub fn validate_client(client: AdapterClient) -> nil {
-    if client.base_url.trim() == "" {
-      throw "harn-openapi.generated: base URL configuration is required"
-    }
     {{ for op in published_operations }}_validate_{{ op.fn_name }}_client(client)
     {{ end }}return nil
   }
 
   {{ for op in published_operations }}fn _validate_{{ op.fn_name }}_client(client: AdapterClient) -> nil {
+    if _server_{{ op.fn_name }}(client).trim() == "" {
+      throw "harn-openapi.generated: base URL configuration is required"
+    }
     if !{{ op.security_available_call }}(client) {
       throw "{{ op.security_error }}"
     }
@@ -1601,15 +1617,18 @@ const _MODULE_TEMPLATE = """
 
   {{ op.security_helper }}
 
+  {{ op.server_helper }}
+
   {{ op.doc_comment }}
   {{ op.fn_decl }} {
     const operation_auth = {{ op.security_call }}(client)
     let path_bindings = {{ op.path_bindings }}
     let path = _interpolate("{{ op.path }}", path_bindings)
     {{ if op.has_query }}let query_bindings = {{ op.query_bindings }}
-    let url = _join_url(client.base_url, path)
-    url = url + _query_string(query_bindings){{ else }}let url = _join_url(client.base_url, path){{ end }}
-    let request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
+    let url = _join_url(_server_{{ op.fn_name }}(client), path)
+    url = url + _query_string(query_bindings){{ else }}let url = _join_url(_server_{{ op.fn_name }}(client), path){{ end }}
+    {{ if op.querystring_lines }}{{ op.querystring_lines }}
+    {{ end }}let request_headers = {{ op.headers_call }}{{ if op.header_cookie_lines }}
     {{ op.header_cookie_lines }}{{ end }}
     {{ op.request_lines }}
     {{ op.error_lines }}
@@ -1653,7 +1672,12 @@ fn _normalize_header_overrides(value: unknown) -> HeaderOverrides {
 pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const module_name = options.get("module_name") ?? "generated_sdk"
   const client_name = options.get("client_name") ?? "Client"
-  const default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
+  const server_plan = prepare_server_plan(
+    doc.servers,
+    classify_openapi_revision(doc.openapi),
+    doc.document_identity ?? prepare_document_identity(),
+  )
+  const default_base_url = options.get("default_base_url") ?? server_plan.default_url
   const header_overrides = _normalize_header_overrides(options.get("header_overrides"))
   const transport = _transport_kind(options.get("transport") ?? "connector_policy")
   const schemes = doc.get("security_schemes") ?? {}
@@ -1662,17 +1686,38 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     doc.openapi,
     (doc.components ?? {}).get("schemas") ?? {},
     doc.jsonSchemaDialect,
+    doc.document_identity,
   )
   const adapters = _adapter_operations(doc, schema_graph, options)
+  let named_server_urls = server_plan.named_urls
+  for adapter in adapters {
+    for server in adapter.server_plan.named_urls {
+      if named_server_urls.get(server.key) == nil {
+        named_server_urls = {...named_server_urls, [server.key]: server.value}
+      }
+    }
+  }
   const environment_prefix = options.get("environment_prefix")
     ?? _default_environment_prefix(module_name)
   const security_plan = adapter_security_plan(doc, environment_prefix)
+  for adapter in adapters {
+    if adapter.query_plan != nil {
+      const operation_security = security_plan.operations.get(adapter.source.id)
+      for alternative in operation_security.alternatives {
+        for scheme in alternative.schemes {
+          if security_plan.schemes.get(scheme).kind == "api_key_query" {
+            throw "harn-openapi.querystring: whole-query content cannot be combined with query authentication"
+          }
+        }
+      }
+    }
+  }
   const environment_schemes = _entrypoint_environment_bindings(security_plan)
   let used_schemes = []
   for entry in security_plan.schemes {
     used_schemes = used_schemes + [entry.key]
   }
-  const new_client_decl = _render_new_client_decl(default_base_url, header_overrides)
+  const new_client_decl = _render_new_client_decl(header_overrides)
   const helper_names = _allocate_auth_helper_names(used_schemes, security_plan.schemes)
   // Emit per-scheme header/query helpers.
   let auth_helpers = []
@@ -1698,7 +1743,13 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   let op_return_types = []
   for entry in ops_raw.enumerate() {
     const op = entry.value
-    const rt = _resolve_response_type(doc, op, adapters[entry.index].media, alias_cache)
+    const rt = _resolve_response_type(
+      doc,
+      op,
+      adapters[entry.index].media,
+      alias_cache,
+      schema_graph,
+    )
     alias_cache = rt.cache
     op_return_types = op_return_types + [rt.info]
   }
@@ -1761,6 +1812,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     module_name: module_name,
     client_name: client_name,
     default_base_url: default_base_url,
+    named_server_urls: _render_dict_literal(named_server_urls),
     new_client_decl: new_client_decl,
     new_client_return: _render_new_client_return(header_overrides),
     has_adapter_handlers: len(published_operations) > 0,
@@ -1770,6 +1822,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     media_helpers: media_transport_helpers(),
     environment_schemes: environment_schemes,
     base_url_environment: _escape_string(security_plan.base_url_environment),
+    server_name_environment: _escape_string(environment_prefix + "_SERVER_NAME"),
     adapter_authority: if transport == "connector_policy" {
       "{clock: harness.clock, net: harness.net}"
     } else {
@@ -1799,7 +1852,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
       95,
     ),
     response_aliases: alias_entries,
-    pagination_plan_literal: _render_json_parse_expr(_pagination_plans(doc)),
+    pagination_plan_literal: _render_json_parse_expr(_pagination_plans(doc, schema_graph)),
     rate_limit_metadata_literal: _render_json_parse_expr(_rate_limit_metadata(doc)),
   }
   return _normalize_generated_source(fs.render_template(_MODULE_TEMPLATE, bindings), module_name)
@@ -2005,11 +2058,12 @@ fn _scheme_kind(def: any) {
   return "unknown"
 }
 
-fn _render_new_client_decl(default_base_url: any, header_overrides: any) {
+fn _render_new_client_decl(header_overrides: any) {
   const parts = [
-    "base_url: string = \"" + _escape_string(default_base_url) + "\"",
+    "base_url: string? = nil",
     "credentials: dict<string, AdapterCredential> = {}",
     "extra_headers: AdapterHeaders = " + _render_dict_literal(header_overrides),
+    "server_name: string? = nil",
   ]
   return _render_fn_decl_suffix("new_client", parts, "AdapterClient")
 }
@@ -2018,9 +2072,11 @@ fn _render_new_client_return(header_overrides: dict) {
   const prepared = "const defaults = " + _render_dict_literal(header_overrides)
     + "\n  const configured_headers = _merge_header_dicts([defaults, extra_headers])\n  "
   const parts = [
-    "base_url: base_url",
+    "base_url: _adapter_server_url(base_url, server_name)",
     "credentials: credentials",
     "extra_headers: configured_headers",
+    "server_name: server_name",
+    "base_url_override: base_url != nil && server_name == nil",
   ]
   const inline = "{" + join(parts, ", ") + "}"
   if len("  return " + inline) <= 100 {
@@ -2189,19 +2245,6 @@ fn _render_auth_helper(scheme: any, fn_name: any, query_fn_name: any) {
     + "}"
 }
 
-fn _default_server_url(doc: OpenApiDoc) -> string {
-  const servers = doc.servers
-  if len(servers) == 0 {
-    return ""
-  }
-  const server = servers[0]
-  let url = server.url
-  for variable in (server.variables ?? {}) {
-    url = replace(url, "{${variable.key}}", variable.value.default)
-  }
-  return url
-}
-
 fn _default_environment_prefix(module_name: string) -> string {
   const stem =
     regex_replace("^_+|_+$", "", regex_replace("[^A-Za-z0-9]+", "_", module_name)).upper()
@@ -2211,7 +2254,11 @@ fn _default_environment_prefix(module_name: string) -> string {
   return "HARN_EXT_" + stem
 }
 
-fn _operation_param_models(params: list, operation_id: string) -> dict {
+fn _operation_param_models(
+  params: list,
+  operation_id: string,
+  query_plan: OperationQueryPlan? = nil,
+) -> dict {
   let path_params = []
   let query_params = []
   let header_params = []
@@ -2241,11 +2288,18 @@ fn _operation_param_models(params: list, operation_id: string) -> dict {
       source_names = {...source_names, [source_ident]: p.name}
       const ident = _unique_fn_name(source_ident, taken_param_idents)
       taken_param_idents = taken_param_idents + [ident]
-      const modeled = _merge_shallow(p, {ident: ident})
       const loc = p.get("in") ?? "query"
+      const modeled = _merge_shallow(
+        p,
+        if loc == "querystring" && query_plan != nil {
+          {ident: ident, schema: query_plan.representation.schema}
+        } else {
+          {ident: ident}
+        },
+      )
       if loc == "path" {
         path_params = path_params + [modeled]
-      } else if loc == "query" {
+      } else if loc == "query" || loc == "querystring" {
         query_params = query_params + [modeled]
       } else if loc == "header" {
         header_params = header_params + [modeled]
@@ -2684,10 +2738,22 @@ fn _adapter_operation(
   header_overrides: any,
   annotation_defaults: AdapterAnnotationDefaults,
   schema_graph: PreparedAdapterSchemaGraph,
+  default_base_url: string?,
 ) {
   const extension = _x_harn_config(op)
-  const params = _operation_param_models(op.parameters, op.operation_id)
+  const query_plan = prepare_operation_query(
+    op.operation_id,
+    op.parameters,
+    doc.openapi,
+    schema_graph,
+  )
+  const params = _operation_param_models(op.parameters, op.operation_id, query_plan)
   const media = _operation_media_plan(doc, op, schema_graph)
+  const scoped_servers = prepare_server_plan(
+    op.servers,
+    classify_openapi_revision(doc.openapi),
+    doc.document_identity ?? prepare_document_identity(),
+  )
   let cli_parameters = []
   for parameter in params.path + params.query + params.header + params.cookie {
     if parameter.get("in") != "header" || header_overrides.get(parameter.name.lower()) == nil {
@@ -2731,6 +2797,8 @@ fn _adapter_operation(
     description: description,
     input_schema: _adapter_input_schema(doc, op, params, header_overrides, schema_graph, media),
     media: media,
+    query_plan: query_plan,
+    server_plan: {...scoped_servers, default_url: default_base_url ?? scoped_servers.default_url},
     param_model: params,
     output_schema: _adapter_output_schema(doc, op, schema_graph, media),
     error_schema: _adapter_error_schema(doc, op, schema_graph),
@@ -2879,16 +2947,18 @@ fn _build_op_model(
     first
   }
   const doc_comment = "/** " + _escape_comment(safe_summary) + " */"
-  const body_variants = _body_variants_for_op(doc, op, fn_name, taken_names)
+  const body_variants = _body_variants_for_op(doc, op, fn_name, taken_names, schema_graph)
   const idempotency_key_param = _idempotency_key_param(header_params)
   return {
     fn_name: fn_name,
+    server_helper: _render_operation_server_helper(fn_name, adapter.server_plan),
     method: op.method,
     path: op.path,
     fn_decl: _render_pub_fn_decl(fn_name, sig_parts, ret.type_name),
     path_bindings: path_bindings_parts_render(path_bindings_parts),
     query_bindings: _render_binding_dict(query_bindings_parts + ["...operation_auth.query"]),
     has_query: true,
+    querystring_lines: _render_querystring_lines(adapter.query_plan, query_params),
     has_body: has_body,
     header_cookie_lines: _render_header_cookie_lines(header_params, cookie_params),
     request_lines: _render_request_lines(
@@ -3025,7 +3095,7 @@ fn _render_adapter_handler(
 fn _render_error_throw(fn_name: any) {
   const dict_inline = "operation: \""
     + fn_name
-    + "\", status: resp.status, body: _media_error_body(resp), headers: resp.headers"
+    + "\", status: resp.status, body: _media_error_body(resp, true), headers: resp.headers"
   if 12 + len(dict_inline) <= 100 {
     return "throw {" + dict_inline + "}"
   }
@@ -3034,7 +3104,7 @@ fn _render_error_throw(fn_name: any) {
     + fn_name
     + "\",\n"
     + "      status: resp.status,\n"
-    + "      body: _media_error_body(resp),\n"
+    + "      body: _media_error_body(resp, true),\n"
     + "      headers: resp.headers,\n"
     + "    }"
 }
@@ -3330,20 +3400,14 @@ fn _media_field_projection(field: OperationMediaField?) -> dict? {
     headers: field.headers.keys(),
     required_headers: field.required_headers,
     content_encoding: field.content_encoding,
+    forbidden: field.schema == false,
   }
 }
 
 fn _render_media_body(media: OperationMediaPlan) -> string {
   let alternatives: list<dict> = []
   for alternative in media.request {
-    alternatives.push(
-      {
-        content_type: alternative.content_type,
-        kind: alternative.kind,
-        fields: alternative.fields.map({ field -> _media_field_projection(field) }),
-        additional_field: _media_field_projection(alternative.additional_field),
-      },
-    )
+    alternatives.push(_media_alternative_projection(alternative))
   }
   return "const _media_prepared = _media_prepare_request(\n    request_headers,\n    body,\n    "
     + _render_json_parse_expr_at(alternatives, "    ")
@@ -3355,6 +3419,72 @@ fn _render_media_body(media: OperationMediaPlan) -> string {
     + "  request_headers = _media_prepared.headers\n  const _media_body = _media_prepared.options"
 }
 
+fn _media_alternative_projection(alternative: OperationMediaAlternative) -> dict {
+  return {
+    content_type: alternative.content_type,
+    kind: alternative.kind,
+    fields: alternative.fields.map({ field -> _media_field_projection(field) }),
+    additional_field: _media_field_projection(alternative.additional_field),
+    forbidden: alternative.schema == false,
+  }
+}
+
+fn _render_operation_server_helper(name: string, plan: OpenApiServerPlan) -> string {
+  const start = "fn _server_${name}(client: AdapterClient) -> string {\n"
+  const url = "\"" + _escape_string(plan.default_url) + "\""
+  const names = "json_parse(\"" + _escape_string(json_stringify(plan.named_urls)) + "\")"
+  const inline = "  return _adapter_operation_server(client, ${url}, ${names})"
+  if len(inline) <= 100 {
+    return start + inline + "\n}"
+  }
+  return start + "  return _adapter_operation_server(\n    client,\n    " + url + ",\n    "
+    + _render_json_parse_expr_at(plan.named_urls, "    ")
+    + ",\n  )\n}"
+}
+
+fn _render_querystring_lines(plan: OperationQueryPlan?, parameters: list) -> string {
+  if plan == nil {
+    return ""
+  }
+  for parameter in parameters {
+    if parameter.get("in") == "querystring" {
+      return "url = url + _media_query_string(\n    " + parameter.ident + ",\n    "
+        + _render_json_parse_expr_at(_media_alternative_projection(plan.representation), "    ")
+        + ",\n    "
+        + to_string(plan.required)
+        + ",\n  )"
+    }
+  }
+  throw "harn-openapi.querystring: normalized query input is missing"
+}
+
+fn _resolve_media_header_refs(doc: OpenApiDoc, value: any) -> any {
+  if type_of(value) != "dict" || type_of(value.get("content")) != "dict" {
+    return value
+  }
+  let content = {}
+  for entry in value.content {
+    let media = entry.value
+    if type_of(media) == "dict" && type_of(media.get("encoding")) == "dict" {
+      let encodings = {}
+      for property in media.encoding {
+        let encoding = property.value
+        if type_of(encoding) == "dict" && type_of(encoding.get("headers")) == "dict" {
+          let headers = {}
+          for header in encoding.headers {
+            headers = {...headers, [header.key]: _resolve_ref(doc, header.value)}
+          }
+          encoding = {...encoding, headers: headers}
+        }
+        encodings = {...encodings, [property.key]: encoding}
+      }
+      media = {...media, encoding: encodings}
+    }
+    content = {...content, [entry.key]: media}
+  }
+  return {...value, content: content}
+}
+
 fn _operation_media_plan(
   doc: OpenApiDoc,
   op: dict,
@@ -3363,11 +3493,14 @@ fn _operation_media_plan(
   const request = if op.request_body == nil {
     nil
   } else {
-    _resolve_ref(doc, op.request_body)
+    _resolve_media_header_refs(doc, _resolve_ref(doc, op.request_body))
   }
   let responses = {}
   for response in op.responses {
-    responses = {...responses, [response.key]: _resolve_ref(doc, response.value)}
+    responses = {
+      ...responses,
+      [response.key]: _resolve_media_header_refs(doc, _resolve_ref(doc, response.value)),
+    }
   }
   return prepare_operation_media(op.operation_id, request, responses, doc.openapi, graph)
 }
@@ -3572,12 +3705,19 @@ fn _request_body_required(doc: any, request_body: any) {
   return false
 }
 
-fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
+fn _body_variants_for_op(
+  doc: any,
+  op: any,
+  fn_name: any,
+  taken_names: any,
+  graph: PreparedAdapterSchemaGraph,
+) {
   const raw_schema = _request_json_schema(doc, op.request_body)
   if raw_schema == nil {
     return []
   }
-  const root = _schema(doc, raw_schema)
+  const view = _schema_view(doc, raw_schema, graph)
+  const root = view.shape
   if type_of(root) != "dict" {
     return []
   }
@@ -3595,7 +3735,7 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
   let taken_fn_names = taken_names + [fn_name]
   for entry in variant_nodes.enumerate() {
     const raw_variant = entry.value
-    const resolved = _schema(doc, raw_variant)
+    const resolved = resolve_adapter_schema_projection(raw_variant, view)
     const mapping_tag = _discriminator_mapping_tag(discriminator, raw_variant)
     const display_name = _variant_display_name(raw_variant, resolved, mapping_tag, entry.index)
     const suffix_base = _snake_case_ident(display_name)
@@ -3609,7 +3749,7 @@ fn _body_variants_for_op(doc: any, op: any, fn_name: any, taken_names: any) {
           name: display_name,
           fn_name: variant_fn_name,
           payload_type: _schema_value_type(resolved),
-          fields: _variant_constructor_fields(doc, resolved),
+          fields: _variant_constructor_fields(view, resolved),
         },
       ]
   }
@@ -3655,7 +3795,7 @@ fn _variant_display_name(raw_variant: any, resolved: any, mapping_tag: any, inde
   return "Variant" + to_string(index + 1)
 }
 
-fn _variant_constructor_fields(doc: any, resolved: any) {
+fn _variant_constructor_fields(view: AdapterSchemaView, resolved: any) {
   if type_of(resolved) != "dict" || type_of(resolved.get("properties")) != "dict" {
     return []
   }
@@ -3678,7 +3818,7 @@ fn _variant_constructor_fields(doc: any, resolved: any) {
     const ident_base = _sanitize_ident(key)
     const ident = _unique_fn_name(ident_base, taken_idents)
     taken_idents = taken_idents + [ident]
-    const ty = _schema_value_type(_schema(doc, prop_schema))
+    const ty = _schema_value_type(resolve_adapter_schema_projection(prop_schema, view))
     fields = fields
       + [
         {
@@ -3839,11 +3979,7 @@ fn _render_json_parse_expr_at(value: any, base_indent: string, max_inline: int =
 // Response type resolution
 // -------------------------------------------------------------------------------------------------
 
-//   For each operation we pick the first 2xx response whose
-//   application/json body carries a JSON schema, classify that schema,
-//   and either emit a typed `type` alias for it or fall back to `dict`.
-//   Aliases keyed by component `$ref` are deduplicated across
-//   operations; inline schemas get an alias named after their op.
+// Response aliases classify the same retained schema resources as registry outputs.
 
 // -------------------------------------------------------------------------------------------------
 
@@ -3859,7 +3995,13 @@ fn _response_type(type_name: string, mode: string, cache: any, alias_name: strin
   }
 }
 
-fn _resolve_response_type(doc: any, op: any, media: OperationMediaPlan, cache: any) {
+fn _resolve_response_type(
+  doc: any,
+  op: any,
+  media: OperationMediaPlan,
+  cache: any,
+  graph: PreparedAdapterSchemaGraph,
+) {
   if op.method == "head" {
     return _response_type("{status: int, headers: AdapterHeaders, body: string}", "head", cache)
   }
@@ -3874,7 +4016,7 @@ fn _resolve_response_type(doc: any, op: any, media: OperationMediaPlan, cache: a
     }
     for alternative in response.alternatives {
       if alternative.kind == "json" {
-        const resolved = _resolve_json_response_type(doc, op, alternative.schema, current)
+        const resolved = _resolve_json_response_type(doc, op, alternative.schema, current, graph)
         current = resolved.cache
         types.push(resolved.info.type_name)
       } else {
@@ -3886,21 +4028,22 @@ fn _resolve_response_type(doc: any, op: any, media: OperationMediaPlan, cache: a
   return _response_type(len(names) == 0 ? "never" : names.join(" | "), "media", current)
 }
 
-fn _resolve_json_response_type(doc: any, op: any, schema_raw: AdapterJsonSchema, cache: any) {
+fn _resolve_json_response_type(
+  doc: any,
+  op: any,
+  schema_raw: AdapterJsonSchema,
+  cache: any,
+  graph: PreparedAdapterSchemaGraph,
+) {
   const ref = if type_of(schema_raw) == "dict" {
     schema_raw.get("$ref")
   } else {
     nil
   }
-  // For classification we always work off the fully-resolved (allOf-
-  // merged) schema, since components often declare the interesting
-  // shape inside `allOf: [...]`.
-  const full = _schema(doc, schema_raw)
-  if full == false {
-    return _response_type("never", "json_never", cache)
-  }
-  if full == true {
-    return _response_type("any", "json_any", cache)
+  const view = _schema_view(doc, schema_raw, graph)
+  const full = view.shape
+  if type_of(full) == "bool" {
+    return _response_type(full ? "any" : "never", full ? "json_any" : "json_never", cache)
   }
   const value_type = _schema_value_type(full)
   if value_type != "dict" {
@@ -3909,8 +4052,9 @@ fn _resolve_json_response_type(doc: any, op: any, schema_raw: AdapterJsonSchema,
   if full.get("properties") == nil || !_struct_has_renderable_keys(full) {
     return _response_type("dict", "json_dict", cache)
   }
+  const identity = sha256(json_stringify(pick(view, ["schema", "definitions"])))
   if ref != nil {
-    const cached = cache.by_ref.get(ref)
+    const cached = cache.by_ref.get(identity)
     if cached != nil {
       return _response_type(cached, "json_dict", cache, cached)
     }
@@ -3922,12 +4066,12 @@ fn _resolve_json_response_type(doc: any, op: any, schema_raw: AdapterJsonSchema,
     _alias_name_from_ref(ref)
   }
   const alias_name = _unique_type_name(base, cache)
-  const source = _emit_struct_alias(doc, alias_name, full)
+  const source = _emit_struct_alias(view, alias_name)
   const new_cache = {
     by_ref: if ref == nil {
       cache.by_ref
     } else {
-      {...cache.by_ref, [ref]: alias_name}
+      {...cache.by_ref, [identity]: alias_name}
     },
     by_name: {...cache.by_name, [alias_name]: source},
     order: cache.order + [alias_name],
@@ -3959,7 +4103,7 @@ fn _pick_success_response(doc: any, op: any) {
       }
       const app_json = _json_media_type(content)
       if app_json != nil {
-        return {kind: "json", schema: app_json.get("schema")}
+        return {kind: "json", schema: app_json.get("schema") ?? {}}
       }
       saw_opaque = true
     }
@@ -4109,7 +4253,10 @@ fn _unique_type_name(base: any, cache: any) {
   return candidate
 }
 
-fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
+type SdkObjectProjection = {properties?: dict<string, AdapterJsonSchema>, required?: list<string>}
+
+fn _emit_struct_alias(view: AdapterSchemaView, alias_name: any) {
+  const resolved = schema_expect(view.shape, SdkObjectProjection)
   const props = resolved.get("properties") ?? {}
   const required = resolved.get("required") ?? []
   let keys = []
@@ -4120,7 +4267,9 @@ fn _emit_struct_alias(doc: any, alias_name: any, resolved: any) {
   let fields = []
   for key in keys {
     const prop_schema = props.get(key)
-    const field_type = _schema_value_type(_schema(doc, prop_schema))
+    const field_type = _schema_value_type(
+      resolve_adapter_schema_projection(schema_expect(prop_schema, AdapterJsonSchema), view),
+    )
     fields = fields + [_harn_struct_field(key, field_type, required.contains(key))]
   }
   if len(fields) <= 4 {

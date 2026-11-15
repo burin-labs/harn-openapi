@@ -1,7 +1,7 @@
 [package]
 name = "harn-openapi"
 version = "0.2.0-rc.1"
-description = "Pure-Harn OpenAPI 3.1 parser and SDK codegen helpers."
+description = "Pure-Harn OpenAPI 3.1.x and 3.2.0 parser and SDK codegen helpers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-openapi"
 docs_url = "https://github.com/burin-labs/harn-openapi#readme"

@@ -64,6 +64,116 @@ pub fn media_bytes_schema() -> AdapterJsonSchema {
   return schema_json(schema_of(MediaBytes))
 }
 
+fn media_binary_schema(
+  operation: string,
+  content_type: string,
+  resolved: AdapterJsonSchema,
+) -> AdapterJsonSchema {
+  if resolved == false {
+    return false
+  }
+  if type_of(resolved) == "dict" {
+    if resolved.get("type") != nil && resolved.get("type") != "string" {
+      media_error(operation, content_type, "binary data requires an opaque string schema")
+    }
+    for keyword in [
+      "allOf",
+      "anyOf",
+      "oneOf",
+      "not",
+      "if",
+      "then",
+      "else",
+      "enum",
+      "const",
+      "minLength",
+      "maxLength",
+      "pattern",
+      "contentSchema",
+    ] {
+      if resolved.get(keyword) != nil {
+        media_error(
+          operation,
+          content_type,
+          "binary schema assertion '${keyword}' requires an explicit value adapter",
+        )
+      }
+    }
+  }
+  return media_bytes_schema()
+}
+
+fn require_multipart_object_projection(
+  operation: string,
+  content_type: string,
+  object: MediaObjectSchema,
+) -> nil {
+  for keyword in [
+    "enum",
+    "const",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "dependentSchemas",
+    "patternProperties",
+    "unevaluatedProperties",
+  ] {
+    if object.get(keyword) != nil {
+      media_error(
+        operation,
+        content_type,
+        "multipart object assertion '${keyword}' cannot be preserved through part metadata wrappers",
+      )
+    }
+  }
+  return nil
+}
+
+fn repeated_field_schema(
+  operation: string,
+  content_type: string,
+  original: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+  item: AdapterJsonSchema,
+) -> AdapterJsonSchema {
+  const resolved = resolve_adapter_media_schema_shape(original, view)
+  const object = schema_expect(resolved, MediaObjectSchema)
+  if object.get("uniqueItems") == true {
+    media_error(
+      operation,
+      content_type,
+      "array uniqueness cannot be preserved through the media value projection",
+    )
+  }
+  for keyword in [
+    "enum",
+    "const",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "contains",
+    "prefixItems",
+    "unevaluatedItems",
+  ] {
+    if object.get(keyword) != nil {
+      media_error(
+        operation,
+        content_type,
+        "array assertion '${keyword}' cannot be preserved through the media value projection",
+      )
+    }
+  }
+  return {...object, items: item}
+}
+
 pub fn media_type_name(value: string) -> string {
   return (value.split(";")[0] ?? value).trim().lower()
 }
@@ -73,6 +183,9 @@ fn media_error(operation: string, content_type: string, detail: string) -> never
 }
 
 fn media_kind(operation: string, content_type: string, media: dict) -> OperationMediaKind {
+  if media.get("$ref") != nil {
+    media_error(operation, content_type, "referenced Media Type Objects are unsupported")
+  }
   const normalized = media_type_name(content_type)
   if regex_match("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$", normalized) == nil {
     media_error(operation, content_type, "requires an exact media type")
@@ -230,7 +343,7 @@ fn media_field(
     {
       name: name,
       schema: if kind == "bytes" {
-        media_bytes_schema()
+        media_binary_schema(operation, media_type, resolved_item)
       } else {
         element
       },
@@ -247,7 +360,13 @@ fn media_field(
   )
 }
 
-fn multipart_property(field: OperationMediaField) -> AdapterJsonSchema {
+fn multipart_property(
+  operation: string,
+  content_type: string,
+  field: OperationMediaField,
+  original: AdapterJsonSchema,
+  view: AdapterMediaSchemaView,
+) -> AdapterJsonSchema {
   const properties = {
     value: field.schema,
     filename: {type: "string"},
@@ -266,14 +385,14 @@ fn multipart_property(field: OperationMediaField) -> AdapterJsonSchema {
   if len(field.required_headers) > 0 {
     required.push("headers")
   }
-  const part = {
+  const part: AdapterJsonSchema = {
     type: "object",
     properties: properties,
     required: required,
     additionalProperties: false,
   }
   return if field.repeated {
-    {type: "array", items: part}
+    repeated_field_schema(operation, content_type, original, view, part)
   } else {
     part
   }
@@ -285,6 +404,9 @@ fn media_text_schema(
   view: AdapterMediaSchemaView,
 ) -> AdapterJsonSchema {
   const resolved = view.shape
+  if resolved == false {
+    return false
+  }
   if type_of(resolved) != "dict" {
     media_error(operation, content_type, "requires a string schema")
   }
@@ -314,7 +436,13 @@ fn media_alternative(
     )
     schema = media_text_schema(operation, content_type, view)
   } else if kind == "bytes" {
-    schema = media_bytes_schema()
+    const view = prepare_adapter_media_schema(
+      context.version,
+      schema,
+      "media_source",
+      context.graph,
+    )
+    schema = media_binary_schema(operation, content_type, view.shape)
   } else if kind == "form" || kind == "multipart" {
     const view = prepare_adapter_media_schema(
       context.version,
@@ -323,12 +451,24 @@ fn media_alternative(
       context.graph,
     )
     schema = view.shape
+    if schema == false {
+      return {
+        content_type: content_type,
+        kind: kind,
+        schema: false,
+        fields: [],
+        additional_field: nil,
+      }
+    }
     if type_of(schema) != "dict" {
       media_error(operation, content_type, "requires an object schema")
     }
     const object = schema_expect(schema, MediaObjectSchema)
     if object.get("type") != "object" {
       media_error(operation, content_type, "requires an object schema")
+    }
+    if kind == "multipart" {
+      require_multipart_object_projection(operation, content_type, object)
     }
     const encoding = media.get("encoding") ?? {}
     if type_of(encoding) != "dict" {
@@ -358,12 +498,12 @@ fn media_alternative(
       projected_properties = {
         ...projected_properties,
         [property.key]: if kind == "multipart" {
-          multipart_property(field)
+          multipart_property(operation, content_type, field, property.value, view)
         } else if field.kind == "bytes" {
           if field.repeated {
-            {type: "array", items: media_bytes_schema()}
+            repeated_field_schema(operation, content_type, property.value, view, field.schema)
           } else {
-            media_bytes_schema()
+            field.schema
           }
         } else {
           property.value
@@ -388,12 +528,18 @@ fn media_alternative(
       additional_field = extra
       additional_schema = schema_expect(
         if kind == "multipart" {
-          multipart_property(extra)
+          multipart_property(
+            operation,
+            content_type,
+            extra,
+            additional == true ? {} : additional,
+            view,
+          )
         } else if extra.kind == "bytes" {
           if extra.repeated {
-            {type: "array", items: media_bytes_schema()}
+            repeated_field_schema(operation, content_type, additional, view, extra.schema)
           } else {
-            media_bytes_schema()
+            extra.schema
           }
         } else if additional == true {
           {}

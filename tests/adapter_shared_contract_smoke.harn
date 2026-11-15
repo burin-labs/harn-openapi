@@ -330,6 +330,8 @@ pipeline invalid_schema_generation(harness: Harness) {
     require to_string(error).contains(
       if invalid == "output" {
         "output"
+      } else if invalid == "external" {
+        "harn-openapi.identity: external reference requires an explicit host resource loader"
       } else {
         "adapter_schema_graph"
       },

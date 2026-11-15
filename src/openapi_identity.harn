@@ -1,0 +1,113 @@
+import { web_resolve_url } from "std/web"
+
+/** Retrieval location and reference base are separate OpenAPI identities. */
+pub type OpenApiDocumentIdentity = {retrieval_uri: string?, self_uri: string?, base_uri: string?}
+
+fn reject_identity(detail: string) -> never {
+  throw "harn-openapi.identity: ${detail}"
+}
+
+type OptionalUri = string?
+
+fn optional_uri(value: unknown) -> string? {
+  const validated = try {
+    schema_expect(value, OptionalUri)
+  }
+  if !is_ok(validated) {
+    return reject_identity("document identity must be a URI reference string")
+  }
+  return unwrap(validated)
+}
+
+fn absolute_uri(value: string) -> string? {
+  const parsed = try {
+    url_parse(value)
+  }
+  if !is_ok(parsed) {
+    return nil
+  }
+  // Resolve through the native URI owner to retain canonical escaping and paths.
+  return web_resolve_url(value, value)
+}
+
+fn resolve_uri(value: string, base: string?) -> string {
+  const absolute = absolute_uri(value)
+  if absolute != nil {
+    return absolute
+  }
+  if base == nil {
+    return reject_identity("relative document identity requires a retrieval URI")
+  }
+  const resolved = if value == "" {
+    base
+  } else {
+    web_resolve_url(base, value)
+  }
+  if resolved == nil || absolute_uri(resolved) == nil {
+    return reject_identity("URI reference cannot be resolved against the document identity")
+  }
+  return resolved
+}
+
+fn resource_uri(value: string) -> string {
+  return value.split("#")[0] ?? value
+}
+
+/** Normalize identity without fetching any resource. */
+pub fn prepare_document_identity(
+  retrieval_uri: unknown = nil,
+  self_uri: unknown = nil,
+) -> OpenApiDocumentIdentity {
+  const retrieval = optional_uri(retrieval_uri)
+  const source = optional_uri(self_uri)
+  const location = if retrieval == nil {
+    nil
+  } else {
+    absolute_uri(retrieval)
+  }
+  if retrieval != nil && location == nil {
+    return reject_identity("retrieval URI must be absolute")
+  }
+  if location != nil && resource_uri(location) != location {
+    return reject_identity("retrieval URI must not contain a fragment")
+  }
+  const declared = if source == nil {
+    nil
+  } else {
+    resolve_uri(source, location)
+  }
+  if declared != nil && resource_uri(declared) != declared {
+    return reject_identity("document self identities with fragments are unsupported")
+  }
+  return {retrieval_uri: location, self_uri: declared, base_uri: declared ?? location}
+}
+
+/** Convert same-resource URI references to local pointers; external loading is explicit. */
+pub fn local_document_reference(reference: string, identity: OpenApiDocumentIdentity) -> string {
+  if reference.starts_with("#") {
+    return reference
+  }
+  const resolved = resolve_uri(reference, identity.base_uri)
+  if identity.base_uri == nil || resource_uri(resolved) != resource_uri(identity.base_uri) {
+    return reject_identity("external reference requires an explicit host resource loader")
+  }
+  const fragment = url_parse(resolved).get("fragment")
+  return if fragment == nil {
+    "#"
+  } else {
+    "#${fragment}"
+  }
+}
+
+/** Server URLs resolve against retrieval location, independently of document $self. */
+pub fn resolve_document_server(url: string, identity: OpenApiDocumentIdentity) -> string {
+  const resolved = resolve_uri(url, identity.retrieval_uri)
+  const parsed = url_parse(resolved)
+  if !["http", "https"].contains(parsed.get("scheme")) || parsed.get("host") == nil {
+    return reject_identity("server URL must resolve to an HTTP or HTTPS URL")
+  }
+  if parsed.get("query") != nil || parsed.get("fragment") != nil {
+    return reject_identity("server URL must not contain a query or fragment")
+  }
+  return resolved
+}

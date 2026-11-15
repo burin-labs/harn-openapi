@@ -139,6 +139,17 @@ contains normalized schemas, direct dependencies, transitive closures, and work
 counters. Shared and recursive references stay as references, including escaped
 component names and nested JSON Pointer targets.
 
+SDK aliases, body constructors, pagination metadata and `schema(...)` share
+the graph's presentation projection. It retains the original resource for
+local `$defs` references and gives distinct inline roots distinct alias
+identities. Reference siblings and `allOf` merge for presentation; runtime
+validation keeps their original conjunction.
+
+Each projection permits at most 16,384 structural visits, a depth of 32,
+64 branches per `allOf` and 1,024 merged properties. Repeated references
+consume the same work allowance. Excessive projection work fails with a
+specific diagnostic; it doesn't weaken the validation schema.
+
 Generated registries publish reusable schemas once in `components.schemas`.
 Tools retain local `#/components/schemas/...` references in their complete
 `inputSchema`, `outputSchema` and `errorSchema`. Input schemas preserve required

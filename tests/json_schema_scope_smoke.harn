@@ -1,0 +1,147 @@
+import { codegen_module, parse } from "../src/lib"
+
+pipeline test_generated_json_contract_keeps_its_local_schema_root(harness: Harness) {
+  const value_schema = {
+    "$defs": {
+      Payload: {
+        type: "object",
+        properties: {code: {type: "string"}},
+        required: ["code"],
+        additionalProperties: false,
+      },
+    },
+    "$ref": "#/$defs/Payload",
+  }
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Local JSON scope", version: "1"},
+        servers: [{url: "https://scope.test"}],
+        paths: {
+          "/value": {
+            post: {
+              operationId: "saveValue",
+              requestBody: {required: true, content: {"application/json": {schema: value_schema}}},
+              responses: {
+                "200": {
+                  description: "Saved",
+                  content: {"application/json": {schema: value_schema}},
+                },
+              },
+            },
+          },
+        },
+      },
+    ),
+  )
+  const source = codegen_module(harness.fs, document, {module_name: "scope"})
+  assert(source.contains("pub fn save_value"))
+  assert(
+    source.contains("code: string}"),
+    "the SDK alias must classify its retained local definition",
+  )
+  const root = harness.fs.mkdtemp_in_workspace("json-root-product")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  harness.fs.write_text("${root}/generated.harn", source)
+  harness.fs.write_text(
+    "${root}/main.harn",
+    """
+    import { adapter_tools, new_client } from "./generated"
+
+    fn main(harness: Harness) {
+      harness.testing.http_mock("POST", "https://scope.test/value", {
+        status: 200, headers: {"Content-Type": "application/json"}, body: "{\"code\":\"known\"}",
+      })
+      harness.tools.mcp_tools(adapter_tools({clock: harness.clock, net: harness.net}, new_client()))
+    }
+    """,
+  )
+  const input = "${root}/input.json"
+  harness.fs.write_text(input, json_stringify({body: {code: "known"}}))
+  const positive = harness.process.run(
+    {
+      program: binary,
+      args: [
+        "tool",
+        "run",
+        "${root}/main.harn",
+        "save_value",
+        "--harn-input",
+        "@${input}",
+        "--json",
+      ],
+    },
+  )
+  assert(positive.success, positive.stdout + positive.stderr)
+  assert_eq(json_parse(positive.stdout), {code: "known"})
+  harness.fs.write_text(input, json_stringify({body: {code: 17}}))
+  const negative = harness.process.run(
+    {
+      program: binary,
+      args: [
+        "tool",
+        "run",
+        "${root}/main.harn",
+        "save_value",
+        "--harn-input",
+        "@${input}",
+        "--json",
+      ],
+    },
+  )
+  assert(
+    !negative.success,
+    "the local input schema must refuse malformed values before handler entry",
+  )
+}
+
+pipeline test_same_local_pointer_keeps_distinct_sdk_aliases(harness: Harness) {
+  let paths = {}
+  for item in [
+    {name: "readText", path: "/text", kind: "string"},
+    {name: "readNumber", path: "/number", kind: "integer"},
+  ] {
+    paths = {
+      ...paths,
+      [item.path]: {
+        get: {
+          operationId: item.name,
+          responses: {
+            "200": {
+              description: "Value",
+              content: {
+                "application/json": {
+                  schema: {
+                    "$defs": {
+                      Payload: {
+                        type: "object",
+                        properties: {code: {type: item.kind}},
+                        required: ["code"],
+                      },
+                    },
+                    "$ref": "#/$defs/Payload",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+  }
+  const source = codegen_module(
+    harness.fs,
+    parse(
+      json_stringify(
+        {openapi: "3.1.1", info: {title: "Distinct roots", version: "1"}, paths: paths},
+      ),
+    ),
+    {module_name: "roots"},
+  )
+  assert(source.contains("code: string}"), "the first resource must retain its string field")
+  assert(
+    source.contains("code: int}"),
+    "an identical pointer in a second resource must not reuse the first SDK alias",
+  )
+}

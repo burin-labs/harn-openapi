@@ -1,7 +1,7 @@
 # harn-openapi
 
-Pure-Harn library for parsing OpenAPI 3.1 documents and generating typed Harn
-SDK source code from them. Acts as the reference example of a non-trivial
+Pure-Harn library for parsing OpenAPI 3.1.x and 3.2.0 documents and generating
+typed Harn SDK source code from them. Acts as the reference example of a non-trivial
 external Harn library and powers downstream typed SDKs such as
 [notion-sdk-harn](https://github.com/burin-labs/notion-sdk-harn).
 
@@ -16,7 +16,7 @@ Provider-specific SDKs and connectors should not each learn OpenAPI parsing,
 schema walking, security handling, or typed SDK generation independently. This
 repo keeps that shared logic in one pure-Harn package:
 
-- parse OpenAPI 3.1 JSON into normalized Harn records;
+- parse supported OpenAPI revisions into normalized Harn records;
 - walk paths, webhooks, components, schemas, enums, security metadata,
   pagination patterns, and rate-limit response conventions;
 - generate typed Harn SDK source for downstream provider repos;
@@ -42,6 +42,8 @@ CLI pinned by `.harn-version`.
 | `src/adapter_governance.harn` | Canonical `x-harn.governance` validation against Harn's closed adapter-audience types. |
 | `src/adapter_schema_graph.harn` | Portable Draft 2020-12 component graph and reference validation shared by catalog projections. |
 | `src/adapter_security.harn` | Typed OpenAPI security plan shared by generated clients, environment configuration, CLI, MCP, and static catalogs. |
+| `src/operation_media.harn` | Typed request and response media plan shared by HTTP serialization and registry schemas. |
+| `src/openapi_dialect.harn` | Closed supported revision matrix used by parsing and schema preparation. |
 | `tests/*.harn` | Smoke and behavior tests for parsing, walking, codegen, security, response typing, polymorphic request bodies, fixture tooling, and helper scripts. |
 | `tests/fixtures/notion.openapi.json` | Pinned Notion OpenAPI 3.1 snapshot used as the main real-world fixture. |
 | `tests/fixtures/notion.openapi.json.meta.toml` | Capture metadata for the pinned fixture: upstream URL, timestamp, byte size, and SHA-256. |
@@ -58,6 +60,8 @@ CLI pinned by `.harn-version`.
 | `docs/migration-v0.1.0.md` | Migration note for connector repos moving from sibling path imports to package-managed imports. |
 | `docs/migration-codegen-fs.md` | How to update `codegen_module` callers to pass `HarnessFs`. |
 | `docs/tool-adapters.md` | Reference for generated tool registries and the `x-harn` extension. |
+| `docs/openapi-revisions.md` | Supported revisions, document identity, whole-query content and named servers. |
+| `docs/media-contracts.md` | JSON, forms, multipart, text, bytes, response decoding and streaming limits. |
 | `docs/generate-adapter-package.md` | Generate a typed SDK and its executable registry entrypoint. |
 | `docs/configure-adapter-environment.md` | Configure base URLs and credentials without writing secrets into generated source. |
 | `docs/run-adapter-cli.md` | Inspect and invoke the generated registry as a command tree. |
@@ -125,11 +129,14 @@ import { parse } from "../src/lib"
 
 ### Exported surface
 
-- `parse(json_string) -> OpenApiDoc` — normalize a 3.1.x doc to
+- `parse(json_string, options?) -> OpenApiDoc`: normalize a supported document to
   `{ openapi, info, servers, paths, webhooks, components,
   security_schemes, security, tags }`. `paths` may be empty (3.1 allows
   webhooks-only docs). `components.pathItems` is always present as a
-  dict, even when the source doc omits it.
+  dict, even when the source doc omits it. `options.retrieval_uri` records the
+  explicit document location; `document_identity` retains its retrieval and
+  reference bases. Parsing never fetches another resource. See the
+  [revision reference](docs/openapi-revisions.md).
 - `operations(doc: OpenApiDoc) -> list<Operation>` — flatten `doc.paths` into operation
   records `{ method, path, operation_id, summary, parameters,
   request_body, responses, security, tags, ... }`. Each operation's
@@ -142,17 +149,23 @@ import { parse } from "../src/lib"
 - `component_path_items(doc: OpenApiDoc) -> dict<string, RefOr<PathItem>>` —
   passthrough accessor for `doc.components.pathItems` (new in
   OAS 3.1). Returns `{}` when absent.
-- `schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema` — resolve a local `$ref`, or
-  return inline schemas unchanged. Merges one level of `allOf` and preserves
-  `$ref` siblings as valid JSON Schema 2020-12 data.
+- `schema(doc: OpenApiDoc, ref_or_inline: RefOr<Schema>) -> Schema`: project
+  reference and `allOf` shapes through the prepared schema graph. Retained
+  definitions keep child references resolvable. Registry validation uses the
+  original schema rather than this presentation shape.
 - `enum_values(schema: Schema) -> list<string> | nil` — extract the enum variant list,
   or `nil` when the schema is not an enum.
-- `prepare_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?) -> PreparedAdapterSchemaGraph` —
-  validate reusable OpenAPI 3.1 component schemas once, then retain their
+- `prepare_adapter_schema_graph(openapi_version, schemas, json_schema_dialect?, document_identity?) -> PreparedAdapterSchemaGraph`:
+  validate reusable component schemas once, then retain their
   dependency closures and work counters for every generated projection.
 - `normalize_adapter_schema(openapi_version, schema, graph, json_schema_dialect?) -> AdapterJsonSchema` —
   normalize one inline tool schema and validate its references against the same
   component graph.
+- `classify_openapi_revision(value) -> OpenApiRevision`: classify supported
+  revisions and their dialect-specific contracts.
+- `prepare_operation_media(operation, request_body, responses, openapi_version, graph) -> OperationMediaPlan`:
+  normalize request and response representations before generation. See the
+  [media reference](docs/media-contracts.md).
 - `is_openapi_doc(value)`, `is_reference(value)`, `is_schema(value)` — small schema guards
   for common dynamic boundaries.
 - `auth_helpers(doc: OpenApiDoc) -> list<AuthHelper>` — classify each declared
@@ -245,11 +258,12 @@ still produces an object return type.
 
 JSON Schema type lists become Harn unions, including nullable values. Referenced
 fields use the same types as inline fields. The default client URL expands the
-first server's variables using their declared defaults; you can still pass an
-explicit base URL to `new_client`.
+first server's variables using their declared defaults. You can pass an
+explicit base URL or select a declared OpenAPI 3.2 server name. See
+[supported revisions](docs/openapi-revisions.md#named-servers).
 
 The generated environment projection creates stable names such as
-`WIDGETS_BASE_URL`, `WIDGETS_BEARERAUTH_TOKEN`, and
+`WIDGETS_BASE_URL`, `WIDGETS_SERVER_NAME`, `WIDGETS_BEARERAUTH_TOKEN`, and
 `WIDGETS_HEADERKEY_API_KEY`. See
 [Configure an adapter environment](docs/configure-adapter-environment.md).
 
@@ -257,7 +271,7 @@ The generated environment projection creates stable names such as
 
 Generated SDKs default to the connector policy transport. It avoids deprecated
 ambient HTTP builtins in generated code and routes requests through the shared
-retry, idempotency, JSON parse, and rate-limit policy layer:
+retry, idempotency, error and rate-limit policy layer:
 
 ```harn
 let src = codegen_module(harness.fs, doc, {
@@ -267,11 +281,10 @@ let src = codegen_module(harness.fs, doc, {
 })
 ```
 
-Connector-policy output imports `connector_http_request` and
-`connector_http_json` from `std/connectors/shared`. JSON response operations
-call `connector_http_json`; opaque or empty-response operations call
-`connector_http_request`. On helper errors, generated functions throw the
-helper envelope directly, so callers can branch on `category`, `status`,
+Connector-policy output calls `connector_http_request` from
+`std/connectors/shared`. The generated media plan decodes JSON, text, bytes
+and empty responses from that result. On helper errors, generated functions
+retain the helper envelope, so callers can branch on `category`, `status`,
 `retryable`, `retry_after_ms`, `error`, and `rate_limit` without parsing a
 string.
 

@@ -40,6 +40,9 @@ pub fn media_transport_helpers() -> string {
       operation: string,
     ) -> dict {
       const selected = _media_select_body(body, alternatives)
+      if selected.forbidden {
+        throw "harn-openapi.generated: request body is forbidden by its JSON Schema"
+      }
       const prepared_headers = _media_headers(
         headers,
         selected.content_type,
@@ -67,6 +70,15 @@ pub fn media_transport_helpers() -> string {
       return {headers: prepared_headers, options: options}
     }
 
+    fn _media_query_string(value: unknown, representation: dict, required: bool) -> string {
+      if value == nil && !required {
+        return ""
+      }
+      const prepared = _media_prepare_request({}, value, [representation], "*/*", "querystring")
+      const encoded = prepared.options.body
+      return "?" + (representation.kind == "json" ? url_encode(encoded) : encoded)
+    }
+
     fn _media_text(response: dict, operation: string) -> string {
       const decoded = try {
         response.get("body_bytes") != nil ? bytes_to_string(response.body_bytes) : response.get("body")
@@ -78,7 +90,13 @@ pub fn media_transport_helpers() -> string {
       return unwrap(decoded)
     }
 
-    fn _media_error_body(response: dict) -> string {
+    fn _media_error_body(response: dict, decode_bytes: bool = false) -> string {
+      if decode_bytes && response.get("body_bytes") != nil {
+        const decoded = try {
+          bytes_to_string(response.body_bytes)
+        }
+        return is_ok(decoded) ? unwrap(decoded) : ""
+      }
       return type_of(response.get("body")) == "string" ? response.body : ""
     }
 
@@ -191,6 +209,11 @@ pub fn media_transport_helpers() -> string {
       let pairs: list<string> = []
       for entry in body {
         const field = _media_field(fields, entry.key, additional)
+        if field.forbidden
+          && (!field.repeated || type_of(entry.value) != "list"
+            || len(entry.value) > 0) {
+          throw "harn-openapi.generated: form property is forbidden by its JSON Schema"
+        }
         const value = entry.value
         if field.style != "content" && type_of(value) == "dict" {
           let flattened: list<string> = []
@@ -239,6 +262,9 @@ pub fn media_transport_helpers() -> string {
     }
 
     fn _media_part(name: string, part: dict, field: dict) -> dict {
+      if field.forbidden {
+        throw "harn-openapi.generated: multipart property is forbidden by its JSON Schema"
+      }
       if !part.keys().contains("value") {
         throw "harn-openapi.generated: multipart property requires a value"
       }

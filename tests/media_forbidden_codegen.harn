@@ -1,0 +1,84 @@
+import { codegen_module, parse } from "../src/lib"
+
+@test
+pipeline generated_sdk_refuses_forbidden_media_before_http_and_keeps_empty_arrays(
+  harness: Harness,
+) {
+  const root = harness.fs.mkdtemp_in_workspace("forbidden-media-sdk")
+  let paths = {}
+  for operation in [
+    {name: "sendAllowed", path: "/allowed", media: "application/octet-stream", schema: true},
+    {name: "sendForbidden", path: "/forbidden", media: "application/octet-stream", schema: false},
+    {
+      name: "sendForm",
+      path: "/form",
+      media: "application/x-www-form-urlencoded",
+      schema: {type: "object", properties: {tags: {type: "array", items: false}}},
+    },
+    {
+      name: "sendMultipart",
+      path: "/multipart",
+      media: "multipart/form-data",
+      schema: {
+        type: "object",
+        properties: {title: {type: "string"}, tags: {type: "array", items: false}},
+      },
+    },
+  ] {
+    paths = {
+      ...paths,
+      [operation.path]: {
+        post: {
+          operationId: operation.name,
+          requestBody: {required: true, content: {[operation.media]: {schema: operation.schema}}},
+          responses: {"204": {description: "Saved"}},
+        },
+      },
+    }
+  }
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Forbidden media", version: "1"},
+        servers: [{url: "https://forbidden.test"}],
+        paths: paths,
+      },
+    ),
+  )
+  harness.fs.write_text(
+    "${root}/generated.harn",
+    codegen_module(harness.fs, document, {module_name: "forbidden", transport: "raw"}),
+  )
+  const runner = "${root}/main.harn"
+  harness.fs.write_text(
+    runner,
+    """
+    import { new_client, send_allowed, send_forbidden, send_form, send_multipart } from "./generated"
+
+    @test
+    pipeline default(harness: Harness) {
+      const client = new_client()
+      for path in ["/allowed", "/form", "/multipart"] {
+        harness.testing.http_mock("POST", "https://forbidden.test" + path, {status: 204, body: ""})
+      }
+      assert_eq(send_allowed(harness.net, client, bytes_from_string("known")), nil)
+      assert_eq(send_form(harness.net, client, {tags: []}), nil)
+      assert_eq(send_multipart(harness.net, client, {title: {value: "known"}, tags: []}), nil)
+      const binary = try { send_forbidden(harness.net, client, bytes_from_string("no")) }
+      assert(is_err(binary))
+      assert(to_string(binary).contains("request body is forbidden by its JSON Schema"))
+      const form = try { send_form(harness.net, client, {tags: [bytes_from_string("no")]}) }
+      assert(is_err(form))
+      assert(to_string(form).contains("form property is forbidden by its JSON Schema"))
+      const multipart = try { send_multipart(harness.net, client, {tags: [{value: bytes_from_string("no")}]}) }
+      assert(is_err(multipart))
+      assert(to_string(multipart).contains("multipart property is forbidden by its JSON Schema"))
+    }
+    """,
+  )
+  const result = harness.process.run(
+    {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", runner]},
+  )
+  assert(result.success, result.stdout + result.stderr)
+}

@@ -382,51 +382,128 @@ pipeline test_generated_media_sends_declared_bytes(harness: Harness) {
   }
 }
 
-pipeline test_generated_media_cli_and_mcp_record_exact_bytes(harness: Harness) {
+@heavy(threads: 2)
+pipeline test_generated_media_raw_cli_and_mcp_record_exact_bytes(harness: Harness) {
+  check_media_projections(harness, "raw")
+}
+
+@heavy(threads: 2)
+pipeline test_generated_media_connector_cli_and_mcp_record_exact_bytes(harness: Harness) {
+  check_media_projections(harness, "connector_policy")
+}
+
+fn check_media_projections(harness: Harness, transport: string) -> nil {
   const document = media_document()
   const directory = harness.fs.mkdtemp_in_workspace("openapi-media-projections")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  harness.fs.write_text(
+    "${directory}/generated.harn",
+    codegen_module(
+      harness.fs,
+      document,
+      {
+        module_name: "media_fixture",
+        environment_prefix: "MEDIA",
+        transport: transport,
+        header_overrides: {"X-Media-Literal": "\${1 + 1}"},
+      },
+    ),
+  )
+  harness.fs.write_text(
+    "${directory}/main.harn",
+    codegen_entrypoint(
+      harness.fs,
+      document,
+      {module_import: "./generated", environment_prefix: "MEDIA"},
+    ),
+  )
+  const result = harness.process.run(
+    {
+      program: "python3",
+      args: [
+        harness.fs.source_dir() + "/fixtures/media_projection_probe.py",
+        binary,
+        "${directory}/main.harn",
+      ],
+    },
+  )
+  assert(
+    result.success,
+    "${transport} real CLI/MCP media bytes must match the recorder: ${result.stdout} ${result.stderr}",
+  )
+  const receipt = schema_expect(json_parse(result.stdout), MediaProjectionReceipt)
+  assert_eq(receipt.reached, {cli: 14, mcp: 14})
+  assert_eq(receipt.refused, {cli: 2, mcp: 2})
+  assert_eq(receipt.http_requests, 30)
+  assert_eq(receipt.pending, 0)
+  assert_eq(receipt.measurement_errors, [])
+  return nil
+}
+
+pipeline test_generated_binary_response_keeps_json_error_details(harness: Harness) {
+  const document = parse(
+    json_stringify(
+      {
+        openapi: "3.1.1",
+        info: {title: "Download errors", version: "1"},
+        servers: [{url: "https://binary.test"}],
+        paths: {
+          "/download": {
+            get: {
+              operationId: "download",
+              responses: {
+                "200": {description: "Binary", content: {"application/octet-stream": {}}},
+                "400": {
+                  description: "Rejected",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {code: {type: "string"}},
+                        required: ["code"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ),
+  )
+  const directory = harness.fs.mkdtemp_in_workspace("binary-errors")
   const binary = harness.env.get("HARN_BIN") ?? "harn"
   for transport in ["raw", "connector_policy"] {
     harness.fs.write_text(
       "${directory}/generated.harn",
-      codegen_module(
-        harness.fs,
-        document,
-        {
-          module_name: "media_fixture",
-          environment_prefix: "MEDIA",
-          transport: transport,
-          header_overrides: {"X-Media-Literal": "\${1 + 1}"},
-        },
-      ),
+      codegen_module(harness.fs, document, {module_name: "binary_errors", transport: transport}),
     )
-    harness.fs.write_text(
-      "${directory}/main.harn",
-      codegen_entrypoint(
-        harness.fs,
-        document,
-        {module_import: "./generated", environment_prefix: "MEDIA"},
-      ),
-    )
+    check_media_module(pick(harness, ["env", "process"]), directory)
+    const authority = if transport == "raw" {
+      "harness.net"
+    } else {
+      "{clock: harness.clock, net: harness.net}"
+    }
+    const runner = """
+      import { download, new_client } from "./generated"
+
+      pipeline test_error_details(harness: Harness) {
+        harness.testing.http_mock("GET", "https://binary.test/download", {
+          status: 400, headers: {"Content-Type": "application/json"},
+          body: "{\"code\":\"denied\"}",
+        })
+        const caught = try { download(AUTHORITY, new_client()); nil } catch (error) { error }
+        assert_eq(caught.status, 400)
+        assert_eq(caught.body, "{\"code\":\"denied\"}")
+        assert_eq(len(harness.testing.http_mock_calls()), 1)
+      }
+      """
+    harness.fs.write_text("${directory}/runner.harn", runner.replace("AUTHORITY", authority))
     const result = harness.process.run(
-      {
-        program: "python3",
-        args: [
-          harness.fs.source_dir() + "/fixtures/media_projection_probe.py",
-          binary,
-          "${directory}/main.harn",
-        ],
-      },
+      {program: binary, args: ["test", "${directory}/runner.harn"]},
     )
-    assert(
-      result.success,
-      "${transport} real CLI/MCP media bytes must match the recorder: ${result.stdout} ${result.stderr}",
-    )
-    const receipt = schema_expect(json_parse(result.stdout), MediaProjectionReceipt)
-    assert_eq(receipt.reached, {cli: 14, mcp: 14})
-    assert_eq(receipt.refused, {cli: 2, mcp: 2})
-    assert_eq(receipt.http_requests, 30)
-    assert_eq(receipt.pending, 0)
-    assert_eq(receipt.measurement_errors, [])
+    assert(result.success, "${transport}: ${result.stdout} ${result.stderr}")
   }
 }

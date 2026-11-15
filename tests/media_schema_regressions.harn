@@ -1,0 +1,269 @@
+import {
+  AdapterJsonSchema,
+  PreparedAdapterSchemaGraph,
+  prepare_adapter_schema_graph,
+} from "../src/adapter_schema_graph"
+import { OperationMediaPlan, prepare_operation_media } from "../src/operation_media"
+
+type MediaSchemaHost = {env: HarnessEnv, process: HarnessProcess}
+
+fn request_plan(
+  content_type: string,
+  schema: AdapterJsonSchema,
+  graph: PreparedAdapterSchemaGraph,
+) -> OperationMediaPlan {
+  return prepare_operation_media(
+    "schema_regression",
+    {required: true, content: {[content_type]: {schema: schema}}},
+    {},
+    "3.1.1",
+    graph,
+  )
+}
+
+fn validate_media_input(
+  fs: HarnessFs,
+  host: MediaSchemaHost,
+  schema: AdapterJsonSchema,
+  value: unknown,
+  accepted: bool,
+) -> nil {
+  const server = fs.mkdtemp_in_workspace("media-schema-regression") + "/main.harn"
+  fs.write_text(
+    server,
+    "fn main(harness: Harness) { let registry = tool_registry(); registry = tool_define(registry, \"check\", \"Validate projected media contract\", {input_schema: ${json_stringify(schema)}, handler: { args -> {reached: true} }}); harness.tools.mcp_tools(registry) }",
+  )
+  const result = host.process.run(
+    {
+      program: host.env.get("HARN_BIN") ?? "harn",
+      args: ["tool", "run", server, "check", "--harn-input", json_stringify(value), "--json"],
+    },
+  )
+  assert_eq(result.success, accepted, result.stderr)
+  if accepted {
+    assert_eq(json_parse(result.stdout), {reached: true})
+  } else {
+    assert(!(result.stdout + result.stderr).contains("\"reached\":true"))
+  }
+  return nil
+}
+
+fn body_schema(value: AdapterJsonSchema) -> AdapterJsonSchema {
+  return {
+    type: "object",
+    properties: {body: value},
+    required: ["body"],
+    additionalProperties: false,
+  }
+}
+
+@test
+pipeline false_binary_request_response_and_field_schemas_remain_forbidden(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {Never: false})
+  const host = pick(harness, ["env", "process"])
+  const allowed = request_plan("application/octet-stream", true, graph)
+  validate_media_input(
+    harness.fs,
+    host,
+    body_schema(allowed.request_schema ?? false),
+    {body: bytes_from_string("ok")},
+    true,
+  )
+  for source in [false, {"$ref": "#/components/schemas/Never"}] {
+    const forbidden = request_plan("application/octet-stream", source, graph)
+    assert_eq(forbidden.request_schema, false)
+    validate_media_input(
+      harness.fs,
+      host,
+      body_schema(forbidden.request_schema ?? true),
+      {body: bytes_from_string("ok")},
+      false,
+    )
+    const response = prepare_operation_media(
+      "forbidden_response",
+      nil,
+      {"200": {content: {"application/octet-stream": {schema: source}}}},
+      "3.1.1",
+      graph,
+    )
+    assert_eq(len(response.responses), 1)
+    for status in response.responses {
+      assert_eq(len(status.alternatives), 1)
+      for alternative in status.alternatives {
+        assert_eq(alternative.schema, false)
+      }
+    }
+  }
+  const fields = request_plan(
+    "multipart/form-data",
+    {
+      type: "object",
+      properties: {title: {type: "string"}, forbidden: {"$ref": "#/components/schemas/Never"}},
+      required: ["title"],
+      additionalProperties: false,
+    },
+    graph,
+  )
+  validate_media_input(
+    harness.fs,
+    host,
+    fields.request_schema ?? false,
+    {title: {value: "ok"}},
+    true,
+  )
+  validate_media_input(
+    harness.fs,
+    host,
+    fields.request_schema ?? false,
+    {title: {value: "ok"}, forbidden: {value: bytes_from_string("no")}},
+    false,
+  )
+  let reached = 0
+  for request in fields.request {
+    for field in request.fields {
+      if field.name == "forbidden" {
+        assert_eq(field.schema, false)
+        reached = reached + 1
+      }
+    }
+  }
+  assert_eq(reached, 1)
+}
+
+@test
+pipeline multipart_keeps_presence_name_and_property_count_constraints(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const plan = request_plan(
+    "multipart/form-data",
+    {
+      type: "object",
+      properties: {title: {type: "string"}, detail: {type: "string"}},
+      required: ["title"],
+      minProperties: 2,
+      maxProperties: 2,
+      propertyNames: {pattern: "^(title|detail)$"},
+      dependentRequired: {title: ["detail"]},
+      additionalProperties: false,
+    },
+    graph,
+  )
+  const host = pick(harness, ["env", "process"])
+  validate_media_input(
+    harness.fs,
+    host,
+    plan.request_schema ?? false,
+    {title: {value: "ok"}, detail: {value: "ok"}},
+    true,
+  )
+  for invalid in [
+    {title: {value: "ok"}},
+    {detail: {value: "ok"}},
+    {title: {value: "ok"}, detail: {value: "ok"}, other: {value: "no"}},
+  ] {
+    validate_media_input(harness.fs, host, plan.request_schema ?? false, invalid, false)
+  }
+}
+
+@test
+pipeline multipart_refuses_value_dependent_root_assertions_during_preparation() {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const assertions = {
+    enum: [{flag: "yes", detail: "ok"}],
+    const: {flag: "yes", detail: "ok"},
+    dependentSchemas: {flag: {properties: {detail: {type: "string", maxLength: 2}}}},
+    if: {properties: {flag: {const: "yes"}}},
+    patternProperties: {"^x-": {type: "string"}},
+  }
+  for assertion in assertions {
+    const caught = try {
+      request_plan(
+        "multipart/form-data",
+        {
+          type: "object",
+          properties: {flag: {type: "string"}, detail: {type: "string"}},
+          [assertion.key]: assertion.value,
+        },
+        graph,
+      )
+    }
+    assert(is_err(caught))
+    assert(
+      to_string(caught).contains(
+        "multipart object assertion '${assertion.key}' cannot be preserved",
+      ),
+    )
+  }
+}
+
+@test
+pipeline repeated_multipart_parts_keep_array_bounds_and_false_item_schemas(harness: Harness) {
+  const graph = prepare_adapter_schema_graph("3.1.1", {})
+  const host = pick(harness, ["env", "process"])
+  const plan = request_plan(
+    "multipart/form-data",
+    {
+      type: "object",
+      properties: {tags: {type: "array", items: {type: "string"}, minItems: 2, maxItems: 3}},
+      required: ["tags"],
+      additionalProperties: false,
+    },
+    graph,
+  )
+  validate_media_input(
+    harness.fs,
+    host,
+    plan.request_schema ?? false,
+    {tags: [{value: "a"}, {value: "b"}]},
+    true,
+  )
+  for invalid in [[], [{value: "a"}], [{value: "a"}, {value: "b"}, {value: "c"}, {value: "d"}]] {
+    validate_media_input(harness.fs, host, plan.request_schema ?? false, {tags: invalid}, false)
+  }
+  const empty_only = request_plan(
+    "multipart/form-data",
+    {
+      type: "object",
+      properties: {tags: {type: "array", items: false}},
+      required: ["tags"],
+      additionalProperties: false,
+    },
+    graph,
+  )
+  validate_media_input(harness.fs, host, empty_only.request_schema ?? false, {tags: []}, true)
+  validate_media_input(
+    harness.fs,
+    host,
+    empty_only.request_schema ?? false,
+    {tags: [{value: bytes_from_string("no")}]},
+    false,
+  )
+  const unique = try {
+    request_plan(
+      "multipart/form-data",
+      {
+        type: "object",
+        properties: {tags: {type: "array", items: {type: "string"}, uniqueItems: true}},
+      },
+      graph,
+    )
+  }
+  assert(is_err(unique))
+  assert(to_string(unique).contains("array uniqueness cannot be preserved"))
+  const array_assertions = {enum: [["a", "b"]], const: ["a", "b"]}
+  for assertion in array_assertions {
+    const caught = try {
+      request_plan(
+        "multipart/form-data",
+        {
+          type: "object",
+          properties: {
+            tags: {type: "array", items: {type: "string"}, [assertion.key]: assertion.value},
+          },
+        },
+        graph,
+      )
+    }
+    assert(is_err(caught))
+    assert(to_string(caught).contains("array assertion '${assertion.key}' cannot be preserved"))
+  }
+}

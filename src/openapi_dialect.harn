@@ -1,0 +1,50 @@
+/** Supported OpenAPI semantic families, distinct from patch revision text. */
+pub type OpenApiDialect = "oas_3_1" | "oas_3_2"
+
+/** One revision decision shared by parsing, schema preparation and generation. */
+pub type OpenApiRevision = {
+  version: string,
+  dialect: OpenApiDialect,
+  querystring_parameters: bool,
+  document_self_identity: bool,
+  named_servers: bool,
+}
+
+fn reject_revision(detail: string) -> never {
+  throw "harn-openapi.dialect: " + detail
+}
+
+type RevisionString = string
+
+/** Classify supported revisions; the legacy schema API may explicitly admit 3.1. */
+pub fn classify_openapi_revision(
+  value: unknown,
+  allow_minor_version: bool = false,
+) -> OpenApiRevision {
+  const validated = try {
+    schema_expect(value, RevisionString)
+  }
+  if !is_ok(validated) {
+    return reject_revision("openapi must be a revision string")
+  }
+  const version = unwrap(validated)
+  if regex_match("^3\\.1\\.[0-9]+$", version) != nil || (allow_minor_version && version == "3.1") {
+    return {
+      version: version,
+      dialect: "oas_3_1",
+      querystring_parameters: false,
+      document_self_identity: false,
+      named_servers: false,
+    }
+  }
+  if version == "3.2.0" {
+    return {
+      version: version,
+      dialect: "oas_3_2",
+      querystring_parameters: true,
+      document_self_identity: true,
+      named_servers: true,
+    }
+  }
+  reject_revision("supported revisions are OpenAPI 3.1.x and 3.2.0")
+}

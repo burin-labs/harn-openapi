@@ -1,7 +1,7 @@
 # Contributing
 
-`harn-openapi` parses OpenAPI 3.1 documents and generates typed Harn SDK source
-and tool registries from them. Downstream packages such as
+`harn-openapi` parses [supported OpenAPI revisions](docs/openapi-revisions.md)
+and generates typed Harn SDK source and tool registries. Downstream packages such as
 [notion-sdk-harn](https://github.com/burin-labs/notion-sdk-harn) install it and
 regenerate their client from it, so a change to the generator changes their
 generated code. Contributions are welcome. Read this page first, because a few

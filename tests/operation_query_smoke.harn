@@ -1,0 +1,136 @@
+import { codegen_module, parse } from "../src/lib"
+
+fn query_document(parameters: list, version: string = "3.2.0") -> dict {
+  return {
+    openapi: version,
+    info: {title: "Whole-query fixture", version: "1"},
+    servers: [{url: "https://query.test"}],
+    paths: {
+      "/search": {
+        get: {
+          operationId: "search",
+          parameters: parameters,
+          responses: {"204": {description: "Done"}},
+        },
+      },
+    },
+  }
+}
+
+pipeline test_generated_whole_query_uses_media_serialization(harness: Harness) {
+  const root = harness.fs.mkdtemp_in_workspace("whole-query")
+  const binary = harness.env.get("HARN_BIN") ?? "harn"
+  for transport in ["raw", "connector_policy"] {
+    for kind in ["json", "form"] {
+      const content_type = if kind == "json" {
+        "application/problem+json"
+      } else {
+        "application/x-www-form-urlencoded"
+      }
+      const fields = if kind == "json" {
+        {label: {type: "string"}}
+      } else {
+        {term: {type: "string"}, tags: {type: "array", items: {type: "string"}}}
+      }
+      const parameter = {
+        name: "criteria",
+        in: "querystring",
+        required: true,
+        content: {
+          [content_type]: {
+            schema: {
+              type: "object",
+              properties: fields,
+              required: fields.keys(),
+              additionalProperties: false,
+            },
+          },
+        },
+      }
+      const document = parse(json_stringify(query_document([parameter])))
+      harness.fs.write_text(
+        "${root}/generated.harn",
+        codegen_module(harness.fs, document, {module_name: "query", transport: transport}),
+      )
+      const authority = if transport == "raw" {
+        "harness.net"
+      } else {
+        "{clock: harness.clock, net: harness.net}"
+      }
+      const value = if kind == "json" {
+        "{label: \"a + b\"}"
+      } else {
+        "{term: \"a + b\", tags: [\"x\", \"y\"]}"
+      }
+      const url = if kind == "json" {
+        "https://query.test/search?%7B%22label%22%3A%22a%20%2B%20b%22%7D"
+      } else {
+        "https://query.test/search?tags=x&tags=y&term=a+%2B+b"
+      }
+      const runner = """
+        import { new_client, search } from "./generated"
+
+        pipeline test_exact_query(harness: Harness) {
+          harness.testing.http_mock("GET", "EXPECTED_URL", {status: 204, body: ""})
+          search(AUTHORITY, new_client(), INPUT_VALUE)
+          const calls = harness.testing.http_mock_calls()
+          assert_eq(len(calls), 1)
+          assert_eq(calls[0].url, "EXPECTED_URL")
+        }
+        """
+      harness.fs.write_text(
+        "${root}/runner.harn",
+        runner.replace("EXPECTED_URL", url).replace("AUTHORITY", authority).replace(
+          "INPUT_VALUE",
+          value,
+        ),
+      )
+      const checked = harness.process.run({program: binary, args: ["check", "${root}/runner.harn"]})
+      assert(checked.success, checked.stdout + checked.stderr)
+      const result = harness.process.run({program: binary, args: ["test", "${root}/runner.harn"]})
+      assert(result.success, result.stdout + result.stderr)
+    }
+  }
+}
+
+pipeline test_unsupported_whole_query_refuses_before_generation(harness: Harness) {
+  const valid = {
+    name: "criteria",
+    in: "querystring",
+    content: {"application/json": {schema: {type: "object"}}},
+  }
+  for parameters in [
+    [valid, {name: "other", in: "query", schema: {type: "string"}}],
+    [valid, {...valid, name: "other"}],
+    [{...valid, content: {}}],
+    [{...valid, content: {"application/json": {}, "application/problem+json": {}}}],
+    [{...valid, schema: {type: "object"}}],
+    [{...valid, style: "form"}],
+    [{...valid, content: {"text/plain": {schema: {type: "string"}}}}],
+    [{...valid, content: {"application/octet-stream": {}}}],
+  ] {
+    const rejected = try {
+      codegen_module(
+        harness.fs,
+        parse(json_stringify(query_document(parameters))),
+        {module_name: "query"},
+      )
+      nil
+    } catch (error) {
+      error
+    }
+    assert(rejected != nil)
+    assert(to_string(rejected).contains("harn-openapi.querystring:"), to_string(rejected))
+  }
+  const old = try {
+    codegen_module(
+      harness.fs,
+      parse(json_stringify(query_document([valid], "3.1.1"))),
+      {module_name: "query"},
+    )
+    nil
+  } catch (error) {
+    error
+  }
+  assert(to_string(old).contains("requires OpenAPI 3.2.0"))
+}

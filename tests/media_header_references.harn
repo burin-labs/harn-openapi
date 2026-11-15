@@ -1,0 +1,92 @@
+import { codegen_module, parse } from "../src/lib"
+
+@test
+pipeline multipart_header_references_keep_required_and_value_constraints(harness: Harness) {
+  const root = harness.fs.mkdtemp_in_workspace("media-header-references")
+  const header = {required: true, schema: {type: "string", minLength: 2}}
+  for kind in ["inline", "reference"] {
+    const selected = kind == "inline" ? header : {"$ref": "#/components/headers/Trace"}
+    const document = parse(
+      json_stringify(
+        {
+          openapi: "3.1.1",
+          info: {title: "Multipart header reference", version: "1"},
+          servers: [{url: "https://header.test"}],
+          components: {headers: {Trace: header}},
+          paths: {
+            "/send": {
+              post: {
+                operationId: "send",
+                requestBody: {
+                  required: true,
+                  content: {
+                    "multipart/form-data": {
+                      schema: {
+                        type: "object",
+                        properties: {file: {type: "string"}},
+                        required: ["file"],
+                        additionalProperties: false,
+                      },
+                      encoding: {file: {headers: {"X-Trace": selected}}},
+                    },
+                  },
+                },
+                responses: {"204": {description: "Saved"}},
+              },
+            },
+          },
+        },
+      ),
+    )
+    const module = "${root}/${kind}.harn"
+    harness.fs.write_text(
+      module,
+      codegen_module(harness.fs, document, {module_name: kind, transport: "raw"}),
+    )
+    const server = "${root}/${kind}-server.harn"
+    harness.fs.write_text(
+      server,
+      """
+      import { adapter_catalog, new_client } from "./${kind}"
+
+      fn main(harness: Harness) {
+        const catalog = adapter_catalog(harness.net, new_client())
+        assert_eq(len(catalog.tools), 1)
+        const generated = catalog.tools[0]
+        require generated != nil, "the generated operation must be present"
+        let registry = tool_registry()
+        registry = tool_define(registry, "check", "Validate the generated multipart contract", {
+          input_schema: generated.inputSchema,
+          handler: { args -> {reached: true} },
+        })
+        harness.tools.mcp_tools(registry)
+      }
+      """,
+    )
+    for control in [
+      {name: "present", headers: {"X-Trace": "ok"}, accepted: true},
+      {name: "missing", headers: {}, accepted: false},
+      {name: "short", headers: {"X-Trace": "x"}, accepted: false},
+    ] {
+      const input = "${root}/${kind}-${control.name}.json"
+      harness.fs.write_text(
+        input,
+        json_stringify({body: {file: {value: "payload", headers: control.headers}}}),
+      )
+      const result = harness.process.run(
+        {
+          program: harness.env.get("HARN_BIN") ?? "harn",
+          args: ["tool", "run", server, "check", "--harn-input", "@${input}", "--json"],
+        },
+      )
+      assert_eq(
+        result.success,
+        control.accepted,
+        "${kind}/${control.name}: ${result.stdout}${result.stderr}",
+      )
+      if control.accepted {
+        assert_eq(json_parse(result.stdout), {reached: true})
+      }
+    }
+  }
+}

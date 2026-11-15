@@ -1,0 +1,58 @@
+import { OpenApiRevision } from "./openapi_dialect"
+import { OpenApiDocumentIdentity, resolve_document_server } from "./openapi_identity"
+
+type ServerVariable = {default: string, enum?: list<string>, description?: string}
+
+/** Server names retain stable identity when declaration order changes. */
+pub type OpenApiServer = {
+  url: string,
+  name?: string,
+  description?: string,
+  variables?: dict<string, ServerVariable>,
+}
+
+pub type OpenApiServerPlan = {default_url: string, named_urls: dict<string, string>}
+
+type ServerList = list<OpenApiServer>
+
+/** Resolve declared servers once, without using document $self as their base. */
+pub fn prepare_server_plan(
+  value: unknown,
+  revision: OpenApiRevision,
+  identity: OpenApiDocumentIdentity,
+) -> OpenApiServerPlan {
+  const validated = try {
+    schema_expect(value ?? [], ServerList)
+  }
+  if !is_ok(validated) {
+    throw "harn-openapi.servers: servers must contain valid Server Objects"
+  }
+  let default_url = ""
+  let named_urls: dict<string, string> = {}
+  for server in unwrap(validated) {
+    if server.name != nil && !revision.named_servers {
+      throw "harn-openapi.servers: named servers require OpenAPI 3.2.0"
+    }
+    if server.name != nil && (server.name.trim() == "" || named_urls.get(server.name) != nil) {
+      throw "harn-openapi.servers: server names must be nonempty and unique"
+    }
+    let url = server.url
+    for variable in (server.variables ?? {}) {
+      if variable.value.enum != nil && !variable.value.enum.contains(variable.value.default) {
+        throw "harn-openapi.servers: server variable default must belong to its declared enum"
+      }
+      url = url.replace("{${variable.key}}", variable.value.default)
+    }
+    if url.contains("{") || url.contains("}") {
+      throw "harn-openapi.servers: server URL contains an undeclared variable"
+    }
+    const resolved = resolve_document_server(url, identity)
+    if default_url == "" {
+      default_url = resolved
+    }
+    if server.name != nil {
+      named_urls = {...named_urls, [server.name]: resolved}
+    }
+  }
+  return {default_url: default_url, named_urls: named_urls}
+}
