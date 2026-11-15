@@ -1,5 +1,20 @@
 import { codegen_harn_toml, codegen_module, parse } from "../src/lib"
 
+type LiteralDependency = {
+  path: string,
+  git: string,
+  rev: string,
+  branch: string,
+  tag: string,
+  version: string,
+}
+
+type LiteralManifest = {
+  package: {description: string},
+  exports: {default: string, types: string, entrypoint: string},
+  dependencies: dict<string, LiteralDependency>,
+}
+
 pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
   const document = parse(
     json_stringify(
@@ -75,8 +90,10 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
     const result = harness.process.run(
       {program: harness.env.get("HARN_BIN") ?? "harn", args: ["test", "${directory}/runner.harn"]},
     )
-    require result.success,
-      "${transport} must preserve literal source data: ${result.stdout} ${result.stderr}"
+    assert(
+      result.success,
+      "${transport} must preserve literal source data: ${result.stdout} ${result.stderr}",
+    )
   }
 }
 
@@ -102,13 +119,16 @@ pipeline test_generated_manifest_preserves_literal_data() {
       },
     },
   )
-  const manifest = toml_parse(source)
+  const manifest = schema_expect(toml_parse(source), LiteralManifest)
   assert_eq(manifest.package.description, literal)
   assert_eq(manifest.exports.default, path)
   assert_eq(manifest.exports.types, path)
   assert_eq(manifest.exports.entrypoint, path)
-  const dependency = manifest.dependencies["dependency\${name}"]
-  for field in ["path", "git", "rev", "branch", "tag", "version"] {
-    assert_eq(dependency.get(field), literal)
-  }
+  const dependency = schema_expect(manifest.dependencies["dependency\${name}"], LiteralDependency)
+  assert_eq(dependency.path, literal)
+  assert_eq(dependency.git, literal)
+  assert_eq(dependency.rev, literal)
+  assert_eq(dependency.branch, literal)
+  assert_eq(dependency.tag, literal)
+  assert_eq(dependency.version, literal)
 }

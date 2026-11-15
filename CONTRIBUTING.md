@@ -38,19 +38,17 @@ CI runs:
 
 ```sh
 cargo install harn-cli --version "$(cat .harn-version)" --locked
-harn check src scripts
-harn lint src scripts
-harn fmt --check src scripts tests
-harn package check
-HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
+HARN_BIN="$(command -v harn)" harn package verify --strict
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run --no-sandbox scripts/package_install_smoke.harn
 harn run scripts/check_fixture_staleness.harn
 ```
 
 `HARN_BIN` points generated-code tests at the same CLI version running the
-suite. The two smoke scripts need `--no-sandbox` only because they spawn child
-Harn processes. The CI job sandbox is still the authority boundary.
+suite. Strict package verification also checks and lints test sources, installs
+a consumer, and validates the packed artifact. The two smoke scripts need
+`--no-sandbox` only because they spawn child Harn processes. The CI job sandbox
+is still the authority boundary.
 
 A change to documentation alone does not need the full gate.
 
