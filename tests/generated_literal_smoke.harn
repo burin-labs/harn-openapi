@@ -72,7 +72,7 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
     harness.fs.write_text(
       "${directory}/runner.harn",
       """
-      import { new_client, send } from "./generated"
+      import { adapter_registry, new_client, send } from "./generated"
 
       pipeline test_actual_request(harness: Harness) {
         const expected = json_parse(harness.fs.read_text(harness.fs.source_dir() + "/expected.json"))
@@ -84,6 +84,25 @@ pipeline test_generated_headers_preserve_literal_data(harness: Harness) {
         assert_eq(calls[0].headers.get("x-literal"), expected["X-Literal"])
         assert_eq(calls[0].headers.get("x-quoted"), expected["X-Quoted"])
         assert_eq(calls[0].headers.get("x-unicode"), expected["X-Unicode"])
+        send(${authority}, new_client("https://literal.example.test", {}, {}), {value: "explicit-empty"})
+        const registry = adapter_registry({clock: harness.clock, net: harness.net}, {
+          base_url: "https://literal.example.test", credentials: {}, extra_headers: {},
+        })
+        registry.tools[0].handler({body: {value: "registry"}})
+        const inherited = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(inherited), 3)
+        for index in [1, 2] {
+          assert_eq(inherited[index].headers.get("x-literal"), expected["X-Literal"])
+          assert_eq(inherited[index].headers.get("x-quoted"), expected["X-Quoted"])
+          assert_eq(inherited[index].headers.get("x-unicode"), expected["X-Unicode"])
+        }
+        send(${authority}, new_client("https://literal.example.test", {}, {"X-Literal": "caller", "X-Added": "new"}), {value: "override"})
+        const overridden = harness.testing.http_mock_calls({include_sensitive: true})
+        assert_eq(len(overridden), 4)
+        assert_eq(overridden[3].headers.get("x-literal"), "caller")
+        assert_eq(overridden[3].headers.get("x-added"), "new")
+        assert_eq(overridden[3].headers.get("x-quoted"), expected["X-Quoted"])
+        assert_eq(overridden[3].headers.get("x-unicode"), expected["X-Unicode"])
       }
       """,
     )

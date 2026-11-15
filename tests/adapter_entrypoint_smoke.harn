@@ -156,7 +156,12 @@ pipeline test_main(harness: Harness) {
   const module_source = codegen_module(
     harness.fs,
     doc,
-    {module_name: "widgets", client_name: "WidgetClient", environment_prefix: "WIDGETS"},
+    {
+      module_name: "widgets",
+      client_name: "WidgetClient",
+      environment_prefix: "WIDGETS",
+      header_overrides: {"X-Generated-Version": "2026-11-15", "X-Literal": "\${1 + 1}"},
+    },
   )
   harness.fs.write_text(module_stem + ".harn", module_source)
   const entrypoint = codegen_entrypoint(
@@ -256,7 +261,7 @@ pipeline test_main(harness: Harness) {
     site_path,
     "@route(\"GET\", \"/public\")\n"
       + "pub fn public_route(req: dict) -> dict {\n"
-      + "  return http_ok({ok: true, marker: \"public-via-http\", authorization: req.headers.get(\"authorization\")})\n"
+      + "  return http_ok({ok: true, marker: \"public-via-http\", authorization: req.headers.get(\"authorization\"), version: req.headers.get(\"x-generated-version\"), literal: req.headers.get(\"x-literal\")})\n"
       + "}\n",
   )
   const rpc_call = json_stringify(
@@ -334,6 +339,10 @@ pipeline test_main(harness: Harness) {
   assert_eq(len(call_sections), 2, "projection output must retain the CLI/MCP boundary")
   assert(call_sections[0]!.contains("public-via-http"), "CLI must reach the shared HTTP route")
   assert(call_sections[1]!.contains("public-via-http"), "MCP must reach the shared HTTP route")
+  for section in call_sections {
+    assert(section.contains("2026-11-15"), "CLI and MCP must send the configured version header")
+    assert(section.contains("$" + "{1 + 1}"), "CLI and MCP must preserve literal header data")
+  }
   const missing = harness.process.run(
     {
       program: harn_bin(harness.env),

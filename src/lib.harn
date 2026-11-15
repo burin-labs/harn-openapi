@@ -1712,7 +1712,7 @@ pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
     client_name: client_name,
     default_base_url: default_base_url,
     new_client_decl: new_client_decl,
-    new_client_return: _render_new_client_return(),
+    new_client_return: _render_new_client_return(header_overrides),
     has_adapter_handlers: len(published_operations) > 0,
     has_connector_imports: connector_imports != "",
     connector_imports: connector_imports,
@@ -1963,18 +1963,24 @@ fn _render_new_client_decl(default_base_url: any, header_overrides: any) {
   return _render_fn_decl_suffix("new_client", parts, "AdapterClient")
 }
 
-fn _render_new_client_return() {
-  const parts = ["base_url: base_url", "credentials: credentials", "extra_headers: extra_headers"]
+fn _render_new_client_return(header_overrides: dict) {
+  const prepared = "const defaults = " + _render_dict_literal(header_overrides)
+    + "\n  const configured_headers = _merge_header_dicts([defaults, extra_headers])\n  "
+  const parts = [
+    "base_url: base_url",
+    "credentials: credentials",
+    "extra_headers: configured_headers",
+  ]
   const inline = "{" + join(parts, ", ") + "}"
   if len("  return " + inline) <= 100 {
-    return "return " + inline
+    return prepared + "return " + inline
   }
   let out = "return {\n"
   for part in parts {
     out = out + "    " + part + ",\n"
   }
   out = out + "  }"
-  return out
+  return prepared + out
 }
 
 fn _render_pub_fn_decl(name: any, params: any, return_type: any) {
