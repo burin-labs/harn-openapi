@@ -80,6 +80,13 @@ credentials: dict<string, AdapterCredential>
 extra_headers: dict
 ```
 
+Generated `header_overrides` are defaults. An empty runtime `extra_headers` map
+keeps them; explicit caller headers replace matching defaults regardless of
+capitalization and retain the other defaults. Stored header keys are lowercase.
+Duplicate default names that differ only in capitalization are rejected before
+generation. A default for a required OpenAPI header also satisfies that header
+for CLI and MCP calls.
+
 Bearer, OAuth 2.0, and OpenID Connect credentials use `token`; Basic uses
 `username` plus `password`; API keys use `value`; mutual TLS uses
 `host_configured: true`. A credential can instead carry a typed request-time

@@ -1130,7 +1130,7 @@ fn _adapter_operations(
   schema_graph: PreparedAdapterSchemaGraph,
   options: dict = {},
 ) -> list {
-  const header_overrides = options.get("header_overrides") ?? {}
+  const header_overrides = _normalize_header_overrides(options.get("header_overrides"))
   const annotation_defaults: AdapterAnnotationDefaults = _adapter_annotation_defaults(doc)
   let adapter_operations = []
   let taken_names = []
@@ -1311,29 +1311,21 @@ const _MODULE_TEMPLATE = """
   {{ end }}
 
   fn _no_auth_headers(client: AdapterClient) -> AdapterHeaders {
-    let hs: AdapterHeaders = {}
-    for entry in client.extra_headers {
-      hs = {...hs, [entry.key]: entry.value}
-    }
-    return hs
+    return _merge_header_dicts([client.extra_headers])
   }
 
   fn _merge_header_dicts(header_sets: list<AdapterHeaders>) -> AdapterHeaders {
     let out: AdapterHeaders = {}
     for hs in header_sets {
       for entry in hs {
-        out = {...out, [entry.key]: entry.value}
+        out = {...out, [entry.key.lower()]: entry.value}
       }
     }
     return out
   }
 
   fn _with_extra_headers(headers: AdapterHeaders, client: AdapterClient) -> AdapterHeaders {
-    let hs = headers
-    for entry in client.extra_headers {
-      hs = {...hs, [entry.key]: entry.value}
-    }
-    return hs
+    return _merge_header_dicts([headers, client.extra_headers])
   }
 
   fn _media_headers(
@@ -1376,11 +1368,11 @@ const _MODULE_TEMPLATE = """
       return headers
     }
     let pair = url_encode(name) + "=" + url_encode(to_string(value))
-    let existing = headers.get("Cookie") ?? headers.get("cookie")
+    let existing = headers.get("cookie")
     if existing == nil || existing == "" {
-      return {...headers, Cookie: pair}
+      return {...headers, cookie: pair}
     }
-    return {...headers, Cookie: to_string(existing) + "; " + pair}
+    return {...headers, cookie: to_string(existing) + "; " + pair}
   }
 
   /** Build a token-provider hook backed by the active connector SecretProvider. */
@@ -1642,12 +1634,27 @@ const _ENTRYPOINT_TEMPLATE = """
   }
   """
 
+type HeaderOverrides = dict<string, string>
+
+fn _normalize_header_overrides(value: unknown) -> HeaderOverrides {
+  const headers = schema_expect(value ?? {}, HeaderOverrides)
+  let normalized: HeaderOverrides = {}
+  for header in headers {
+    const name = header.key.lower()
+    if normalized.keys().contains(name) {
+      throw "harn-openapi.codegen_module: duplicate default HTTP header name"
+    }
+    normalized = {...normalized, [name]: header.value}
+  }
+  return normalized
+}
+
 /** Emit a Harn SDK module as source code. */
 pub fn codegen_module(fs: HarnessFs, doc: OpenApiDoc, options: dict) -> string {
   const module_name = options.get("module_name") ?? "generated_sdk"
   const client_name = options.get("client_name") ?? "Client"
   const default_base_url = options.get("default_base_url") ?? _default_server_url(doc)
-  const header_overrides = options.get("header_overrides") ?? {}
+  const header_overrides = _normalize_header_overrides(options.get("header_overrides"))
   const transport = _transport_kind(options.get("transport") ?? "connector_policy")
   const schemes = doc.get("security_schemes") ?? {}
   const ops_raw = _operations(doc)
@@ -2436,7 +2443,7 @@ fn _adapter_input_schema(
   let definitions = {}
   let required = []
   for parameter in params.path + params.query + params.header + params.cookie {
-    if parameter.get("in") == "header" && header_overrides.get(parameter.name) != nil {
+    if parameter.get("in") == "header" && header_overrides.get(parameter.name.lower()) != nil {
       continue
     }
     const property_schema = _adapter_parameter_schema(parameter)
@@ -2683,7 +2690,7 @@ fn _adapter_operation(
   const media = _operation_media_plan(doc, op, schema_graph)
   let cli_parameters = []
   for parameter in params.path + params.query + params.header + params.cookie {
-    if parameter.get("in") != "header" || header_overrides.get(parameter.name) == nil {
+    if parameter.get("in") != "header" || header_overrides.get(parameter.name.lower()) == nil {
       cli_parameters = cli_parameters + [parameter]
     }
   }
@@ -2769,7 +2776,7 @@ fn _signature_model(
     const location = p.get("in") ?? "query"
     const nm = p.ident
     const required = location == "path"
-      || (p.get("required") && (location != "header" || header_overrides.get(p.name) == nil))
+      || (p.get("required") && (location != "header" || header_overrides.get(p.name.lower()) == nil))
     if required {
       required_sig = required_sig + [nm + ": any"]
       required_arg_names = required_arg_names + [nm]
@@ -3197,7 +3204,7 @@ fn _render_header_cookie_lines(header_params: any, cookie_params: any) {
           + p.ident
           + " != nil {\n"
           + "    request_headers = {...request_headers, "
-          + _harn_dict_entry(p.name, "to_string(" + p.ident + ")")
+          + _harn_dict_entry(p.name.lower(), "to_string(" + p.ident + ")")
           + "}\n"
           + "  }",
       ]

@@ -28,18 +28,15 @@ Install the pinned CLI, then run the same checks CI cares about:
 
 ```sh
 cargo install harn-cli --version "$(cat .harn-version)" --locked
-harn check src scripts
-harn lint src scripts
-harn fmt --check src scripts tests
-harn package check
-HARN_BIN="$(command -v harn)" harn test tests --parallel --timing
+HARN_BIN="$(command -v harn)" harn package verify --strict
 harn run scripts/regen_demo.harn
 HARN_BIN="$(command -v harn)" harn run --no-sandbox scripts/package_install_smoke.harn
 harn run scripts/check_fixture_staleness.harn
 ```
 
 `HARN_BIN` lets generated-code tests shell out to the same CLI version that is
-running the suite.
+running the suite. Package verification includes strict checks and lint for test
+sources, installed-consumer checks, and a package pack dry run.
 
 ## Fixture refresh
 
